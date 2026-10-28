@@ -5,7 +5,7 @@
 # ignored silently: no review is requested and nothing warns you. Keep this
 # file in step with the repository's actual collaborators.
 #
-# @Dashmake-Startup/maintainers holds write access on this repository and
+# @dynadoc/maintainers holds write access on this repository and
 # contains the seven members of the organisation. Both facts have to stay true:
 # the team losing repository access, or a member leaving the team, is reported
 # nowhere — the rule just quietly stops requesting reviews.
@@ -14,7 +14,7 @@
 # its members satisfies the rule.
 
 # Default.
-* @Dashmake-Startup/maintainers
+* @dynadoc/maintainers
 
 # Tooling, CI and governance — deliberately narrower.
 /.github/                 @KevinAkpe

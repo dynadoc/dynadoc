@@ -1882,7 +1882,7 @@ export default class EditorCommonUtils {
   }
 
   static async openRepo(repoUrl: string | undefined = undefined) {
-    const defaultRepoUrl = 'https://github.com/dashmake/dynadoc'
+    const defaultRepoUrl = 'https://github.com/dynadoc/dynadoc'
     repoUrl = repoUrl || (import.meta as any)?.env?.VITE_DYNADOC_REPO_URL || defaultRepoUrl
 
     try {

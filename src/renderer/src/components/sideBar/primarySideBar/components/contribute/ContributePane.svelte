@@ -5,7 +5,7 @@
 
   const t = get(_)
 
-  const defaultRepoUrl = 'https://github.com/dashmake/dynadoc'
+  const defaultRepoUrl = 'https://github.com/dynadoc/dynadoc'
   const repoUrl = (import.meta as any)?.env?.VITE_DYNADOC_REPO_URL || defaultRepoUrl
 
   let copied = $state<'repo' | 'clone' | null>(null)

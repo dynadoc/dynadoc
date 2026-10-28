@@ -6,7 +6,7 @@
 vulnerability.**
 
 Report it privately through
-[GitHub Private Security Advisories](https://github.com/Dashmake-Startup/dynadoc/security/advisories/new).
+[GitHub Private Security Advisories](https://github.com/dynadoc/dynadoc/security/advisories/new).
 
 Please include:
 

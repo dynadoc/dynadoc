@@ -55,7 +55,7 @@ contributors.
 ## Getting started
 
 ```bash
-git clone https://github.com/Dashmake-Startup/dynadoc.git
+git clone https://github.com/dynadoc/dynadoc.git
 cd dynadoc
 
 cp .env.example .env.local    # .env.local, not .env — see below
