@@ -53,7 +53,9 @@ export function initializeBrowserStore() {
 
   api.listTabs?.().then((tabs: BrowserTab[]) => {
     if (!tabs || tabs.length === 0) {
-      api.createTab?.('https://www.google.com')
+      // PERF-FIX RC1: Removed eager api.createTab('https://www.google.com') — a full Chromium
+      // WebContentsView + network request was being spawned at every launch even when the user
+      // never opened the browser panel. Tabs are now created on-demand when the user clicks "New Tab".
       return
     }
     tabsStore.set(tabs)

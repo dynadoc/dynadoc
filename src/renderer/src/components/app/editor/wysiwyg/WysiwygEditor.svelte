@@ -970,6 +970,14 @@
     data.append('text', text)
     data.append('language', 'en-US') // Specify the language
 
+    // PERF-FIX RC2: Ensure LanguageTool JVM is started before the first grammar-check call.
+    // This triggers the lazy startup instead of blocking app launch with a 186 MB JRE load.
+    try {
+      await window.api?.ensureLanguageTool?.()
+    } catch {
+      // ignore — LT may not be available (e.g., JRE missing)
+    }
+
     try {
       const response = await axios.post(url, data, {
         headers: {

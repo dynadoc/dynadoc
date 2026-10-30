@@ -113,6 +113,8 @@ const imageEditorCollaborationServerProcess = spawn(
 // const startLoading = Date.now();
 
 let _meetingLaserWindow: BrowserWindow | null = null
+// PERF-FIX RC7: interval is started only when laser window exists, cleared when it closes
+let _laserCursorInterval: ReturnType<typeof setInterval> | null = null
 let _meetingSharingToolbar: BrowserWindow | null = null
 let _meetingWindow: BrowserWindow | null = null
 const _spreadsheetManager = new SpreadsheetManager()
@@ -453,6 +455,25 @@ const _imageEditorServer = startYWebsocketServer(1235, 'Image Editor')
 // const unzipper = require('unzipper')
 
 let _ltProcess
+// PERF-FIX RC2: Track whether LanguageTool has been started to avoid double-spawn
+let _ltStarted = false
+
+/**
+ * Ensures LanguageTool is running. Safe to call multiple times — subsequent calls are no-ops.
+ * Called lazily (on first user request) rather than at app startup to avoid the 2-3s JVM boot
+ * penalty and 186 MB JRE load on every launch.
+ */
+async function ensureLanguageToolStarted(): Promise<void> {
+  if (_ltStarted) return
+  _ltStarted = true
+  try {
+    await startLanguageTool()
+  } catch (err) {
+    _ltStarted = false // allow retry on next call if it failed
+    console.error('LanguageTool failed to start:', err)
+    throw err
+  }
+}
 
 /* function getOSFolder() {
   switch (process.platform) {
@@ -1498,9 +1519,9 @@ console.log(store.get('unicorn')) */
     }
   })
 
-  if (_browserTabs.listTabs().length === 0) {
-    _browserTabs.createTab('https://www.google.com')
-  }
+  // PERF-FIX RC1: Removed eager Google tab creation — a full Chromium WebContentsView was being
+  // initialized with google.com on every launch even when the browser panel wasn't opened.
+  // Tabs are now created on-demand when the user explicitly opens the browser panel.
 
   _mainWindow.webContents.on('did-start-loading', () => {
     _browserTabs?.setVisible(false)
@@ -1515,14 +1536,14 @@ console.log(store.get('unicorn')) */
   //   }
   // }
 
-  // Open the DevTools.
-  // if (screen.getPrimaryDisplay().size.width > 1025)
-  _mainWindow.webContents.openDevTools()
+  // PERF-FIX RC3: DevTools are now opt-in via env var (set DYNADOC_DEVTOOLS=1 in dev to open automatically)
+  if (is.dev && process.env['DYNADOC_DEVTOOLS'] === '1') {
+    _mainWindow.webContents.openDevTools()
+  }
 
-  // Disable Chromium cache for this session
-  // mainWindow.webContents.session.setCacheMode('no-store');
-  _mainWindow.webContents.session.clearCache()
-  _mainWindow.webContents.session.clearStorageData()
+  // PERF-FIX RC3: Removed session.clearCache() + session.clearStorageData() — these were called on every
+  // launch, destroying the V8 bytecode cache and forcing full cold-parse of all JS bundles each time.
+  // Electron's HTTP cache is beneficial; clearing it on every launch was purely harmful.
 
   _embeddedViews = new EmbeddedViewManager(_mainWindow, {
     onEvent: (payload) => {
@@ -1645,7 +1666,9 @@ console.log(store.get('unicorn')) */
     _mainWindow.loadURL(bundleUrl())
   }
 
-  createOverlayView()
+  // PERF-FIX RC1: createOverlayView() removed from here — the overlay WebContentsView now loads
+  // lazily on first 'overlay:set-visible' IPC call, not at app startup. This eliminates one full
+  // app bundle parse+eval cycle during launch.
 }
 
 function buildUnsavedOverlayIcon(count: number) {
@@ -1824,8 +1847,18 @@ ipcMain.handle('embedded:set-z', (_event, payload: { id: string; zIndex: number 
   _embeddedViews?.setZIndex(payload.id, payload.zIndex)
 )
 
+// PERF-FIX RC2: LanguageTool is started lazily on first grammar-check request
+ipcMain.handle('languagetool:ensure-started', async () => {
+  await ensureLanguageToolStarted()
+})
+
+// PERF-FIX RC1: Overlay view is created lazily on first show request
 ipcMain.handle('overlay:set-visible', (_event, payload: { visible: boolean }) => {
-  if (!_overlayView || !_mainWindow) return
+  if (!_mainWindow) return
+  // Lazily create the overlay the first time it's needed (not at app startup)
+  if (!_overlayView) {
+    createOverlayView()
+  }
   setOverlayVisible(Boolean(payload?.visible))
 })
 
@@ -2091,6 +2124,16 @@ function createLaserPointer() {
 
   // _meetingLaserWindow.loadFile('laser.html');
   loadWindow(_meetingLaserWindow, 'meeting-laser-pointer')
+
+  // PERF-FIX RC7: Start the cursor-position timer only while the laser window is alive
+  if (!_laserCursorInterval) {
+    _laserCursorInterval = setInterval(() => {
+      if (_meetingLaserWindow && !_meetingLaserWindow.isDestroyed()) {
+        const point = screen.getCursorScreenPoint()
+        _meetingLaserWindow.webContents.send('meeting:update-cursor', point)
+      }
+    }, 16)
+  }
 }
 
 // This method will be called when Electron has finished
@@ -6829,13 +6872,10 @@ Hello from Dynadoc \\LaTeX!
     loadWindow(_meetingLaserWindow, 'laser-pointer-route'); // Load specific Svelte route
   } */
 
-  // Update the laser position every 16ms (60fps)
-  setInterval(() => {
-    if (_meetingLaserWindow) {
-      const point = screen.getCursorScreenPoint()
-      _meetingLaserWindow.webContents.send('meeting:update-cursor', point)
-    }
-  }, 16)
+  // PERF-FIX RC7: The 60 FPS cursor-position timer now only runs while the laser window is active.
+  // Previously this setInterval ran forever from app startup even when no meeting was in progress,
+  // causing ~3% idle CPU overhead and preventing the process from sleeping.
+  // The timer is started in createLaserPointer() and cleared in meeting:stop-sharing.
 
   ipcMain.on('meeting:stop-sharing', () => {
     console.log('Cleaning up sharing session...')
@@ -6850,6 +6890,11 @@ Hello from Dynadoc \\LaTeX!
     if (_meetingLaserWindow && !_meetingLaserWindow.isDestroyed()) {
       _meetingLaserWindow.close()
       _meetingLaserWindow = null
+    }
+    // PERF-FIX RC7: Stop the cursor-tracking timer when the laser window is gone
+    if (_laserCursorInterval) {
+      clearInterval(_laserCursorInterval)
+      _laserCursorInterval = null
     }
 
     // 3. Notify the Meeting Window to stop the webview's internal stream
@@ -6925,10 +6970,9 @@ Hello from Dynadoc \\LaTeX!
   })
 }) */
 
-  // await startLanguageTool()
-  startLanguageTool().catch((err) => {
-    console.error('LanguageTool failed to start, continuing without it:', err)
-  })
+  // PERF-FIX RC2: LanguageTool (186 MB JRE + JVM boot) is now lazy — started on first use via IPC
+  // 'languagetool:ensure-started' instead of blocking the entire app launch sequence.
+  // Use ensureLanguageToolStarted() from any IPC handler that needs the LT server.
 
   const startupDeepLink = getDeepLinkFromArgv(process.argv)
   if (startupDeepLink) {

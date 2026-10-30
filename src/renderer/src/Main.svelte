@@ -3,7 +3,10 @@
   import { fly } from 'svelte/transition'
   import { get, writable } from 'svelte/store'
   import './assets/css/vendor/daisyui@5.css'
-  import './assets/js/vendor/tailwindcss.js'
+  // PERF-FIX RC5: Removed @tailwindcss/browser (255 KB runtime JIT) — UnoCSS + virtual:uno.css
+  // already handles all Tailwind utility classes at build time. The runtime JIT was redundant and
+  // added a blocking parse + style recalculation on every launch.
+  // import './assets/js/vendor/tailwindcss.js'
   import './assets/css/vendor/themes.css'
   import { _, locale as svelteLocale } from 'svelte-i18n'
   import './utils/canvasPresentationBridge'
@@ -380,7 +383,8 @@
             return
           }
           case 'file:export-docx': {
-            const { exportActiveEditorToDocx } = await import('./services/export/docxExport.service')
+            const { exportActiveEditorToDocx } =
+              await import('./services/export/docxExport.service')
             await exportActiveEditorToDocx({
               reasonLabel: 'Word export ready',
               promptSelection: true
@@ -388,9 +392,8 @@
             return
           }
           case 'file:export-xlsx': {
-            const { promptAndExportActiveSheet } = await import(
-              './services/export/spreadsheetExchange.service'
-            )
+            const { promptAndExportActiveSheet } =
+              await import('./services/export/spreadsheetExchange.service')
             await promptAndExportActiveSheet()
             return
           }

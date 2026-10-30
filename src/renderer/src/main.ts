@@ -15,7 +15,8 @@ const bootIndexStart =
   typeof window !== 'undefined' && typeof (window as any).__bootIndexStart === 'number'
     ? (window as any).__bootIndexStart
     : undefined
-const BOOT_START = bootIndexStart ?? (typeof performance !== 'undefined' ? performance.now() : Date.now())
+const BOOT_START =
+  bootIndexStart ?? (typeof performance !== 'undefined' ? performance.now() : Date.now())
 const logBoot = (label: string) => {
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const delta = (now - BOOT_START).toFixed(1)
@@ -58,7 +59,8 @@ async function handleWebAuthCallback() {
   try {
     const parsed = new URL(url)
     const hasToken = parsed.searchParams.has('token') || parsed.searchParams.has('access_token')
-    const hasRefresh = parsed.searchParams.has('refresh_token') || parsed.searchParams.has('refreshToken')
+    const hasRefresh =
+      parsed.searchParams.has('refresh_token') || parsed.searchParams.has('refreshToken')
     const hasCode = parsed.searchParams.has('code')
     const hasSession = parsed.searchParams.has('session')
     if (!hasToken && !hasRefresh && !hasCode && !hasSession) return
@@ -137,7 +139,14 @@ async function setupMobileAuthDeepLinks() {
   }
 }
 
-const updateSplash = (payload: { title?: string; subtitle?: string; status?: string; recentDocs?: string[]; localeLabel?: string; recentTitle?: string }) => {
+const updateSplash = (payload: {
+  title?: string
+  subtitle?: string
+  status?: string
+  recentDocs?: string[]
+  localeLabel?: string
+  recentTitle?: string
+}) => {
   const title = document.getElementById('app-splash-title')
   const subtitle = document.getElementById('app-splash-subtitle')
   const status = document.getElementById('app-splash-status')
@@ -189,12 +198,18 @@ const setSplashTips = (tips: string[]) => {
 
 const path = window.location.pathname
 const hash = window.location.hash
-const isPresentation = path === '/presentation' || hash === '#/presentation' || hash === '#presentation'
+const isPresentation =
+  path === '/presentation' || hash === '#/presentation' || hash === '#presentation'
 const isPresenterView = path === '/presenter' || hash === '#/presenter' || hash === '#presenter'
 const isMeetingView = path === '/meeting' || hash === '#/meeting' || hash === '#meeting'
-const isMeetingLaserPointer = path === '/meeting-laser-pointer' || hash === '#/meeting-laser-pointer' || hash === '#meeting-laser-pointer'
+const isMeetingLaserPointer =
+  path === '/meeting-laser-pointer' ||
+  hash === '#/meeting-laser-pointer' ||
+  hash === '#meeting-laser-pointer'
 const isMeetingSharingToolbar =
-  path === '/meeting-sharing-toolbar' || hash === '#/meeting-sharing-toolbar' || hash === '#meeting-sharing-toolbar'
+  path === '/meeting-sharing-toolbar' ||
+  hash === '#/meeting-sharing-toolbar' ||
+  hash === '#meeting-sharing-toolbar'
 const isOverlay = new URLSearchParams(window.location.search).get('overlay') === '1'
 const urlParams = new URLSearchParams(window.location.search)
 const isPublishedSurveyLanding =
@@ -218,12 +233,14 @@ async function mountApp() {
   logBoot('resolveComponent:start')
   let ComponentModule
   let targetId
-  
+
   if (isPresentation) {
-    ComponentModule = await import('./extensions/tiptap/CustomPresentationExtension/components/PresentationWindow.svelte')
+    ComponentModule =
+      await import('./extensions/tiptap/CustomPresentationExtension/components/PresentationWindow.svelte')
     targetId = 'presentation-body-wrapper'
   } else if (isPresenterView) {
-    ComponentModule = await import('./extensions/tiptap/CustomPresentationExtension/components/PresenterWindow.svelte')
+    ComponentModule =
+      await import('./extensions/tiptap/CustomPresentationExtension/components/PresenterWindow.svelte')
     targetId = 'presenter-view-body-wrapper'
   } else if (isMeetingView) {
     ComponentModule = await import('./components/app/editor/meeting/MeetingWindow.svelte')
@@ -235,7 +252,8 @@ async function mountApp() {
     ComponentModule = await import('./components/app/editor/meeting/MeetingFloatingToolbar.svelte')
     targetId = 'meeting-sharing-toolbar-view-body-wrapper'
   } else if (isPublishedSurveyLanding) {
-    ComponentModule = await import('./extensions/tiptap/components/common/PublishedNodeLanding.svelte')
+    ComponentModule =
+      await import('./extensions/tiptap/components/common/PublishedNodeLanding.svelte')
     targetId = 'app-body-wrapper'
   } else if (isOverlay) {
     ComponentModule = await import('./OverlayRoot.svelte')
@@ -244,9 +262,11 @@ async function mountApp() {
     ComponentModule = await import('./Main.svelte')
     targetId = 'app-body-wrapper'
   }
-  
+
   logBoot('resolveComponent:done')
-  logBoot('mount:start ' + (ComponentModule?.default?.name || 'UnknownComponent') + ' to #' + targetId)
+  logBoot(
+    'mount:start ' + (ComponentModule?.default?.name || 'UnknownComponent') + ' to #' + targetId
+  )
   const app = mount(ComponentModule.default, {
     target: document.getElementById(targetId)!
   })
@@ -321,22 +341,30 @@ async function bootstrap() {
       status: t('splash.statusLoading')
     })
     updateSplashProgress(0.18)
-    
-    // Lazy initialize stores
-    const { initializeCommonStore } = await import('./stores/common.store')
-    await initializeCommonStore()
-    logBoot('commonStoreReady')
-    
+
+    // PERF-FIX RC6: Parallelize independent store initializations instead of awaiting sequentially.
+    // common.store and editor.store have no mutual dependency, so they can load concurrently.
     updateSplash({
       subtitle: t('splash.restoring'),
       status: t('splash.statusRestoring')
     })
-    updateSplashProgress(0.46)
-    
-    const { initializeStore } = await import('./stores/editor.store')
-    await initializeStore()
-    logBoot('editorStoreReady')
-    
+
+    const [{ initializeCommonStore }, { initializeStore }] = await Promise.all([
+      import('./stores/common.store'),
+      import('./stores/editor.store')
+    ])
+
+    await Promise.all([
+      initializeCommonStore().then(() => {
+        logBoot('commonStoreReady')
+        updateSplashProgress(0.5)
+      }),
+      initializeStore().then(() => {
+        logBoot('editorStoreReady')
+        updateSplashProgress(0.72)
+      })
+    ])
+
     updateSplashProgress(0.72)
     try {
       const { _$_documentEditorsList } = await import('./stores/editor.store')
@@ -363,17 +391,17 @@ async function bootstrap() {
       status: t('splash.statusAlmost')
     })
     updateSplashProgress(0.9)
-    
+
     const { initializeBrowserStore } = await import('./stores/browser.store')
     initializeBrowserStore()
     logBoot('browserStoreReady')
   }
 
   await Promise.all([deepLinksPromise, authCallbackPromise, appPromise])
-  
+
   // Final UI Polish
   loadNonCriticalAssets() // Background
-  
+
   updateSplash({
     status: t('splash.statusReady'),
     subtitle: t('splash.readySubtitle')
