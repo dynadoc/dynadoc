@@ -140,7 +140,13 @@ export function CustomTagExtension(tagName: string): Node {
             if (value != null) dom.setAttribute(key, value)
           })
 
-          dom.innerHTML = node.textContent || ''
+          // This was `dom.innerHTML`, which re-parsed the document's own text as
+          // markup inside the privileged renderer. `allowedEditableTags` holds
+          // only 'var', so every other tag took this branch by default: the
+          // document did not even have to set an attribute. Text stays text.
+          // A tag that genuinely needs rich content must go through the editor
+          // schema, not through innerHTML.
+          dom.textContent = node.textContent || ''
           let pdfRendererComponent, psdRendererComponent
           // let pdfRendererComponent = {}
           // if (tagName === 'h') {

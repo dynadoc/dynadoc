@@ -149,7 +149,18 @@ export function buildAssetResponse(
     'content-length': String(length),
     // Without this the media stack reports seekable = 0 and silently refuses to
     // move, even though ranged requests would have worked.
-    'accept-ranges': 'bytes'
+    'accept-ranges': 'bytes',
+    // Every document's extracted assets share this one origin, and the scheme
+    // is registered as CSP-bypassing, so an HTML asset served here used to run
+    // as a first-class origin with no policy of its own -- same-origin with
+    // every other document's assets on the machine. These three headers give
+    // each response the policy the origin does not have: no script, no frames,
+    // no subresources beyond the asset itself, and no cross-origin reads.
+    'content-security-policy':
+      "default-src 'none'; img-src 'self' data: blob:; media-src 'self' data: blob:; " +
+      "font-src 'self' data:; style-src 'unsafe-inline'; sandbox",
+    'cross-origin-resource-policy': 'same-origin',
+    'x-content-type-options': 'nosniff'
   }
   if (range) headers['content-range'] = `bytes ${from}-${to}/${stat.size}`
 

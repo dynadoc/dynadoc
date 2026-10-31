@@ -8,7 +8,11 @@
   let bubbleEl: HTMLDivElement | null = null
   let showPreview = $state(false)
 
-  const canPreview = $derived(() => {
+  // This was `$derived(() => ...)`, so its VALUE was the function itself --
+  // always truthy. `{#if canPreview}` therefore never tested anything and any
+  // href, including a non-http scheme, reached the iframe below. `$derived.by`
+  // is the form that evaluates the body.
+  const canPreview = $derived.by(() => {
     const href = $linkState?.href ?? ''
     return /^https?:\/\//i.test(href)
   })
@@ -102,7 +106,7 @@
           title={$_('Link preview')}
           class="w-full h-40"
           src={$linkState.href}
-          sandbox="allow-same-origin allow-scripts allow-popups"
+          sandbox="allow-scripts allow-popups"
         />
       </div>
     {/if}

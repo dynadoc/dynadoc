@@ -16,12 +16,22 @@ export function findEmbeddedIframe(container: HTMLElement | null, id: string) {
   return container.querySelector(`iframe[data-embedded-id="${id}"]`) as HTMLIFrameElement | null
 }
 
+/**
+ * `targetOrigin` defaulted to '*', so any caller that forgot it broadcast the
+ * payload to whatever origin the frame currently held -- and the frame's src
+ * comes from document content. It is required now: a wildcard has to be asked
+ * for explicitly, in writing, at the call site.
+ */
 export function postMessageToEmbeddedView(
   container: HTMLElement | null,
   id: string,
   payload: any,
-  targetOrigin: string = '*'
+  targetOrigin: string
 ) {
+  if (!targetOrigin) {
+    console.warn('[embedded-view] postMessage refused: no target origin given')
+    return
+  }
   const iframe = findEmbeddedIframe(container, id)
   iframe?.contentWindow?.postMessage(payload, targetOrigin)
 }
@@ -54,13 +64,29 @@ export async function mountEmbeddedView(
     iframe.dataset.embeddedId = config.id
     iframe.id = `embedded-${config.id}`
     iframe.src = config.url || 'about:blank'
-    iframe.allow =
-      'camera *; microphone *; display-capture *; autoplay; fullscreen; clipboard-read; clipboard-write'
+    // `allow-scripts` together with `allow-same-origin` is a sandbox that
+    // removes itself: a same-origin framed page reaches into its parent and
+    // deletes the attribute. allow-same-origin is dropped.
+    //
+    // The capability list delegated camera, microphone and display-capture to
+    // `*`, i.e. to whatever origin the frame happened to hold -- and the frame
+    // src comes from a document node attribute. Delegation is now scoped to
+    // the creating origin, and capture permissions are not delegated at all.
+    const frameOrigin = (() => {
+      try {
+        return new URL(config.url || '').origin
+      } catch {
+        return null
+      }
+    })()
+    iframe.allow = frameOrigin
+      ? `autoplay ${frameOrigin}; fullscreen ${frameOrigin}`
+      : 'autoplay \'none\'; fullscreen \'none\''
     iframe.className =
       'w-full h-full border-none bg-black transition-opacity duration-300 opacity-0'
     iframe.setAttribute(
       'sandbox',
-      'allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads'
+      'allow-scripts allow-forms allow-popups allow-modals allow-downloads'
     )
     iframe.onload = () => {
       iframe.classList.remove('opacity-0')

@@ -81,8 +81,19 @@ npmRebuild: false
 publish:
   provider: generic
   url: https://example.com/auto-updates
-electronDownload:
-  mirror: https://npmmirror.com/mirrors/electron/
+# The Electron runtime download pointed at a third-party mirror while no
+# `checksums` were pinned. @electron/get then fetches SHASUMS256.txt from that
+# SAME mirror base, so the mirror certified its own artefact: a tampered
+# runtime served with a matching checksum file validated, and the result was
+# packaged into a build that is unsigned on macOS with no fuses configured.
+# The pinned npm integrity in package-lock.json anchors the downloader
+# package, never the binary it fetches.
+#
+# Removed, so the download goes to the upstream release host. If a mirror is
+# ever needed for build speed, keep it AND add `electronDownload.checksums`
+# with digests taken from upstream -- that selects the branch in @electron/get
+# which writes the checksum file locally from the pinned values instead of
+# downloading it from the mirror.
 # Global extraResources removed to prevent duplication/bloat
 
 # extraResources:

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
+  import { sanitizeCommentHtml } from '../../../../utils/commentHtml'
   import { onDestroy } from 'svelte'
   import { _$_documentEditorsList, _$_wysiwygEditorsList } from '../../../../stores/editor.store'
   import { GenericFormatingEditorCommands } from '../../../common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
@@ -378,7 +379,7 @@
 
               <div class="content-text">
                 {#if item.thread?.[0]?.html}
-                  {@html item.thread?.[0]?.html}
+                  {@html sanitizeCommentHtml(item.thread?.[0]?.html)}
                 {:else}
                   {commentText(item.thread?.[0]) || item.text}
                 {/if}
@@ -393,7 +394,7 @@
                       >
                       <span class="opacity-80">
                         {#if reply?.html}
-                          {@html reply.html}
+                          {@html sanitizeCommentHtml(reply.html)}
                         {:else}
                           {commentText(reply)}
                         {/if}

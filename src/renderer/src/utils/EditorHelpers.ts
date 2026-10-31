@@ -521,15 +521,22 @@ export default class EditorHelpers {
     }
 
     // 2️⃣ Remove inline JS/event handlers like onclick="...", onload='...', etc.
+    // The two quoted forms were all this handled, so `onerror=alert(1)` without
+    // quotes passed untouched. The third pattern closes that. This remains a
+    // regex and therefore remains defence in depth, NOT the primary control --
+    // the primary control is that the node views and widgets which used to
+    // assign this string to innerHTML or {@html} now render it as text.
     if (removeInlineJS) {
       result = result.replace(/\s+on\w+="[^"]*"/gi, '')
       result = result.replace(/\s+on\w+='[^']*'/gi, '')
+      result = result.replace(/\s+on\w+\s*=\s*[^\s"'>][^\s>]*/gi, '')
     }
 
-    // 3️⃣ Remove javascript: URLs in href or src
+    // 3️⃣ Remove javascript: URLs in href or src, quoted or bare
     if (removeJSUrls) {
       result = result.replace(/\s+(href|src)\s*=\s*"(javascript:[^"]*)"/gi, `$1=""`)
       result = result.replace(/\s+(href|src)\s*=\s*'(javascript:[^']*)'/gi, `$1=''`)
+      result = result.replace(/\s+(href|src)\s*=\s*javascript:[^\s>]*/gi, `$1=""`)
     }
 
     // 4️⃣ Remove tags not in allowedTags whitelist
@@ -541,7 +548,6 @@ export default class EditorHelpers {
       })
     }
 
-    console.log('sanitizeHtml', { result, html })
 
     return result
   }

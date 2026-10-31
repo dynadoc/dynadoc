@@ -1,0 +1,345 @@
+# rsync filter: what crosses from the private client repository into this one
+# =============================================================================
+#
+# This repository is not a mirror. It is a curated snapshot of the Dynadoc
+# desktop/web client, which is developed in a private repository and copied
+# here one commit at a time. Each sync is a single squashed commit built from a
+# filtered tree: the private history is never pushed here, because it contains
+# credentials that were committed before this repository existed.
+#
+# The original snapshot (2026-10-21) was produced by hand and the rule was
+# never written down. This file is that rule, reconstructed by diffing the two
+# trees and verified to reproduce the published file set exactly.
+#
+# Note on syntax: rsync does not accept a comment at the end of a rule line --
+# the comment would become part of the pattern. Every reason below is therefore
+# on its own line, above the rule it explains. Keep it that way.
+#
+# Last sync
+# ---------
+#   source repo : the private client repository (not named here on purpose)
+#   base commit : f1c020f8  (state this repository was last synced to)
+#   synced to   : dc43049f
+#
+#   Note: this repository was rebuilt from a single clean commit on 2026-10-28
+#   and the rebuild dropped this file, so the previous bookkeeping (base
+#   4067b17a, synced to ada0488d) no longer describes anything that exists
+#   here. The file was recovered from the renamed predecessor repository and
+#   its base reset to the rebuild commit. Treat the rebuild as the new origin.
+#
+# Always record the new base commit here when you sync. Without it the next
+# person cannot tell which client changes have already been published, and the
+# only way to find out is the tree-diffing exercise that produced this file.
+#
+# Removed at the a4012ae sync: a third kind of rule, for five files whose
+# content was scrubbed here because the client hardcoded the meeting
+# transcription endpoint as a bare ws://<address>:9001 while this repository
+# read it from VITE_TRANSCRIBE_WS_URL. Those had to be three-way merged on
+# every sync, with a published internal address as the failure mode. The client
+# now reads the same variable, four of the five files became byte-identical on
+# their own, and the rule was deleted rather than carried. If a sync ever has
+# to diverge from the client's content again, this is the shape that worked --
+# but prefer fixing it upstream, as was done here.
+#
+# How to run a sync
+# -----------------
+#   1. Export the client commit from the object store, never from a working
+#      tree (a working tree carries untracked local files and .env files):
+#
+#        git -C <client> archive --format=tar <sha> | tar -x -C /tmp/client
+#
+#   2. Copy into a branch of this repository:
+#
+#        rsync -a --delete --filter='merge scripts/client-sync.filter' \
+#              /tmp/client/ /path/to/this/worktree/
+#
+#      --delete propagates client deletions. Excluded paths are NOT deleted on
+#      this side (--delete-excluded is deliberately not used), which is what
+#      makes the "owned by this repository" section below work: one `-` rule
+#      both stops a client file coming in and stops this repository's own
+#      version being removed.
+#
+#   3. Re-run the checks below.
+#
+#   4. Commit with the hooks disabled:
+#
+#        git -c core.hooksPath=/dev/null commit ...
+#
+#      This matters. The lint-staged hook reformats every staged file, and a
+#      sync stages hundreds of them. On a normal commit it would rewrite the
+#      two locale files -- which carry ~1720 keys and 13 deliberate duplicate
+#      keys that a formatter does not preserve -- and reformat source this
+#      repository is supposed to be receiving verbatim. The point of a sync is
+#      that the published tree matches the client byte for byte: that is what
+#      makes the next diff readable and the next sync a copy rather than a
+#      reconciliation. The code arriving here was already linted in the client
+#      repository.
+#
+# Checks that must pass before committing
+# ---------------------------------------
+#   - No internal endpoint survives. Both of these must print nothing:
+#       git grep -nE '167\.86\.80\.235|212\.47\.71\.5'
+#       git grep -nE 'ws://[0-9]{1,3}(\.[0-9]{1,3}){3}'
+#   - No env file came through:
+#       git ls-files | grep -E '^\.env($|\.)' | grep -v example
+#   - The web build still works. This is what proves nothing the build needs
+#     was filtered out, since deploy/web/Dockerfile does `COPY . .` and builds:
+#       npm ci --ignore-scripts && npm run build:web
+#   - git status shows no deletions you cannot explain.
+
+
+# =============================================================================
+# 1. Owned by this repository -- never overwritten by the client
+# =============================================================================
+# These files exist to make this repository a public project. Their client
+# counterparts are internal-facing and would undo that work.
+
+# Public CI, issue templates and CODEOWNERS. Protecting the whole directory
+# also keeps out the client's web-image.yml, which pushes to the private
+# owner's container registry and names internal cluster resources.
+- /.github/
+
+# Written for outside readers rather than for the team.
+- /README.md
+
+# Public contribution process.
+- /CONTRIBUTING.md
+
+# Release automation and its state. Owned here: the client has no release-please
+# setup, so --delete removed all three on the first scripted sync -- which would
+# have broken versioning and thrown away the published changelog.
+- /.release-please-config.json
+- /.release-please-manifest.json
+- /CHANGELOG.md
+
+# Public conduct policy, with the enforcement contact address.
+- /CODE_OF_CONDUCT.md
+
+# Public vulnerability disclosure process.
+- /SECURITY.md
+
+# Licensing is a decision of this repository.
+- /LICENSE
+
+# Third-party licence inventory, maintained here.
+- /NOTICE
+
+# Provenance of this repository's own history.
+- /NOTICE-HISTORY.md
+
+# Public ignore rules; stricter about env files than the client's.
+- /.gitignore
+
+# Documents the build variables with no real values in them.
+- /.env.example
+
+# This file. It does not exist in the client, so without this rule --delete
+# would remove the very rule being applied.
+- /scripts/client-sync.filter
+
+
+# =============================================================================
+# 2. Secrets and local configuration
+# =============================================================================
+# These are tracked in the client repository, which is a problem logged against
+# it. They must never reach a public tree.
+
+# Real API and websocket endpoints.
+- /.env
+
+# Real development endpoints.
+- /.env.development
+
+# Real production endpoints.
+- /.env.production
+
+
+# =============================================================================
+# 3. Bundled binaries and build output
+# =============================================================================
+
+# ~2.7k files: LibreOffice, a bundled JRE, LanguageTool and other vendored
+# runtimes shipped with the desktop build. Fetched at package time, not source.
+- /resources/bin/
+
+# .NET intermediate build output of the DocxToHtml converter. Its C# sources
+# are published.
+- /bin/DocxToHtml/obj/
+
+# .NET publish output of the same converter.
+- /bin/DocxToHtml/publish/
+
+# Committed Gradle wrapper binary; regenerated by `gradle wrapper`.
+- /android/gradle/wrapper/gradle-wrapper.jar
+
+# Insurance only. The documented procedure exports with `git archive`, so these
+# cannot appear; they would if someone rsynced a working tree by mistake.
+# No trailing slash on .git: in a git worktree it is a file, not a directory,
+# and a directory-only rule lets --delete destroy the worktree.
+- /.git
+- /node_modules/
+- /out/
+- /dist/
+- /web/dist/
+
+
+# =============================================================================
+# 4. Internal screenshots
+# =============================================================================
+
+# Screenshots of competitors' products, captured for UI comparison. Not ours to
+# redistribute.
+- /screenshots-similar-apps/
+
+# Dated screenshots of work in progress, kept as an internal changelog.
+- /screenshots-app-progress/
+
+
+# =============================================================================
+# 5. Superseded code
+# =============================================================================
+
+# The pre-rewrite codebase, kept privately for reference only.
+- /ddoc-base-old/
+
+# The files below are dead inside the published tree -- and dead in the client
+# too, so the better fix is to delete them there and shorten this list.
+
+# Superseded by App.svelte.
+- /src/renderer/src/App old.svelte
+
+# Superseded by Main.svelte.
+- /src/renderer/src/Main default.svelte
+- /src/renderer/src/Main default responsive.svelte
+
+# Abandoned copy of src/main/browser.
+- /src/main/browser copy/
+
+# Superseded model.
+- /src/renderer/src/components/app/editor/wysiwyg/models old/
+
+# Superseded wrapper factory.
+- /src/renderer/src/components/common/react/react-wrapper-factory- old.ts
+
+# Abandoned Ollama adapter; the file is entirely commented out.
+- /src/renderer/src/components/common/chat/ai/react/utils/utils.ts
+
+# Demo and sample media carried along by vendored libraries and never
+# referenced by the build. Several megabytes for nothing.
+
+# pdf.js sample document.
+- /src/renderer/pdfjs/web/compressed.tracemonkey-pldi-09.pdf
+
+# Demo audio tracks of the vendored player.
+- /src/renderer/src/extensions/fileRenderers/Audio/lib/player/audio/
+
+# Vendored extension demo.
+- /src/renderer/src/extensions/tiptap/tiptap-extension-figure/demo.gif
+
+# Vendored component demo.
+- /src/renderer/src/components/common/web-component/ninja-keys/docs/demo-min.gif
+
+
+# =============================================================================
+# 6. Editor and tooling configuration
+# =============================================================================
+
+# Personal editor settings, launch configs and i18n-ally wiring.
+- /.vscode/
+
+# Editor config vendored along with these web components.
+- /src/renderer/src/components/common/web-component/ninja-keys/.vscode/
+- /src/renderer/src/components/common/web-component/vscode-elements/.vscode/
+
+# Vite writes these next to the config when it reloads; they are temporary.
+- /.electron.vite.config.ts.*
+- /.electron.vite.config.*.mjs.*
+
+
+# =============================================================================
+# 7. Internal documents and notes
+# =============================================================================
+
+# Notes on a self-hosted Ollama experiment.
+- /docs/AI Ollama.md
+- /docs/AI how to deploy Ollama.md
+
+# Internal backend API contract notes.
+- /docs/README For backend api dev.md
+
+# Internal notes on an unreleased local mode.
+- /docs/local-mode.md
+
+# Stale PDF export of docs/READ ME dynadoc.md, which is published.
+- /docs/READ ME dynadoc.pdf
+
+# Internship job postings: HR material, not documentation.
+- /docs/Exigence techniques/
+
+# Internal performance analysis.
+- /dynadoc_performance_analysis.md
+
+# Scratch investigation and design notes.
+- /Investigation.txt
+- /README History management.md
+- /README ddoc GUI.txt
+
+
+# =============================================================================
+# 8. Heavy and confidential test fixtures
+# =============================================================================
+# The small JSON, PNG and source fixtures under test/ are published; these are
+# not. Note the deliberate anchoring: /test/ here is the old fixture folder and
+# must not be confused with /tests/, the end-to-end suite, which IS published.
+
+# A real customer commercial proposal, in several formats. Confidential.
+- /test/word sample/
+
+# Multi-hundred-megabyte Photoshop files.
+- /test/complex/
+
+# PDF and PSD fixtures, heavy and unused by CI.
+- /test/test/assets/
+
+# Heavy binary document fixture.
+- /test/test.xddoc
+
+# Heavy binary fixture and its decoded form.
+- /test/image/test.cbor
+- /test/image/test.cbor.json
+
+# =============================================================================
+# 6. Internal documentation and test fixtures, removed at the 2026-10-28 rebuild
+# =============================================================================
+
+# When this repository was rebuilt from a single clean commit, the docs tree and
+# the test fixtures were deliberately curated out. A sync walks the client tree
+# and would otherwise re-add every one of them, silently reversing that
+# decision -- which is what this section exists to stop.
+#
+# None of these carry a credential (they were scanned); they are design notes,
+# task lists, superseded specifications and sample documents. If any of them
+# should be published, delete its rule here rather than copying the file in by
+# hand, so the next sync agrees with the one before it.
+
+# The eight documents the rebuild kept. These DO stay in sync with the client,
+# so they are included before the catch-all below -- rsync takes the first
+# matching rule, so order here is load-bearing.
++ /docs/FIRST_TICKET.md
++ /docs/GLOSSARY.md
++ /docs/ONBOARDING.md
++ /docs/READ ME dynadoc.md
++ /docs/README ABOUT XDDOC.md
++ /docs/README export to odt,ods...md
++ /docs/architecture.md
++ /docs/extensions.md
+
+# Everything else the client carries under docs/ was curated out. A blanket
+# `- /docs/` would have frozen the eight above as well, which is the mistake
+# this shape avoids.
+- /docs/**
+
+# The rebuild kept no test fixtures at all, so this one is a clean sweep.
+- /test/
+
+- /FILE_WATCH_ARCHITECTURE.md

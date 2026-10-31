@@ -29,6 +29,24 @@ export const ALLOWED_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
  * handing drive content to the OS handler at all.
  */
 export const EXECUTABLE_EXTENSIONS: ReadonlySet<string> = new Set([
+  // Measured against this set after `open-file` was put behind it: the list was
+  // already broad (scripts, installers, shortcuts, AppImage, .jar, .desktop),
+  // but it missed four kinds of thing the OS still acts on.
+  // - a disk image mounts a volume the attacker controls
+  // - an internet-location file opens a URL of the attacker's choosing
+  // - Java Web Start executes remote code wherever a JRE is present
+  // - .mjs is as executable as .js, and a Shell Command File still runs
+  '.iso',
+  '.vhd',
+  '.vhdx',
+  '.img',
+  '.webloc',
+  '.inetloc',
+  '.jnlp',
+  '.scf',
+  '.mjs',
+  '.widget',
+  '.gadget',
   // macOS
   '.app',
   '.command',

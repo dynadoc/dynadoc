@@ -85,7 +85,12 @@
       class:is-blur={__shieldMethod === 'blur'}
       style={__maskWidth ? `width: ${__maskWidth}px;` : ''}
     >
-      {@html __protectedContent}
+      <!-- Was {@html}. This value comes straight from the node's own `value`
+           attribute, and the helper that looks like a guard returns its input
+           unchanged when `originalValueLength` is absent -- which an attacker
+           simply omits. The content this widget exists to conceal is ciphertext
+           or opaque text, so it renders as text. -->
+      {__protectedContent}
       {#if __shieldMethod === 'hidden'}
         <span class="secured-hidden-overlay"></span>
       {/if}
