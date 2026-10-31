@@ -457,17 +457,23 @@ export class TabManager {
     }, 5 * 60 * 1000)
   }
 
+  /**
+   * This refused two schemes and admitted everything else, including the app's
+   * own privileged `ddoc:` scheme -- so a renderer-supplied URL could point a
+   * tab at the asset origin or at any scheme nobody had thought of. An
+   * allowlist is the only shape that fails safe as schemes are added.
+   */
+  private static readonly ALLOWED_TAB_PROTOCOLS = new Set(['https:', 'http:', 'about:'])
+
   private sanitizeUrl(url: string): string | null {
     if (!url) return null
     const trimmed = url.trim()
     if (!trimmed) return null
-    if (trimmed.startsWith('javascript:')) return null
-    if (trimmed.startsWith('file:')) return null
     const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)
     const normalized = hasScheme ? trimmed : `https://${trimmed}`
     try {
       const parsed = new URL(normalized)
-      if (parsed.protocol === 'file:' || parsed.protocol === 'javascript:') return null
+      if (!TabManager.ALLOWED_TAB_PROTOCOLS.has(parsed.protocol)) return null
       return parsed.toString()
     } catch {
       return null

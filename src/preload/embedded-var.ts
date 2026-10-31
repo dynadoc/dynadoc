@@ -179,7 +179,15 @@ window.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // These listeners sit on the document the page's own main world shares with
+  // this isolated world. Listeners are per-world, but event DISPATCH is not --
+  // so page script could fire synthetic 'input' and 'keydown' events, open the
+  // host's variable dropdown, walk it with ArrowDown, commit with Enter, and
+  // read each committed value back out of its own element. That enumerated the
+  // host document's variable names, values and granted absolute local paths.
+  // isTrusted is false for anything dispatched from script.
   document.addEventListener('input', (event) => {
+    if (!event.isTrusted) return
     const el = isAllowedElement(event.target)
     if (!el) {
       emitClose()
@@ -203,6 +211,7 @@ window.addEventListener('DOMContentLoaded', () => {
   })
 
   document.addEventListener('keydown', (event) => {
+    if (!event.isTrusted) return
     if (!isOpen) return
     if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return
     ipcRenderer.send('embedded:var-input-key', { key: event.key })

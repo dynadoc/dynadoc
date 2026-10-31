@@ -67,6 +67,7 @@ import { spawn, execFile, exec } from 'child_process'
 
 // electron-backend.js (or main process)
 import http from 'http'
+import crypto from 'crypto'
 import WebSocket, { WebSocketServer } from 'ws'
 import SecurityHelpers from './utils/SecurityHelpers'
 import {
@@ -428,19 +429,38 @@ function startYWebsocketServer(port: number, name: string) {
        setupWSConnection(ws, req, { docName: roomName })
      }) */
 
-    server.listen(port, () => {
-      console.log(`✅ ${name} running at ws://localhost:${port}`)
+    // `listen(port, cb)` with no host binds EVERY interface, so these two were
+    // reachable from the network on a desktop app -- and because the
+    // connection handler above is commented out, the upgrade completed and the
+    // socket was then held open forever. Loopback only.
+    //
+    // There was also no 'error' listener. `listen` reports EADDRINUSE
+    // asynchronously as an event, which the surrounding try/catch cannot
+    // intercept, so another process holding 1234 (y-websocket's own default)
+    // produced an uncaught exception and a main-process error dialog at
+    // startup instead of a log line.
+    server.on('error', (error) => {
+      console.error(`${name} could not listen on 127.0.0.1:${port}`, error)
+    })
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`✅ ${name} running at ws://127.0.0.1:${port}`)
     })
 
     return server
   } catch (error) {
-    console.error(`Failed to run ${name} running at ws://localhost:${port}`, error)
+    console.error(`Failed to run ${name} running at ws://127.0.0.1:${port}`, error)
 
     return null
   }
 }
 
-// Start servers for your editors
+// Start servers for your editors.
+//
+// Nothing connects to these: every ws://localhost:1234 client in the tree is
+// inside a comment block or has no importer, and live collaboration goes to
+// the remote bridge over wss instead. They are kept, bound to loopback, rather
+// than deleted, because deleting them is a separate decision -- but they
+// should go if nothing claims them.
 const _wysiwygEditorServer = startYWebsocketServer(1234, 'WYSIWYG Editor')
 const _imageEditorServer = startYWebsocketServer(1235, 'Image Editor')
 
@@ -468,18 +488,66 @@ let _ltProcess
 } */
 
 // Download a file helper
+/**
+ * Digests for anything this function may fetch, keyed by URL.
+ *
+ * EMPTY on purpose. This downloader accepted whatever arrived -- no status
+ * check, no redirect handling, no digest, no signature -- and the caller
+ * unpacked roughly 200MB of it into the packaged app's own Resources
+ * directory, beside app.asar, on EVERY launch. An ordinary archive entry named
+ * app.asar therefore overwrote the application, with no traversal bug needed
+ * and nothing downstream re-verifying the bundle: the macOS build is unsigned
+ * and no fuses are configured.
+ *
+ * Provisioning is refused until a digest taken FROM UPSTREAM is pinned here.
+ * Not from the CDN that serves the archive -- that is the same party
+ * certifying itself, which is the electronDownload.mirror mistake.
+ *
+ * For whoever enables this: LanguageTool cannot start on a packaged build
+ * today regardless. ensureJRE extracts to one root while getBinaryPath looks
+ * under <root>/bin/<platform>, and ensureLanguageTool wants a jar path
+ * electron-builder cannot produce. Fixing those mismatches WITHOUT pinning
+ * digests first would make an attacker-supplied binary executable and run it.
+ * Pin the digests in the same change, or before it.
+ */
+const PINNED_DOWNLOAD_SHA256: Record<string, string> = {}
+
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const expected = PINNED_DOWNLOAD_SHA256[url]
+    if (!expected) {
+      return reject(
+        new Error(`refusing to download ${url}: no pinned sha256 (see PINNED_DOWNLOAD_SHA256)`)
+      )
+    }
+    const request = https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        return reject(new Error(`refusing ${url}: HTTP ${res.statusCode}`))
+      }
+      const hash = crypto.createHash('sha256')
       const file = fs.createWriteStream(dest)
-      console.log('downloadFile...', url, dest)
+      res.on('data', (chunk) => hash.update(chunk))
+      res.on('error', reject)
       res.pipe(file)
-      file.on('finish', () => {
-        console.log('downloaded: finish', url, dest)
-        file.close(resolve)
-      })
       file.on('error', reject)
+      file.on('finish', () => {
+        file.close(() => {
+          const actual = hash.digest('hex')
+          if (actual !== expected) {
+            fs.rm(dest, { force: true }, () => undefined)
+            return reject(
+              new Error(`digest mismatch for ${url}: expected ${expected}, got ${actual}`)
+            )
+          }
+          resolve(dest)
+        })
+      })
     })
+    // Only the file stream had an error listener, so launching offline or with
+    // DNS failing for the CDN raised an uncaught exception in the main process
+    // rather than degrading quietly as intended.
+    request.on('error', reject)
   })
 }
 /* function downloadFile2(url, dest) {
@@ -678,9 +746,14 @@ async function ensureJREOld(resourcePath) {
   console.log('jreUrl:', jreUrl)
   const zipPath = path.join(os.tmpdir(), 'jre.zip')
   await downloadFile(jreUrl, zipPath)
-  console.log('unzipFile finished:', zipPath, resourcePath)
-  await unzipFile(zipPath, resourcePath)
-  console.log('unzipFile:', zipPath, resourcePath)
+  // This extracted into `resourcePath`, which is process.resourcesPath on a
+  // packaged build -- the directory holding app.asar. Downloaded content has no
+  // business inside the application bundle.
+  const runtimeRoot = path.join(app.getPath('userData'), 'runtimes')
+  fs.mkdirSync(runtimeRoot, { recursive: true })
+  console.log('unzipFile finished:', zipPath, runtimeRoot)
+  await unzipFile(zipPath, runtimeRoot)
+  console.log('unzipFile:', zipPath, runtimeRoot)
 
   console.log('getJavaBin:', getJavaBin(resourcePath))
   // Assume unzip creates a folder with 'jre' inside
@@ -734,9 +807,14 @@ async function ensureJRE(resourcePath) {
   console.log('jreUrl:', jreUrl)
   const zipPath = path.join(os.tmpdir(), 'jre.zip')
   await downloadFile(jreUrl, zipPath)
-  console.log('unzipFile finished:', zipPath, resourcePath)
-  await unzipFile(zipPath, resourcePath)
-  console.log('unzipFile:', zipPath, resourcePath)
+  // This extracted into `resourcePath`, which is process.resourcesPath on a
+  // packaged build -- the directory holding app.asar. Downloaded content has no
+  // business inside the application bundle.
+  const runtimeRoot = path.join(app.getPath('userData'), 'runtimes')
+  fs.mkdirSync(runtimeRoot, { recursive: true })
+  console.log('unzipFile finished:', zipPath, runtimeRoot)
+  await unzipFile(zipPath, runtimeRoot)
+  console.log('unzipFile:', zipPath, runtimeRoot)
 
   console.log('getJavaBin:', getJavaBin(resourcePath))
   // Assume unzip creates a folder with 'jre' inside
@@ -2227,7 +2305,15 @@ app.whenReady().then(async () => {
             return { path: p, status: 'linked', sizeBytes: 0, isDir: false }
           }
           try {
-            const stats = await stat(p)
+            // The paths here are harvested from the document's own markup, so
+            // they are attacker-chosen on a hostile document. Without the
+            // policy this stat'd anything and reported existence and size
+            // distinguishably — a filesystem oracle, and on win32 a UNC path
+            // made the OS authenticate to whatever host the document named.
+            // requirePath throws on a refusal, and the catch below answers
+            // 'missing', so a refused path cannot be told from an absent one.
+            const resolved = requirePath(p)
+            const stats = await stat(resolved)
             const isDir = stats.isDirectory()
             const status = cachePath && p.startsWith(cachePath) ? 'embedded' : 'linked'
             return { path: p, status, sizeBytes: isDir ? 0 : stats.size, isDir }
@@ -2242,7 +2328,13 @@ app.whenReady().then(async () => {
       const usedSet = new Set(paths.map((p) => p.toString()))
       const unused: Array<{ path: string; status: string; sizeBytes: number; isDir: boolean }> = []
 
-      const assetsRoot = path.join(cachePath, 'assets')
+      // The walk root came from the renderer too, so it gets the same policy.
+      let assetsRoot: string
+      try {
+        assetsRoot = requirePath(path.join(cachePath, 'assets'))
+      } catch {
+        return { items: results, unused: [] }
+      }
       const walk = async (dir: string) => {
         let entries: any[] = []
         try {
@@ -2318,7 +2410,15 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('preload:get-path', (_event, name: string) => {
     if (!name || typeof name !== 'string') return null
-    const fsPath = path.join(__dirname, '../preload', `${name}.js`)
+    // The result of this is fed straight to a view's webPreferences.preload, so
+    // a name carrying `..` would select a script outside the preload directory.
+    // A sandboxed preload still receives ipcRenderer, so that would reach every
+    // handler on this surface. Accept a bare file name and nothing else.
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) return null
+    const preloadDir = path.resolve(__dirname, '../preload')
+    const fsPath = path.resolve(preloadDir, `${name}.js`)
+    const rel = path.relative(preloadDir, fsPath)
+    if (rel.startsWith('..') || path.isAbsolute(rel)) return null
     return pathToFileURL(fsPath).toString()
   })
 
@@ -2374,6 +2474,13 @@ app.whenReady().then(async () => {
       isSecured?: boolean,
       stepupToken?: string
     ) => {
+      // Both ends come from the renderer. The archive library refuses
+      // traversing entry names, but that does not help when the caller chooses
+      // the extraction ROOT: ordinary entry names would then be written
+      // anywhere the process can write, which is the write primitive the
+      // open-file and preload:get-path routes needed.
+      zipFilePath = requirePath(zipFilePath)
+      outputDir = requirePath(outputDir)
       console.log('Unddocifying', zipFilePath, 'to', outputDir)
       if (isSecured) {
         const output = await runDdocServerJson('sddoc:unpack', {
@@ -2744,22 +2851,29 @@ app.whenReady().then(async () => {
   ipcMain.handle('print-file', async (_event, payload: { filePath: string; options?: any }) => {
     const filePath = payload?.filePath
     if (!filePath) return false
+    // Three separate problems here. The path was never checked, so any local
+    // file could be rendered in a visible window. `silent` sat BEFORE the
+    // caller's spread, so a caller could set silent:true and a deviceName and
+    // print without a dialog. And loadFile already resolves on did-finish-load,
+    // so waiting for that same event again never returned: the window was never
+    // closed and stayed on screen showing the file.
+    const target = requirePath(filePath)
     const win = new BrowserWindow({ show: true })
-    await win.loadFile(filePath)
-    await new Promise<void>((resolve) => {
-      win.webContents.once('did-finish-load', () => resolve())
-    })
-    await new Promise<void>((resolve) => {
-      win.webContents.print(
-        {
-          printBackground: true,
-          silent: false,
-          ...payload?.options
-        },
-        () => resolve()
-      )
-    })
-    await win.close()
+    try {
+      await win.loadFile(target)
+      await new Promise<void>((resolve) => {
+        win.webContents.print(
+          {
+            printBackground: true,
+            ...payload?.options,
+            silent: false
+          },
+          () => resolve()
+        )
+      })
+    } finally {
+      if (!win.isDestroyed()) win.close()
+    }
     return true
   })
 
@@ -2872,8 +2986,17 @@ app.whenReady().then(async () => {
   )
 
   ipcMain.handle('open-file', async (_event, filePath) => {
+    // This handed the raw renderer argument to the OS opener. The migration that
+    // put read-file, rename-file and delete-file behind requirePath missed this
+    // one, and it was the worst of the three to miss: `shell.openPath` lets the
+    // OS choose a handler and run it, and a UNC path survives normalize on
+    // win32, so the target did not even have to exist on disk. The sibling
+    // drive:open-item route already refuses executables; both symbols needed
+    // here were already imported.
     try {
-      await shell.openPath(filePath)
+      const target = requirePath(filePath)
+      if (isExecutablePath(target)) return false
+      await shell.openPath(target)
       return true
     } catch {
       return false
@@ -6953,15 +7076,44 @@ Hello from Dynadoc \\LaTeX!
   })
 })
 
-// Modify the Content Security Policy to allow loading scripts from blob URLs
-/* app.on('web-contents-created', (event, contents) => {
-  contents.on('will-attach-webview', (event, webPreferences, params) => {
-    webPreferences.nodeIntegration = true
-    webPreferences.webSecurity = false // Disables web security
-    webPreferences.allowRunningInsecureContent = true // Allows loading insecure content (HTTP/WS)
-    delete webPreferences.sandbox // Disables sandbox mode
+// This block used to sit here commented out, under a header comment about blob
+// URLs that invited someone to uncomment it. What it actually did was set
+// nodeIntegration = true, webSecurity = false and allowRunningInsecureContent =
+// true, and delete the sandbox, on every attaching <webview>. The main window
+// really does enable webviewTag, and a <webview>'s src comes from a document
+// node attribute, so uncommenting those four lines would have handed
+// document-chosen remote content a non-isolated, non-sandboxed renderer with
+// Node integration.
+//
+// It is replaced by the hook that was missing: the same event, hardening
+// instead of weakening. Guest content is sandboxed, isolated, has no Node, and
+// carries no renderer-chosen preload.
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (_attachEvent, webPreferences, params) => {
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    // A guest must not be able to name its own preload script.
+    delete webPreferences.preload
+    delete (webPreferences as Record<string, unknown>).preloadURL
+
+    // Only http(s) guests. The src reaches here from document content, so
+    // `ddoc:`, `file:` and anything else is refused outright.
+    try {
+      const protocol = new URL(String(params.src || '')).protocol
+      if (protocol !== 'https:' && protocol !== 'http:') {
+        console.warn(`[webview] refused guest with protocol ${protocol}`)
+        _attachEvent.preventDefault()
+      }
+    } catch {
+      console.warn('[webview] refused guest with an unparseable src')
+      _attachEvent.preventDefault()
+    }
   })
-}) */
+})
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits

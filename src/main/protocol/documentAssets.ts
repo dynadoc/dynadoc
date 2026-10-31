@@ -104,6 +104,18 @@ export function handleDocumentAssetProtocol(): void {
         headers: { 'content-type': 'text/plain; charset=utf-8' }
       })
     }
+    // The predicate above saw the CANDIDATE string; this opens
+    // `resolved.filePath`. For an allowed path the two differ only textually
+    // unless a symlink sits under a granted root with a traversal after it, in
+    // which case the check and the use disagreed. Checking the resolved path
+    // too closes that gap for the price of one call.
+    if (!isBundle && !filesystemPolicy().check(resolved.filePath).allowed) {
+      console.warn(`[asset-protocol] resolved path refused by policy: ${request.url}`)
+      return new Response('forbidden', {
+        status: 403,
+        headers: { 'content-type': 'text/plain; charset=utf-8' }
+      })
+    }
     return buildAssetResponse(resolved.filePath, request.headers.get('range'), request.method)
   })
 }

@@ -38,11 +38,33 @@
     { id: 'document', label: 'Document', hint: 'Protect all text blocks in current document' }
   ]
 
-  const AUTH_METHODS: Array<{ id: AuthMethod; label: string; icon: string; description: string }> = [
+  // `2fa` and `biometric` were offered as peers of `password` but had no key
+  // derivation path: choosing one stored the selected text in CLEAR behind a
+  // CSS class. The command now refuses them, so they must not look selectable
+  // -- a silent refusal is worse than a disabled control.
+  const AUTH_METHODS: Array<{
+    id: AuthMethod
+    label: string
+    icon: string
+    description: string
+    unavailable?: boolean
+  }> = [
     { id: 'none', label: 'No Auth', icon: 'ph-shield', description: 'Visual protection only' },
     { id: 'password', label: 'Password', icon: 'ph-key', description: 'Password required to unlock' },
-    { id: '2fa', label: '2-Factor', icon: 'ph-shield-check', description: 'Time-based verification' },
-    { id: 'biometric', label: 'Biometric', icon: 'ph-fingerprint', description: 'Reserved for local biometric flow' }
+    {
+      id: '2fa',
+      label: '2-Factor',
+      icon: 'ph-shield-check',
+      description: 'Not implemented yet',
+      unavailable: true
+    },
+    {
+      id: 'biometric',
+      label: 'Biometric',
+      icon: 'ph-fingerprint',
+      description: 'Not implemented yet',
+      unavailable: true
+    }
   ]
 
   let selectedScope = $state<Scope>('selection')
@@ -434,8 +456,11 @@
       <div class="space-y-1">
         {#each AUTH_METHODS as method}
           <button
-            onclick={() => (authMethod = method.id)}
+            disabled={method.unavailable}
+            title={method.unavailable ? 'Not implemented yet' : ''}
+            onclick={() => !method.unavailable && (authMethod = method.id)}
             class="w-full flex items-center gap-3 px-3 py-2 bg-base-100 border rounded-sm transition-all
+            {method.unavailable ? 'opacity-40 cursor-not-allowed' : ''}
             {authMethod === method.id
               ? 'border-primary bg-[#252a33]'
               : 'border-[#3e3e3e] hover:bg-base-100'}"
@@ -583,8 +608,11 @@
         <div class="space-y-1">
           {#each AUTH_METHODS as method}
             <button
-              onclick={() => (authMethod = method.id)}
+              disabled={method.unavailable}
+              title={method.unavailable ? 'Not implemented yet' : ''}
+              onclick={() => !method.unavailable && (authMethod = method.id)}
               class="w-full flex items-center justify-between px-3 py-2 bg-base-100 border rounded-sm transition-all
+              {method.unavailable ? 'opacity-40 cursor-not-allowed' : ''}
               {authMethod === method.id ? 'border-primary bg-primary/10' : 'border-base-content/15 hover:bg-base-content/8'}"
             >
               <span class="flex items-center gap-2 text-[11px]">
@@ -806,9 +834,9 @@
             class="w-full bg-base-100 border border-[#3e3e3e] rounded-sm px-2 py-1 text-[11px]"
             placeholder={$_('Password hint / policy label')}
           />
-          <label class="flex items-center gap-2 text-[10px]">
-            <input type="checkbox" bind:checked={docRequire2fa} />
-            {$_('Require 2FA for unlock')}
+          <label class="flex items-center gap-2 text-[10px] opacity-40 cursor-not-allowed">
+            <input type="checkbox" bind:checked={docRequire2fa} disabled />
+            {$_('Require 2FA for unlock')} ({$_('not implemented yet')})
           </label>
         </section>
       {/if}

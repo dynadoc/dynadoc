@@ -154,6 +154,7 @@
     "cbor2": "^2.3.0",
     "chokidar": "^5.0.0",
     "crypto-js": "^4.2.0",
+    "dompurify": "^3.3.1",
     "dree": "^5.1.5",
     "echarts": "^6.1.0",
     "electron-store": "^11.0.2",

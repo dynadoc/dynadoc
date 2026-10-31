@@ -48,6 +48,12 @@ export interface SecuredContentPolicy {
   scope?: SecuredScope
   shieldMethod?: ShieldMethod
   securityMethod?: SecurityMethod
+  /**
+   * Transient only: it travels from the pane to the encrypt call and is
+   * deliberately NOT a node attribute any more. As an attribute it was
+   * serialised into the saved document beside the ciphertext it unlocks, and
+   * synced to every collaborator.
+   */
   securitySecret?: string
   type?: 'inline' | 'block'
   author?: string
@@ -208,8 +214,7 @@ export const CustomSecuredContentExtension = Node.create({
       styleWidth: { default: '' }, // the width to apply to the tag to match the original value length
       shieldMethod: { default: "lock" }, // "blur" | "visible"| "hidden" // hidden hide the tag like programming style comment
       securityMethod: { default: null },  // null | "password" | "2fa"
-      securitySecret: { default: '' },    // exported TOTP secret as string
-      decryptedValue: { default: '' },    // decripted value after user succesfully authenticate. NEVER put this in renderHTML() to avoid saviing the decrypted text in the file
+          decryptedValue: { default: '' },    // decripted value after user succesfully authenticate. NEVER put this in renderHTML() to avoid saviing the decrypted text in the file
       originalValueLength: { default: null },    // the length of the original value before the encryption
       includeUsers: { default: [] },
       excludeUsers: { default: [] },
@@ -255,7 +260,6 @@ export const CustomSecuredContentExtension = Node.create({
         styleWidth: node.attrs.styleWidth,
         shieldMethod: node.attrs.shieldMethod,
         securityMethod: node.attrs.securityMethod,
-        securitySecret: node.attrs.securitySecret,
         originalValueLength: node.attrs.originalValueLength,
         includeUsers: JSON.stringify(node.attrs.includeUsers || []),
         excludeUsers: JSON.stringify(node.attrs.excludeUsers || []),
@@ -388,15 +392,65 @@ export const CustomSecuredContentExtension = Node.create({
   addStorage() {
     return {
       // securedContentWrapperId: '',
-      encrypt(text: string, key: string) {
-        return CryptoJS.AES.encrypt(text, key).toString()
+      // `CryptoJS.AES.encrypt(text, passphrase)` derives its key with
+      // EVP_BytesToKey: MD5, one iteration. That is a derivation in name only
+      // and gives a typed passphrase essentially no stretching. These two use
+      // PBKDF2-SHA256 over a per-node random salt with an explicit iteration
+      // count, and persist salt, IV and iterations beside the ciphertext --
+      // never the passphrase, which no longer reaches the document at all.
+      //
+      // Format: `v2:<iterations>:<salt hex>:<iv hex>:<ciphertext base64>`.
+      // The prefix exists so a reader can tell this from the previous output,
+      // which carried its own salt inside the CryptoJS envelope.
+      encrypt(text: string, passphrase: string) {
+        const salt = CryptoJS.lib.WordArray.random(16)
+        const iv = CryptoJS.lib.WordArray.random(16)
+        const iterations = 310000
+        const derived = CryptoJS.PBKDF2(passphrase, salt, {
+          keySize: 256 / 32,
+          iterations,
+          hasher: CryptoJS.algo.SHA256
+        })
+        const encrypted = CryptoJS.AES.encrypt(text, derived, {
+          iv,
+          mode: CryptoJS.mode.CBC,
+          padding: CryptoJS.pad.Pkcs7
+        })
+        return [
+          'v2',
+          String(iterations),
+          salt.toString(CryptoJS.enc.Hex),
+          iv.toString(CryptoJS.enc.Hex),
+          encrypted.ciphertext.toString(CryptoJS.enc.Base64)
+        ].join(':')
       },
-      decrypt(cipher: string, key: string) {
+      decrypt(cipher: string, passphrase: string) {
         try {
-          return CryptoJS.AES.decrypt(cipher, key).toString(CryptoJS.enc.Utf8)
+          const parts = String(cipher || '').split(':')
+          if (parts[0] !== 'v2' || parts.length !== 5) {
+            // Pre-v2 output. It can only be read with the passphrase that was
+            // saved next to it, which is exactly what has been removed, so
+            // there is nothing to fall back to.
+            return false
+          }
+          const [, iterationsRaw, saltHex, ivHex, ciphertextB64] = parts
+          const iterations = Number(iterationsRaw)
+          if (!Number.isFinite(iterations) || iterations < 1) return false
+          const derived = CryptoJS.PBKDF2(passphrase, CryptoJS.enc.Hex.parse(saltHex), {
+            keySize: 256 / 32,
+            iterations,
+            hasher: CryptoJS.algo.SHA256
+          })
+          const plain = CryptoJS.AES.decrypt(
+            CryptoJS.lib.CipherParams.create({
+              ciphertext: CryptoJS.enc.Base64.parse(ciphertextB64)
+            }),
+            derived,
+            { iv: CryptoJS.enc.Hex.parse(ivHex), mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 }
+          ).toString(CryptoJS.enc.Utf8)
+          return plain || false
         } catch {
           return false
-          // return 'Invalid key'
         }
       },
 
@@ -502,8 +556,25 @@ export const CustomSecuredContentExtension = Node.create({
                 })
               }
 
+              // This computed a ciphertext only for 'password' and otherwise
+              // assigned the selection UNCHANGED -- so choosing '2fa' or
+              // 'biometric' in the pane stored the protected text verbatim,
+              // behind nothing but a CSS class. Neither method has a key
+              // derivation path, so the only honest behaviour is to refuse
+              // rather than to appear to protect.
+              if (securityMethod && securityMethod !== 'password') {
+                console.warn(
+                  `[secured-content] refusing to apply '${securityMethod}': not implemented. ` +
+                    'It would have stored the selected text in clear.'
+                )
+                return false
+              }
+              if (securityMethod === 'password' && !securitySecret) {
+                console.warn('[secured-content] refusing to apply a password policy with no secret.')
+                return false
+              }
               const encryptedValue =
-                securityMethod === 'password' && securitySecret
+                securityMethod === 'password'
                   ? editor.storage.shield.encrypt(selectedText, securitySecret)
                   : selectedText
 
@@ -515,7 +586,6 @@ export const CustomSecuredContentExtension = Node.create({
                   author,
                   shieldMethod,
                   securityMethod,
-                  securitySecret: securityMethod ? securitySecret : '',
                   decryptedValue: '',
                   originalValueLength: selectedText.length,
                   includeUsers,
@@ -615,7 +685,6 @@ export const CustomSecuredContentExtension = Node.create({
               ...node.attrs,
               ...(policy.shieldMethod ? { shieldMethod: policy.shieldMethod } : {}),
               ...(policy.securityMethod !== undefined ? { securityMethod: policy.securityMethod } : {}),
-              ...(policy.securitySecret !== undefined ? { securitySecret: policy.securitySecret } : {}),
               ...(policy.author ? { author: policy.author } : {}),
               ...(policy.includeUsers ? { includeUsers: policy.includeUsers } : {}),
               ...(policy.excludeUsers ? { excludeUsers: policy.excludeUsers } : {}),

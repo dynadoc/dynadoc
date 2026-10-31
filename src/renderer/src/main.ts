@@ -149,13 +149,20 @@ const updateSplash = (payload: { title?: string; subtitle?: string; status?: str
   if (status && payload.status) status.textContent = payload.status
   if (recentTitle && payload.recentTitle) recentTitle.textContent = payload.recentTitle
   if (recentList && payload.recentDocs) {
-    recentList.innerHTML = payload.recentDocs
-      .slice(0, 5)
-      .map(
-        (name) =>
-          `<li class="splash-recent-item"><span class="splash-recent-dot"></span>${name}</li>`
-      )
-      .join('')
+    // This built the list with innerHTML from a template interpolating each
+    // document name, three lines below three correct textContent uses. A name
+    // is a file name -- text, and on macOS and Linux a file name may legally
+    // contain markup. Built with the DOM API, it stays text.
+    recentList.replaceChildren(
+      ...payload.recentDocs.slice(0, 5).map((name) => {
+        const item = document.createElement('li')
+        item.className = 'splash-recent-item'
+        const dot = document.createElement('span')
+        dot.className = 'splash-recent-dot'
+        item.append(dot, document.createTextNode(name))
+        return item
+      })
+    )
   }
   if (localeLabel && payload.localeLabel) {
     localeLabel.textContent = payload.localeLabel

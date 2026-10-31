@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { sanitizeCommentHtml } from '../../../../utils/commentHtml'
   import type { Editor } from '@tiptap/core'
   import { GenericFormatingEditorCommands } from '../../../../components/common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
   import { slide } from 'svelte/transition'
@@ -467,7 +468,7 @@
                   {:else}
                     <div class="reply-body">
                       {#if entry?.html}
-                        {@html entry.html}
+                        {@html sanitizeCommentHtml(entry.html)}
                       {:else}
                         {entry?.text || ''}
                       {/if}

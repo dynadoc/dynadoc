@@ -40,7 +40,7 @@
   }: Props = $props()
 
   // Derived values: Use the prop if passed, otherwise fall back to the Tiptap node attribute
-  let _src = $derived(__src ?? node.attrs.src)
+  let _src = $derived(safeFrameSrc(__src ?? node.attrs.src))
   let _onSubmit = $derived(__onSubmit)
   let _height = $derived(__height ?? node.attrs.height)
   let _width = $derived(__width ?? node.attrs.width)
@@ -79,6 +79,24 @@
       return 'https://' + value
     }
     return value
+  }
+
+  /**
+   * `normalizeUrl` only prefixes a scheme; a value that already HAS one passes
+   * through untouched, so `ddoc:` or `javascript:` survived it. And the frame
+   * src was derived straight from the node attribute, which never went through
+   * even that. Both paths now land here, and only http(s) gets out.
+   */
+  function safeFrameSrc(value: unknown): string {
+    const raw = typeof value === 'string' ? value.trim() : ''
+    if (!raw) return ''
+    try {
+      const parsed = new URL(normalizeUrl(raw))
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return ''
+      return parsed.toString()
+    } catch {
+      return ''
+    }
   }
 
   function submit(url?: string) {
@@ -268,8 +286,8 @@
                   title={$_('Embedded service')}
                   class="w-[{_maxPageWidth}px] h-[{_maxPageHeight}px] border-none bg-black"
                   class:is-clipping={_isLocked}
-                  allow="camera *; microphone *; display-capture *; autoplay; fullscreen; clipboard-read; clipboard-write"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+                  allow="autoplay; fullscreen"
+                  sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
                   onload={handleLoadStop}
                   onerror={() => {
                     _isLoading = false

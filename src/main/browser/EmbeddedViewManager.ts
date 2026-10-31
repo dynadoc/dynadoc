@@ -44,10 +44,13 @@ export class EmbeddedViewManager {
         this.viewPermissions.set(config.id, new Set(config.permissions))
       }
       if (config.url && existing.webContents.getURL() !== config.url) {
+        this.recordAllowedOrigin(config.id, config.url)
         existing.webContents.loadURL(config.url).catch(() => undefined)
       }
       return
     }
+
+    this.recordAllowedOrigin(config.id, config.url)
 
     const preloadPath =
       config.preloadPath?.startsWith('file://') ? fileURLToPath(config.preloadPath) : config.preloadPath
@@ -104,16 +107,59 @@ export class EmbeddedViewManager {
     }
   }
 
+  /**
+   * An embedded view keeps the preload it was given at construction for its
+   * whole life, because web preferences are fixed per WebContents. With no
+   * navigation control the page could walk itself to any origin and take that
+   * preload along -- so a link in hosted content, a vendor redirect or an XSS
+   * on a vendor origin handed the channel to arbitrary remote content. The tab
+   * manager already does this; this one did not.
+   */
+  private allowedOrigins = new Map<string, Set<string>>()
+
+  private recordAllowedOrigin(id: string, url?: string) {
+    if (!url) return
+    try {
+      const origin = new URL(url).origin
+      const set = this.allowedOrigins.get(id) ?? new Set<string>()
+      set.add(origin)
+      this.allowedOrigins.set(id, set)
+    } catch {
+      // an unparseable creating URL grants nothing
+    }
+  }
+
+  private isAllowedForView(id: string, url: string): boolean {
+    if (!url) return false
+    if (url === 'about:blank') return true
+    const allowed = this.allowedOrigins.get(id)
+    if (!allowed || allowed.size === 0) return false
+    try {
+      return allowed.has(new URL(url).origin)
+    } catch {
+      return false
+    }
+  }
+
   navigate(id: string, url: string) {
     const view = this.views.get(id)
     if (!view) return
+    if (!this.isAllowedForView(id, url)) {
+      console.warn(`[embedded-view] refused navigation to ${url} for view ${id}`)
+      return
+    }
     view.webContents.loadURL(url).catch(() => undefined)
   }
 
   executeJavaScript(id: string, script: string) {
     const view = this.views.get(id)
     if (!view) return
-    return view.webContents.executeJavaScript(script, true)
+    // `true` here marked every injection as a user gesture, satisfying
+    // gesture-gated browser APIs in whatever origin the view holds. Nothing
+    // validated the script or the target, and the surface is reachable from
+    // the renderer, so a document-content injection became script execution
+    // inside a third-party origin. The gesture claim is withdrawn.
+    return view.webContents.executeJavaScript(script, false)
   }
 
   insertCSS(id: string, css: string) {
@@ -236,6 +282,16 @@ export class EmbeddedViewManager {
     view.webContents.on('console-message', (_e, level, message, line, sourceId) =>
       emit('console-message', { level, message, line, sourceId })
     )
+
+    const refuseForeign = (event: { preventDefault: () => void }, url: string) => {
+      if (!this.isAllowedForView(id, url)) {
+        event.preventDefault()
+        console.warn(`[embedded-view] blocked navigation to ${url} for view ${id}`)
+      }
+    }
+    view.webContents.on('will-navigate', (event, url) => refuseForeign(event, url))
+    view.webContents.on('will-redirect', (event, url) => refuseForeign(event, url))
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
     view.webContents.session.setPermissionRequestHandler((wc, permission, callback) => {
       if (wc.id !== view.webContents.id) return callback(false)
