@@ -139,6 +139,9 @@ function unwrapSync<T>(
 }
 
 const api = {
+  // PERF-FIX RC2: Lazy LanguageTool startup — called by WysiwygEditor before first grammar check
+  ensureLanguageTool: (): Promise<void> => ipcRenderer.invoke('languagetool:ensure-started'),
+
   getFonts: (): Promise<IFontInfo[]> => ipcRenderer.invoke('get-fonts'),
   // getFonts: (): Promise<{}> => ipcRenderer.invoke('get-fonts'),
   // getFonts: (): Promise<fontManager.FontDescriptor[]> => ipcRenderer.invoke('get-fonts'),

@@ -8,16 +8,34 @@ declare global {
   interface Window {
     // electron: ElectronAPI
     api: {
+      /** PERF-FIX RC2: Lazily starts LanguageTool (JVM) on first grammar-check request. */
+      ensureLanguageTool?: () => Promise<void>
       mattermost?: {
         prepareSession: () => Promise<{ ok: boolean; baseUrl?: string; message?: string }>
       }
       jitsi?: {
-        getJoinUrl: (payload: { room: string }) => Promise<{ ok: boolean; url?: string; jwt?: string; message?: string }>
+        getJoinUrl: (payload: {
+          room: string
+        }) => Promise<{ ok: boolean; url?: string; jwt?: string; message?: string }>
       }
       dify?: {
-        uploadDocuments: (payload: { localPaths: string[]; datasetId?: string; indexingTechnique?: string; processRule?: any; data?: any }) => Promise<any>
+        uploadDocuments: (payload: {
+          localPaths: string[]
+          datasetId?: string
+          indexingTechnique?: string
+          processRule?: any
+          data?: any
+        }) => Promise<any>
         listDatasets: (payload?: { page?: number; limit?: number; scope?: string }) => Promise<any>
-        onUploadProgress: (callback: (payload: { file: string; index: number; total: number; percent: number; status: string }) => void) => () => void
+        onUploadProgress: (
+          callback: (payload: {
+            file: string
+            index: number
+            total: number
+            percent: number
+            status: string
+          }) => void
+        ) => () => void
       }
       [key: string]: any
       searchFiles: (payload: {
@@ -66,7 +84,12 @@ declare global {
         reload: (id: string) => Promise<void>
         goBack: (id: string) => Promise<void>
         goForward: (id: string) => Promise<void>
-        setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+        setBounds: (bounds: {
+          x: number
+          y: number
+          width: number
+          height: number
+        }) => Promise<void>
         setVisible: (visible: boolean) => Promise<void>
         listTabs: () => Promise<any[]>
         queryHistory: (query: string) => Promise<any[]>
@@ -82,8 +105,18 @@ declare global {
         insertVarText: (payload: { tabId: string; text: string }) => void
       }
       embedded?: {
-        create: (payload: { id: string; url: string; preloadPath?: string; partition?: string; userAgent?: string; permissions?: string[] }) => Promise<any>
-        setBounds: (payload: { id: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<any>
+        create: (payload: {
+          id: string
+          url: string
+          preloadPath?: string
+          partition?: string
+          userAgent?: string
+          permissions?: string[]
+        }) => Promise<any>
+        setBounds: (payload: {
+          id: string
+          bounds: { x: number; y: number; width: number; height: number }
+        }) => Promise<any>
         setVisible: (payload: { id: string; visible: boolean }) => Promise<any>
         destroy: (id: string) => Promise<any>
         navigate: (payload: { id: string; url: string }) => Promise<any>
@@ -100,8 +133,12 @@ declare global {
       overlay?: {
         setVisible: (payload: { visible: boolean }) => Promise<any>
       }
-      openDialogFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
-      openDialogFiles: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string[]>
+      openDialogFile: (
+        filters?: Array<{ name: string; extensions: string[] }>
+      ) => Promise<string | null>
+      openDialogFiles: (
+        filters?: Array<{ name: string; extensions: string[] }>
+      ) => Promise<string[]>
       saveDialogFile: (options?: {
         title?: string
         defaultPath?: string
@@ -142,20 +179,60 @@ declare global {
       }
       drive?: {
         getRoot: () => Promise<string>
-        listDir: (payload: { rootPath?: string; path?: string; query?: string; sort?: boolean }) => Promise<any[]>
+        listDir: (payload: {
+          rootPath?: string
+          path?: string
+          query?: string
+          sort?: boolean
+        }) => Promise<any[]>
         openItem: (payload: { rootPath?: string; path: string }) => Promise<boolean>
         mkdir: (payload: { path: string }) => Promise<{ ok: boolean; message?: string }>
-        uploadFiles: (payload: { path?: string; localPaths: string[] }) => Promise<{ ok: boolean; message?: string; uploaded?: string[] }>
-        downloadItem: (payload: { path: string; saveTo?: string }) => Promise<{ ok: boolean; message?: string; savePath?: string }>
+        uploadFiles: (payload: {
+          path?: string
+          localPaths: string[]
+        }) => Promise<{ ok: boolean; message?: string; uploaded?: string[] }>
+        downloadItem: (payload: {
+          path: string
+          saveTo?: string
+        }) => Promise<{ ok: boolean; message?: string; savePath?: string }>
         deleteItem: (payload: { path: string }) => Promise<{ ok: boolean; message?: string }>
-        moveItem: (payload: { from: string; to: string }) => Promise<{ ok: boolean; message?: string; path?: string }>
-        copyItem: (payload: { from: string; to: string }) => Promise<{ ok: boolean; message?: string; path?: string }>
-        shareItem: (payload: { path: string; publicRole?: 'viewer' | 'commenter' | 'editor' }) => Promise<{ ok: boolean; message?: string; code?: number }>
-        syncDoc: (payload: { cachePath: string }) => Promise<{ ok: boolean; uploadedCount?: number; totalCount?: number; failed?: { path: string; error: string }[]; message?: string }>
+        moveItem: (payload: {
+          from: string
+          to: string
+        }) => Promise<{ ok: boolean; message?: string; path?: string }>
+        copyItem: (payload: {
+          from: string
+          to: string
+        }) => Promise<{ ok: boolean; message?: string; path?: string }>
+        shareItem: (payload: {
+          path: string
+          publicRole?: 'viewer' | 'commenter' | 'editor'
+        }) => Promise<{ ok: boolean; message?: string; code?: number }>
+        syncDoc: (payload: {
+          cachePath: string
+        }) => Promise<{
+          ok: boolean
+          uploadedCount?: number
+          totalCount?: number
+          failed?: { path: string; error: string }[]
+          message?: string
+        }>
       }
       share?: {
-        resolve: (payload: { shareId?: string; docUuid?: string; name?: string; password?: string }) => Promise<any>
-        download: (payload: { shareId?: string; docUuid?: string; name?: string; password?: string; path?: string; saveTo?: string }) => Promise<any>
+        resolve: (payload: {
+          shareId?: string
+          docUuid?: string
+          name?: string
+          password?: string
+        }) => Promise<any>
+        download: (payload: {
+          shareId?: string
+          docUuid?: string
+          name?: string
+          password?: string
+          path?: string
+          saveTo?: string
+        }) => Promise<any>
         audit: (payload: { shareId: string; action?: string }) => Promise<any>
         auditList: (payload: { shareId: string; limit?: number }) => Promise<any>
         rotate: (payload: { shareId: string }) => Promise<any>

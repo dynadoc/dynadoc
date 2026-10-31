@@ -265,8 +265,8 @@ export default defineConfig({
         'videojs-record',
         'recordrtc' */
       ],
-      exclude: ['latex.js', 'rollup', 'fsevents'],
-      force: true // <— rebuild dependencies
+      exclude: ['latex.js', 'rollup', 'fsevents']
+      // force: true  // PERF-FIX RC3: removed — was forcing full dep rebuild on every cold start, destroying V8 bytecode cache
     },
     ssr: {
       external: ['rollup', 'fsevents'],

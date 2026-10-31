@@ -6,14 +6,15 @@ import sveltePreprocess from 'svelte-preprocess'
 import { sharedAliases } from './vite.alias'
 
 export default defineConfig({
-  server: {
-    hmr: false // Disables the WebSocket connection that triggers reloads
-    // Optional: if you want to keep HMR but stop full page reloads on error
-    // watch: {
-    //   ignored: ['**/share-cache/**'] // Ignore your memory-heavy cache folders
-    // }
-  },
   optimizeDeps: {
+    include: [
+      'process',
+      '@radix-ui/react-avatar',
+      'fuse.js',
+      'tiptap-table-plus',
+      '@radix-ui/react-slot',
+      'unocss-preset-daisy'
+    ],
     exclude: ['latex.js', 'rollup', 'fsevents']
   },
   plugins: [

@@ -3,6 +3,7 @@
   import { _$_documentEditorsList } from './stores/editor.store'
 
   import { createEventDispatcher, onDestroy, onMount, tick, untrack } from 'svelte'
+  import type { Component } from 'svelte'
   import { _, isLoading } from 'svelte-i18n'
 
   import DocumentEditor from './DocumentEditor.svelte'
@@ -15,7 +16,6 @@
   // import addRoundedIcon from 'assetsImgDir/common/add-rounded.svg'
   // import SelectedTextModel from './components/app/editor/wysiwyg/models/SelectedTextModel'
   // import Terminal from './components/app/panel/Terminal.svelte'
-  import Editor from './components/app/editor/Editor.svelte'
   import { DocumentModel, type DocumentEditorModel } from './models/Document'
   // import type { Document } from '../../../models/Document'
 
@@ -63,6 +63,31 @@
   // authoritative check, and it fails loudly on its own now, so refusing to try
   // protects nothing.
   let _documentExistence = $state<Record<string, boolean | 'unknown' | null>>({})
+  let EditorComponent = $state<Component | null>(null)
+  let editorLoadError = $state<string | null>(null)
+  let editorLoadPromise: Promise<void> | null = null
+
+  function loadEditor(): void {
+    if (editorLoadPromise || EditorComponent) return
+
+    editorLoadError = null
+    editorLoadPromise = import('./components/app/editor/Editor.svelte')
+      .then(({ default: component }) => {
+        EditorComponent = component
+      })
+      .catch((error: unknown) => {
+        editorLoadError = error instanceof Error ? error.message : String(error)
+        console.error('Failed to load document editor', error)
+      })
+      .finally(() => {
+        editorLoadPromise = null
+      })
+  }
+
+  $effect(() => {
+    if ($_$_documentEditorsList?.length) loadEditor()
+  })
+
   // Use a Map for better lookup performance in large suites
   // let _documentExistence = $state(new Map<string, boolean | 'loading'>())
   const isAuthenticated = $derived($authStore?.authenticated)
@@ -827,20 +852,38 @@
                           <!-- <div class="middle hidde"> -->
                           <!-- <CodeEditor -->
 
-                          <Editor
-                            __parentContainerKey={documentEditor.uuid ||
-                              documentEditor.document?.uuid ||
-                              documentEditor.id}
-                            __documentToOpen={documentEditor.document}
-                            __filePathToOpenFromDocument={documentEditor.document.getMainFilePath()}
-                            __codeEditorId={documentEditor.uuid ||
-                              documentEditor.document?.uuid ||
-                              documentEditor.id}
-                            __wysiwygEditorId={documentEditor.uuid ||
-                              documentEditor.document?.uuid ||
-                              documentEditor.id}
-                            __isPreviewEditor={documentEditor.document.isDocumentLikeNonWysiwyg()}
-                          />
+                          {#if EditorComponent}
+                            <EditorComponent
+                              __parentContainerKey={documentEditor.uuid ||
+                                documentEditor.document?.uuid ||
+                                documentEditor.id}
+                              __documentToOpen={documentEditor.document}
+                              __filePathToOpenFromDocument={documentEditor.document.getMainFilePath()}
+                              __codeEditorId={documentEditor.uuid ||
+                                documentEditor.document?.uuid ||
+                                documentEditor.id}
+                              __wysiwygEditorId={documentEditor.uuid ||
+                                documentEditor.document?.uuid ||
+                                documentEditor.id}
+                              __isPreviewEditor={documentEditor.document.isDocumentLikeNonWysiwyg()}
+                            />
+                          {:else if editorLoadError}
+                            <div
+                              class="h-full w-full flex flex-col items-center justify-center gap-3 text-base-content/60 text-[12px]"
+                              role="alert"
+                            >
+                              <span>Failed to load the document editor: {editorLoadError}</span>
+                              <button type="button" class="btn btn-sm" onclick={loadEditor}>
+                                Retry
+                              </button>
+                            </div>
+                          {:else}
+                            <div
+                              class="h-full w-full flex items-center justify-center text-base-content/50 text-[12px]"
+                            >
+                              {$_('Loading...')}
+                            </div>
+                          {/if}
                           <!-- <Editor
                           __parentContainerKey={documentEditor.uuid ||
                             documentEditor.document?.uuid ||
