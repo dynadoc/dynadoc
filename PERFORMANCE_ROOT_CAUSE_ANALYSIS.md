@@ -24,20 +24,20 @@ The investigation revealed that **Svelte itself is not the bottleneck**. The iss
 
 ## 2. Side-by-Side Architectural Comparison: Dynadoc vs. GenOffice
 
-| Metric / Dimension                | Dynadoc (`/Volumes/MacIn/Helton/VSCodeProjects/dynadoc`)                                             | GenOffice (`/Volumes/MacIn/Helton/VSCodeProjects/genoffice`)              | Impact on Dynadoc                                         |
-| :-------------------------------- | :--------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------ | :-------------------------------------------------------- |
-| **Startup UI Model**              | Monolithic: all editors loaded statically at launch                                                  | Shell + on-demand tab modules (Docs, Sheets, Slides)                      | Massive upfront bundle parse & execution time             |
-| **Active WebContents at Boot**    | **4 WebContents**: Main window, Splash window, Overlay view (`?overlay=1`), Google browser tab       | **1 WebContents**: Shell window only                                      | 4x Chromium rendering engine memory overhead              |
-| **External Background Processes** | Spawns Java JRE (`zulu-25.jre`) LanguageTool HTTP server on port 8081 (runs via Rosetta 2 on arm64)  | None (Zero external runtimes)                                             | +300MB to +800MB RAM, high CPU during JVM initialization  |
-| **Background Network Servers**    | 2 Yjs WebSocket servers (ports 1234, 1235) + LanguageTool HTTP (port 8081)                           | None                                                                      | Port conflicts, persistent socket listeners               |
-| **Initial Source Files Imported** | **621 local source files**                                                                           | **21 local files**                                                        | Heavy V8 AST parsing on cold boot                         |
-| **NPM Packages in Root Graph**    | **167 packages** (FluentUI, MUI, AntD, Monaco, CanvasKit, ECharts, Prettier, Tiptap 25+)             | **4 packages** (`react`, `react-dom`, `@genoffice/i18n`, `@genoffice/ui`) | Gigantic memory footprint & long script evaluation        |
-| **Chromium V8 / Disk Cache**      | **Explicitly purged** on every launch (`clearCache()`, `clearStorageData()`)                         | **Preserved** (Chromium code cache enabled)                               | Completely destroys V8 bytecode reuse; every boot is cold |
-| **Dev Dependency Cache**          | `optimizeDeps: { force: true }` in `electron.vite.config.ts`                                         | Default persistent `.vite` cache                                          | Re-bundles dependencies on every launch                   |
-| **DevTools Behavior**             | Auto-opened on launch (`openDevTools()`)                                                             | Closed by default                                                         | Additional devtools frontend process + CDP overhead       |
-| **CSS Architecture**              | `@tailwindcss/browser` runtime JIT (`MutationObserver`) + UnoCSS + DaisyUI + 2.9MB CSS file          | Compiled atomic CSS (`home.css`, `tabbar.css`)                            | Constant DOM observation and style recalculations         |
-| **Splash Screen Implementation**  | Native BrowserWindow + DOM splash overlay with 1.7s CSS animation delays + sequential store blockers | Instant shell window display                                              | Loader screen visible for several seconds                 |
-| **Event Loop Timers**             | 16ms (`setInterval`) unthrottled timer in main process                                               | Event-driven IPC                                                          | CPU cores cannot idle; elevated base CPU usage            |
+| Metric / Dimension                | Dynadoc (`/Volumes/MacIn/Helton/VSCodeProjects/dynadoc`)                                                                      | GenOffice (`/Volumes/MacIn/Helton/VSCodeProjects/genoffice`)              | Impact on Dynadoc                                         |
+| :-------------------------------- | :---------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------ | :-------------------------------------------------------- |
+| **Startup UI Model**              | Monolithic: all editors loaded statically at launch                                                                           | Shell + on-demand tab modules (Docs, Sheets, Slides)                      | Massive upfront bundle parse & execution time             |
+| **Active WebContents at Boot**    | **4 WebContents**: Main window, Splash window, Overlay view (`?overlay=1`), Google browser tab                                | **1 WebContents**: Shell window only                                      | 4x Chromium rendering engine memory overhead              |
+| **External Background Processes** | Spawns Java JRE (`zulu-25.jre`) LanguageTool HTTP server on port 8081 (runs via Rosetta 2 on arm64)                           | None (Zero external runtimes)                                             | +300MB to +800MB RAM, high CPU during JVM initialization  |
+| **Background Network Servers**    | 2 Yjs WebSocket servers (ports 1234, 1235) + LanguageTool HTTP (port 8081)                                                    | None                                                                      | Port conflicts, persistent socket listeners               |
+| **Initial Source Files Imported** | **621 local source files**                                                                                                    | **21 local files**                                                        | Heavy V8 AST parsing on cold boot                         |
+| **NPM Packages in Root Graph**    | **167 packages** (FluentUI, MUI, AntD, Monaco, CanvasKit, ECharts, Prettier, Tiptap 25+)                                      | **4 packages** (`react`, `react-dom`, `@genoffice/i18n`, `@genoffice/ui`) | Gigantic memory footprint & long script evaluation        |
+| **Chromium V8 / Disk Cache**      | **Explicitly purged** on every launch (`clearCache()`, `clearStorageData()`)                                                  | **Preserved** (Chromium code cache enabled)                               | Completely destroys V8 bytecode reuse; every boot is cold |
+| **Dev Dependency Cache**          | Default web and desktop dev configs reuse Vite's cache; the alternate `electron.vite.config.prod.ts` still sets `force: true` | Default persistent `.vite` cache                                          | Re-bundles dependencies when forced or invalidated        |
+| **DevTools Behavior**             | Auto-opened on launch (`openDevTools()`)                                                                                      | Closed by default                                                         | Additional devtools frontend process + CDP overhead       |
+| **CSS Architecture**              | `@tailwindcss/browser` runtime JIT (`MutationObserver`) + UnoCSS + DaisyUI + 2.9MB CSS file                                   | Compiled atomic CSS (`home.css`, `tabbar.css`)                            | Constant DOM observation and style recalculations         |
+| **Splash Screen Implementation**  | Native BrowserWindow + DOM splash overlay with 1.7s CSS animation delays + sequential store blockers                          | Instant shell window display                                              | Loader screen visible for several seconds                 |
+| **Event Loop Timers**             | 16ms (`setInterval`) unthrottled timer in main process                                                                        | Event-driven IPC                                                          | CPU cores cannot idle; elevated base CPU usage            |
 
 ---
 
@@ -325,7 +325,7 @@ setInterval(() => {
 #### 1.6 Fix `electron.vite.config.ts`
 
 - **File:** `electron.vite.config.ts`
-- **Action:** Remove `force: true` from `optimizeDeps`. Allow Vite to reuse pre-bundled dependency artifacts in development mode.
+- **Action:** Keep `optimizeDeps.force` unset in the default desktop config. The web config must also leave HMR enabled so the browser can recover when Vite invalidates optimized dependencies. The alternate `electron.vite.config.prod.ts` still sets `force: true` if that config is selected.
 
 ---
 
@@ -386,3 +386,36 @@ In `src/renderer/src/App.svelte` and `Editor.svelte`, replace heavy static impor
 | **Background Processes**      | Java OpenJDK + 2 WS  | 0 external runtimes  | 0 external runtimes            | 0 external runtimes |
 | **Idle CPU Utilization**      | Elevated (5% – 15%)  | Minimal (< 1%)       | Minimal (< 0.5%)               | < 0.5%              |
 | **Perceived Loader Duration** | Multi-second blocker | < 300ms flash        | Instant UI display             | Instant display     |
+
+## Follow-up: Web Development Startup
+
+The earlier browser timing captured DOM readiness, not when Dynadoc itself was usable. In an
+integrated-browser run of `npm run dev:web -- --force`, the page was explicitly set to the web
+platform before loading. DOM ready was about **0.9 seconds**, but the app bootstrap completed
+at about **31.2 seconds**: common/editor stores reported ready at **17.7 seconds**, and resolving
+`Main.svelte` completed at **30.3 seconds**. The browser requested about **250 resources**.
+After the sign-in screen mounted, Chromium reported about **174 MB used JavaScript heap**
+(**253 MB allocated**). This is development-mode browser heap, not total browser-process RAM or
+a production measurement. An earlier run before the web storage-path change took **63.9
+seconds** to complete bootstrap; these runs are observational, not a controlled benchmark.
+
+The measured `Main.svelte` import remains the dominant startup cost; DOM ready is not a useful
+proxy for app readiness. The post-change run did not show a failed request, 504, page error,
+console error, or Vite late-dependency reload. The forced Vite run only reported its initial
+forced optimization. This confirms the optimizer fix for the observed late discoveries, not
+that the large dev-mode module graph is fast.
+
+Web persistence uses local storage/settings and only needs the virtual `drive` key, so
+`getStorageDirCached()` now returns that key without waiting for desktop IPC. A direct browser
+check returned it in about **22 ms**, including loading the module.
+
+The web config now uses Vite's default HMR behavior and explicitly includes the six dependencies
+observed in Vite's late-optimization log (`process`, `@radix-ui/react-avatar`, `fuse.js`,
+`tiptap-table-plus`, `@radix-ui/react-slot`, and `unocss-preset-daisy`). In addition,
+`App.svelte` no longer statically imports the complete document-editor graph: it loads
+`Editor.svelte` only when there are documents to render and shows an explicit retry state if
+that import fails.
+
+`npm run build:web` passed in **6m 42s** and emitted the editor as a separate **197 KB (56 KB
+gzip)** chunk. The main chunk remained **1.15 MB (330 KB gzip)**, so the editor split reduces
+initial production code but leaves further shell-level code splitting as a separate optimization.
