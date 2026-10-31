@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dynadoc/dynadoc/compare/v1.0.1...v1.0.2) (2026-10-31)
+
+
+### Fixes
+
+* point every link at this repository ([f1c020f](https://github.com/dynadoc/dynadoc/commit/f1c020f83726b358b9d1c5f8fea93f3d8352f288))
+
 ## 1.0.1
 
 The first release published from this repository. Its history starts at a
