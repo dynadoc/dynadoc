@@ -1207,10 +1207,33 @@ export const WebDriver = {
         })
     },
     sync: {
-      start: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
+      // `start` and `commit` are the two the editor actually calls, and on web
+      // they used to answer `ok:false` — which the callers discard. The result
+      // was that a document written on web never reached the drive at all: it
+      // lived in the virtual filesystem and in the collaboration session, and
+      // the moment anyone resolved a share for it the server answered 404.
+      // "Document not found", for a document that was right there on screen.
+      //
+      // `syncDocFolderWeb` below already does the real work — it walks the
+      // document's cache folder and uploads every file — and was wired only to
+      // `drive.syncDoc`. These two now call it, so autosave
+      // (WysiwygEditor.svelte:718, debounced 2s) and document construction
+      // (Document.ts:646) persist for real.
+      //
+      // Cost, stated rather than hidden: it re-uploads every file in the folder
+      // on each commit, with no dirty tracking. For a text document that is a
+      // handful of small files; for an asset-heavy one it is wasteful and
+      // deserves a change-set. Losing the document is worse.
+      start: async (payload: any) =>
+        syncDocFolderWeb(payload?.cachePath || payload?.cacheRoot || ''),
+      commit: async (payload: any) =>
+        syncDocFolderWeb(payload?.cachePath || payload?.cacheRoot || ''),
+      // The rest stay honest. `stop` has no watcher to stop, and history,
+      // rollback and rename are drive-side versioning operations that this
+      // upload path does not implement — answering `ok:false` is correct for
+      // them, where it was a silent lie for the two above.
       stop: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
       open: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
-      commit: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
       history: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
       rollback: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' }),
       rename: async (_payload: any) => ({ ok: false, message: 'Sync is not supported on web.' })
