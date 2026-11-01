@@ -3,12 +3,16 @@ name: Web image
 # Builds and publishes the web image from this repository alone.
 #
 # Production serves it: `gitops-dynadoc/apps/hub-ch/dynadoc-web.yaml` pins
-# ghcr.io/dashmake-startup/dynadoc-web by commit SHA. It got there because
-# Actions on the private client's account is blocked on billing, so this is
-# now the only pipeline that can produce a web image at all.
+# this image by commit SHA. Actions on the private client's account is blocked
+# on billing, so this is the only pipeline that can produce a web image at all.
 #
 # No personal access token anywhere: the source and the registry share this
-# repository's owner, so the built-in GITHUB_TOKEN suffices.
+# repository's owner, so the built-in GITHUB_TOKEN suffices. That invariant is
+# load-bearing and it has been broken once. While this repository lived under a
+# different organisation than the registry, every run failed on
+# `denied: permission` for five days -- the build itself was green and only the
+# push was refused, so the failure looked like a build problem and was not. If
+# this repository ever moves again, the registry owner moves with it.
 
 on:
   push:
@@ -80,6 +84,6 @@ jobs:
           # empty line is ignored by the builder, so the expression collapses
           # to nothing on an ordinary push.
           tags: |
-            ghcr.io/dashmake-startup/dynadoc-web:${{ github.sha }}
-            ghcr.io/dashmake-startup/dynadoc-web:latest
-            ${{ github.event_name == 'release' && format('ghcr.io/dashmake-startup/dynadoc-web:{0}', github.event.release.tag_name) || '' }}
+            ghcr.io/dynadoc/dynadoc-web:${{ github.sha }}
+            ghcr.io/dynadoc/dynadoc-web:latest
+            ${{ github.event_name == 'release' && format('ghcr.io/dynadoc/dynadoc-web:{0}', github.event.release.tag_name) || '' }}
