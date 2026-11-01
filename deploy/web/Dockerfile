@@ -23,11 +23,17 @@ RUN npm run build:web
 # Production stage
 FROM nginx:alpine
 
-# Links the published package to this repository on ghcr.io. Without it a
+# Links the published package to its repository on ghcr.io. Without it a
 # package is owned by the organisation but attached to nothing, and the
-# workflow's GITHUB_TOKEN is refused against it with `denied: permission` --
-# the same error an owner mismatch gives, which makes the two hard to tell
-# apart. The label is what grants the building repository write access.
+# building workflow's GITHUB_TOKEN is refused against it with
+# `denied: permission` -- the same error an owner mismatch gives, which makes
+# the two hard to tell apart. The label is what grants the building repository
+# write access.
+#
+# It names the public open core repository because that is the only place the
+# web image is built: Actions on the private client's account is blocked on
+# billing. The two trees are kept byte-identical by the sync, so the label has
+# to be in both or the next sync strips it from the one that builds.
 LABEL org.opencontainers.image.source="https://github.com/dynadoc/dynadoc"
 
 # web.vite.config.mts builds to web/dist

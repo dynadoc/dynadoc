@@ -1695,9 +1695,9 @@ async function getLiveCellValue(path: string, cellRef: string, sheetName?: strin
         )
         cols.push(value == null ? '' : String(value))
       }
-      rows.push(cols.join('\\t'))
+      rows.push(cols.join('\t'))
     }
-    return rows.join('\\n')
+    return rows.join('\n')
   }
 
   const pos = parseA1Ref(cellRef)
@@ -1922,7 +1922,21 @@ function ensureSpreadsheetWatcher() {
 
   if (!_spreadsheetDirtyListenerInitialized && typeof window !== 'undefined') {
     _spreadsheetDirtyListenerInitialized = true
-    window.addEventListener('dynadoc-sheet-dirty', (event: any) => {
+    // `dynadoc-sheet-sync`, not `dynadoc-sheet-dirty`. Both are emitted from
+    // the same `onOp` handler, one line apart, but they are not
+    // interchangeable.
+    //
+    // `dirty` is dispatched synchronously from inside FortuneSheet's state
+    // updater, before React has committed the edit. The imperative handle is
+    // rebuilt from `context` only after the re-render, so `getCellValue()` at
+    // that moment still answers with the value from before the keystroke. That
+    // value was then cached as `ready` and served until the next edit, so the
+    // chip sat permanently one edit behind -- stale, and never looking wrong.
+    //
+    // `sync` is emitted 120ms later, after the commit, and re-reads the sheet.
+    // ChartNodeView already listens to both for exactly this reason; variables
+    // were left on `dirty` alone.
+    window.addEventListener('dynadoc-sheet-sync', (event: any) => {
       const detail = event?.detail
       handleSpreadsheetChange(detail?.rootPath)
     })
