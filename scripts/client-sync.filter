@@ -18,8 +18,8 @@
 # Last sync
 # ---------
 #   source repo : the private client repository (not named here on purpose)
-#   base commit : 059b1bc7  (state this repository was last synced to)
-#   synced to   : 02356738
+#   base commit : fe4ca3a1  (state this repository was last synced to)
+#   synced to   : 4e932642
 #
 #   Note: this repository was rebuilt from a single clean commit on 2026-10-28
 #   and the rebuild dropped this file, so the previous bookkeeping (base
