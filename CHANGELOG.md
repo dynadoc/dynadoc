@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.2](https://github.com/dynadoc/dynadoc/compare/v1.0.1...v1.0.2) (2026-11-05)
+
+
+### Fixes
+
+* **perf:** prevent stale dependency reloads ([#11](https://github.com/dynadoc/dynadoc/issues/11)) ([ba92fd7](https://github.com/dynadoc/dynadoc/commit/ba92fd777de0759dbb071b2c726608fc2ca33b8c))
+* point every link at this repository ([f1c020f](https://github.com/dynadoc/dynadoc/commit/f1c020f83726b358b9d1c5f8fea93f3d8352f288))
+
+
+### Documentation
+
+* default the example env to the stub, not to production ([#21](https://github.com/dynadoc/dynadoc/issues/21)) ([3e70b67](https://github.com/dynadoc/dynadoc/commit/3e70b67ac48a90f4a110911b8bfe4861b64f7bf9))
+
 ## 1.0.1
 
 The first release published from this repository. Its history starts at a
