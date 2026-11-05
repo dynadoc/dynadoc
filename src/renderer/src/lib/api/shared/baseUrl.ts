@@ -83,17 +83,33 @@ export function resolveApiBaseUrl(): string {
     const protocol = String(window.location.protocol || '')
     if (protocol.startsWith('http')) {
       const host = String(window.location.host || '')
-      if (
-        host &&
-        !host.includes('localhost') &&
-        !host.startsWith('127.0.0.1') && // accessed from a local development environment
-        !host.startsWith('192.168') // accessed from a local network, e.g. via another device in a local environment
-      ) {
+      const servedLocally =
+        !host ||
+        host.includes('localhost') ||
+        host.startsWith('127.0.0.1') || // accessed from a local development environment
+        host.startsWith('192.168') // accessed from a local network, e.g. via another device in a local environment
+      if (!servedLocally) {
         if (host.startsWith('app.')) {
           return `${window.location.protocol}//${host.replace(/^app\./, 'api.')}`
         }
         return window.location.origin
       }
+      // A page served over http from a local host is a development server, and
+      // the one thing it must not quietly do is talk to production.
+      //
+      // Falling through to the hardcoded production URL below is what used to
+      // happen here. Someone cloning this repository and running
+      // `npm run dev:web` with no env file would authenticate against the live
+      // API and create real documents in it, with nothing on screen to say so.
+      // Point at the stub bridge instead: it is what `npm run stub-bridge`
+      // serves on 7070, and what the contributor documentation tells people to
+      // run. Set VITE_API_URL to reach anything else.
+      //
+      // Neither shipped target reaches this line. The packaged desktop app
+      // serves its renderer over a custom protocol rather than http, and the
+      // deployed web app is not on a local host, so both keep the behaviour
+      // they had.
+      return 'http://localhost:7070'
     }
   }
 
@@ -114,16 +130,30 @@ export function resolveCollabWsBaseUrl(): string {
 
   if (typeof window !== 'undefined' && window.location?.origin) {
     const host = String(window.location.host || '')
-    if (
-      host &&
-      !host.includes('localhost') &&
-      !host.startsWith('127.0.0.1') && // accessed from a local development environment
-      !host.startsWith('192.168') // accessed from a local network, e.g. via another device in a local production environment
-    ) {
+    const servedLocally =
+      !host ||
+      host.includes('localhost') ||
+      host.startsWith('127.0.0.1') || // accessed from a local development environment
+      host.startsWith('192.168') // accessed from a local network, e.g. via another device in a local production environment
+    if (!servedLocally) {
       if (host.startsWith('app.')) {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         return `${protocol}//${host.replace(/^app\./, 'collab.')}`
       }
+    } else if (String(window.location.protocol || '').startsWith('http')) {
+      // Same reasoning as resolveApiBaseUrl: a development server must not
+      // open a collaboration socket against production. A contributor editing
+      // a document locally would otherwise join the live editing sessions of
+      // real users.
+      //
+      // Nothing listens here by default -- the stub bridge deliberately does
+      // not implement collaboration, which needs the full service. So this
+      // connection fails, and that is the intended outcome: a local failure to
+      // collaborate is the honest result, and far better than succeeding
+      // against production. 1234 is the port the renderer's own CSP already
+      // allows for a local collaboration server, so anyone running one needs
+      // no further configuration.
+      return 'ws://localhost:1234'
     }
   }
 
