@@ -18,8 +18,8 @@
 # Last sync
 # ---------
 #   source repo : the private client repository (not named here on purpose)
-#   base commit : 3e70b67a  (state this repository was last synced to)
-#   synced to   : 27fea546
+#   base commit : 059b1bc7  (state this repository was last synced to)
+#   synced to   : 02356738
 #
 #   Note: this repository was rebuilt from a single clean commit on 2026-10-28
 #   and the rebuild dropped this file, so the previous bookkeeping (base
@@ -59,9 +59,20 @@
 #      both stops a client file coming in and stops this repository's own
 #      version being removed.
 #
-#   3. Re-run the checks below.
+#   3. Restore this repository's own version number:
 #
-#   4. Commit with the hooks disabled:
+#        git checkout -- package.json package-lock.json   # if only `version` differs
+#
+#      release-please owns the `version` field here and the client never bumps
+#      it, so every sync drags it backwards -- a sync run after the 1.0.2
+#      release proposed 1.0.2 -> 1.0.0, which would have quietly undone a
+#      tagged release. A `-` rule is not the answer: the client's dependency
+#      changes to package.json do have to cross. Diff the two files, and keep
+#      the client's side of everything except `version`.
+#
+#   4. Re-run the checks below.
+#
+#   5. Commit with the hooks disabled:
 #
 #        git -c core.hooksPath=/dev/null commit ...
 #

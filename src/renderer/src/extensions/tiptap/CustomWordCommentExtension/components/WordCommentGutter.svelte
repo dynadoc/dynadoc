@@ -233,10 +233,21 @@
     if (!entry) return ''
     if (entry.text) return entry.text
     if (!entry.html) return ''
-    if (typeof document !== 'undefined') {
-      const div = document.createElement('div')
-      div.innerHTML = entry.html
-      return div.textContent || div.innerText || ''
+    // `entry.html` is written by whoever shares the document, so it reaches
+    // this line as hostile input. It used to be assigned to the `innerHTML` of
+    // an element made with `document.createElement`. Detached is not inert:
+    // that element still belongs to the active document, so the parser loads
+    // subresources, and `<img src=x onerror=...>` fires on display -- with no
+    // click, because the caller at the bottom of this file renders this in its
+    // default branch.
+    //
+    // `DOMParser` builds a document with no browsing context. Nothing executes
+    // and nothing is fetched, and we only ever wanted the text.
+    //
+    // The sibling sink in this file already goes through `sanitizeCommentHtml`.
+    // This one did not, and hardening one of two was what left the hole open.
+    if (typeof DOMParser !== 'undefined') {
+      return new DOMParser().parseFromString(entry.html, 'text/html').body.textContent || ''
     }
     return entry.html.replace(/<[^>]+>/g, '')
   }

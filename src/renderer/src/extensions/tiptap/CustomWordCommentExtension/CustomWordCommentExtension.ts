@@ -601,10 +601,17 @@ function updateCommentMarks(
 
 function stripHtml(value: string) {
   if (!value) return ''
-  if (typeof document !== 'undefined') {
-    const div = document.createElement('div')
-    div.innerHTML = value
-    return div.textContent || div.innerText || ''
+  // Same reasoning as the comment gutter: an element from
+  // `document.createElement` belongs to the active document, so assigning
+  // `innerHTML` loads subresources and runs inline handlers. `DOMParser`
+  // produces a document with no browsing context, where neither happens.
+  //
+  // Today both callers pass text the local user just typed, so this was not
+  // reachable with hostile input. It is fixed anyway: the function is named
+  // `stripHtml`, a future caller will hand it a document, and the distance
+  // between "not reachable yet" and "the bug we just shipped" is one call site.
+  if (typeof DOMParser !== 'undefined') {
+    return new DOMParser().parseFromString(value, 'text/html').body.textContent || ''
   }
   return value.replace(/<[^>]+>/g, '').trim()
 }
