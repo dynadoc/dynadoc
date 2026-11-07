@@ -1,11 +1,25 @@
 const REGIONAL_API_URL_KEY = 'ddoc.api_url'
 const REGIONAL_COLLAB_WS_KEY = 'ddoc.collab_ws_url'
 
-// Deployed spoke subdomains (api.<region>.dynadoc.dashmake.com). The backend
-// builds regional URLs from the raw region name, so a placeholder region like
-// "default" yields api.default.dynadoc.dashmake.com — a domain that does not
-// exist and gets blocked by CSP, breaking every RPC call.
-const KNOWN_REGION_SUBDOMAINS = new Set(['ch', 'us', 'ap'])
+// Spoke subdomains that actually answer. The backend builds regional URLs from
+// the raw region name, so a region that is declared but not serving yields a
+// host that resolves and then refuses the connection -- and every call fails.
+//
+// Only `ch` is in this set, and that is the point. `us` and `ap` exist in the
+// deployment manifests but serve no traffic: api.us.dynadoc.dashmake.com
+// resolves to the Swiss hub and has no route there, so the connection dies
+// before any HTTP status. A browser that had stored one was locked out of the
+// application entirely -- the session was valid, every call to verify it
+// failed to connect, and the app concluded "not signed in" and showed the
+// login screen again, on a loop, with no way out but clearing site data.
+//
+// Listing a region here is what lets a stored URL survive, so this set is the
+// guard: a URL naming a region that is not here is dropped from storage below
+// and the client falls back to the host it is served from. That makes this
+// change self-healing for anyone already stuck.
+//
+// ADD A REGION BACK WHEN ITS SPOKE ACTUALLY SERVES, not when it is declared.
+const KNOWN_REGION_SUBDOMAINS = new Set(['ch'])
 
 function isUsableRegionalUrl(value: string): boolean {
   try {

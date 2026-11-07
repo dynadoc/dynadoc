@@ -4,8 +4,27 @@
   import Platform from '../../../libs/platform'
 
   const { provisioning } = $authStore
-  const regions = provisioning?.regions || ['swiss', 'us-east', 'asia-pacific']
-  const defaultRegion = provisioning?.default_region || regions[0]
+
+  // Regions whose spoke actually answers. The others are declared in the
+  // deployment manifests and serve no traffic, so choosing one stores an API
+  // host that resolves and then refuses the connection: the account is valid
+  // and the application is unusable, on a login loop with no way out but
+  // clearing site data. Offering a choice we cannot honour is the bug.
+  //
+  // This filters whatever the backend sends as well as the fallback, because
+  // the backend lists what is declared, not what is reachable.
+  //
+  // ADD A REGION BACK WHEN ITS SPOKE ACTUALLY SERVES.
+  const SERVING_REGIONS = new Set(['swiss', 'ch'])
+
+  const offered: string[] = provisioning?.regions || ['swiss', 'us-east', 'asia-pacific']
+  const serving = offered.filter((id: string) => SERVING_REGIONS.has(String(id).toLowerCase()))
+  // Never leave the list empty: a selector with nothing in it blocks sign-up
+  // outright, which is worse than the choice being narrow.
+  const regions = serving.length ? serving : ['swiss']
+  const proposedDefault = provisioning?.default_region
+  const defaultRegion =
+    proposedDefault && regions.includes(proposedDefault) ? proposedDefault : regions[0]
 
   let selectedRegion = $state(defaultRegion)
   let loading = $state(false)
