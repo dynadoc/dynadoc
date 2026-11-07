@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.3](https://github.com/dynadoc/dynadoc/compare/v1.0.2...v1.0.3) (2026-11-07)
+
+
+### Fixes
+
+* **comments:** extract comment preview text with an inert parser ([#24](https://github.com/dynadoc/dynadoc/issues/24)) ([fe4ca3a](https://github.com/dynadoc/dynadoc/commit/fe4ca3a192fc7f375c3fd919a0f4f9f5674efdbb))
+* **regions:** offer only the regions whose spoke actually answers ([#28](https://github.com/dynadoc/dynadoc/issues/28)) ([1251f9a](https://github.com/dynadoc/dynadoc/commit/1251f9a5bc1f43b61f82f8821ad252f242f55499))
+* **security:** correct chunked encryption format ([#34](https://github.com/dynadoc/dynadoc/issues/34)) ([b3fb5ba](https://github.com/dynadoc/dynadoc/commit/b3fb5ba1684f3c03b8433c9971b899fe4bf0b217))
+
+
+### Documentation
+
+* credit co-authors, a model included ([#32](https://github.com/dynadoc/dynadoc/issues/32)) ([41f898e](https://github.com/dynadoc/dynadoc/commit/41f898e37b59274cbf84fe5e03b675ddf35deec6))
+
 ## [1.0.2](https://github.com/dynadoc/dynadoc/compare/v1.0.1...v1.0.2) (2026-11-05)
 
 
