@@ -184,7 +184,7 @@ export default class SecurityHelpers {
       const partName = `${nodeApi.path.basename(srcPath)}.enc.part${String(partIndex).padStart(4, "0")}`;
       const partPath = nodeApi.path.join(dstDir, partName);
 
-      const payload = Buffer.concat([salt, iv, encrypted, tag]);
+      const payload = Buffer.concat([salt, iv, tag, encrypted]);
       await nodeApi.fs.promises.writeFile(partPath, payload);
 
       partIndex++;
@@ -198,7 +198,7 @@ export default class SecurityHelpers {
   ): Promise<void> {
 
     const partFiles = (await nodeApi.fs.promises.readdir(srcDir))
-      .filter(name => name.endsWith(".part"))
+      .filter(name => /\.part\d+$/.test(name))
       .sort(); // ensure correct ordering
 
     const out = nodeApi.fs.createWriteStream(dstPath);
@@ -221,7 +221,11 @@ export default class SecurityHelpers {
       out.write(plaintext);
     }
 
-    out.end();
+    await new Promise<void>((resolve, reject) => {
+      out.on("finish", resolve);
+      out.on("error", reject);
+      out.end();
+    });
   }
 
 
