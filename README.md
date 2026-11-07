@@ -43,14 +43,14 @@ contributors.
 
 ## Requirements
 
-| | |
-|---|---|
-| Node.js | **20 LTS**, exactly — the CI pins it and nothing in the repo enforces it for you |
-| npm | **10** — npm 11 silently skips install scripts unless you approve them, which leaves you with an incomplete `node_modules` and no error |
-| Git | any recent version |
-| Linux | `build-essential`, `python3`, `libcairo2-dev`, `libpango1.0-dev`, `libjpeg-dev`, `libgif-dev`, `librsvg2-dev` — the `postinstall` step runs `electron-rebuild` |
-| macOS | Xcode Command Line Tools |
-| Windows | Visual Studio Build Tools (C++) and Python 3, for `node-gyp` |
+|         |                                                                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js | **20 LTS**, exactly — the CI pins it and nothing in the repo enforces it for you                                                                               |
+| npm     | **10** — npm 11 silently skips install scripts unless you approve them, which leaves you with an incomplete `node_modules` and no error                        |
+| Git     | any recent version                                                                                                                                             |
+| Linux   | `build-essential`, `python3`, `libcairo2-dev`, `libpango1.0-dev`, `libjpeg-dev`, `libgif-dev`, `librsvg2-dev` — the `postinstall` step runs `electron-rebuild` |
+| macOS   | Xcode Command Line Tools                                                                                                                                       |
+| Windows | Visual Studio Build Tools (C++) and Python 3, for `node-gyp`                                                                                                   |
 
 ## Getting started
 
@@ -64,11 +64,11 @@ npm ci                        # not `npm install`: the lockfile is committed
 
 Configure `.env.local`. Every variable is read at build time by Vite:
 
-| Variable | Meaning |
-|---|---|
-| `VITE_API_URL` | Base URL of the Dynadoc API you are developing against. `http://localhost:7070` for a local backend, otherwise the instance you have an account on. |
-| `VITE_IPC_WS_URL` | Optional override for the local IPC WebSocket. Leave empty for the default. |
-| `VITE_TRANSCRIBE_WS_URL` | Speech-to-text endpoint used by meeting transcription. Leave empty to keep transcription idle. |
+| Variable                 | Meaning                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_API_URL`           | Base URL of the Dynadoc API you are developing against. `http://localhost:7070` for a local backend, otherwise the instance you have an account on. |
+| `VITE_IPC_WS_URL`        | Optional override for the local IPC WebSocket. Leave empty for the default.                                                                         |
+| `VITE_TRANSCRIBE_WS_URL` | Speech-to-text endpoint used by meeting transcription. Leave empty to keep transcription idle.                                                      |
 
 `.env` is not tracked and must not be committed. Use `.env.local`, which Vite
 gives precedence and `.gitignore` already covers.
@@ -94,6 +94,11 @@ npm run dev:web:stub    # terminal 2 — the web client pointed at it
 Then open the URL Vite prints. See
 [tools/stub-bridge/README.md](tools/stub-bridge/README.md) for what the stub
 covers and what it refuses.
+
+On macOS or Linux, `make start` does all of the above in one terminal: it
+installs dependencies for the web client if needed, creates `.env.local`,
+starts the stub and the web client, and opens the browser. Ctrl+C stops both;
+`make stop` cleans up anything left behind.
 
 ### Build
 
@@ -122,19 +127,19 @@ If that directory is empty, the integrated terminal will not work.
 
 ## Repository layout
 
-| Path | Contents |
-|---|---|
-| `src/main/` | Electron main process: filesystem and OS access, IPC handlers, window and tab management |
-| `src/preload/` | Preload entry points (`index`, `browser`, `webview-var`, `embedded-var`) |
-| `src/renderer/` | The application itself — Svelte 5 with runes, plus a vendored pdf.js and CanvasKit |
-| `src/renderer/src/extensions/tiptap/` | Editor extensions, one directory per feature |
-| `web/`, `web.vite.config.mts` | Web target |
-| `android/`, `ios/` | Capacitor projects |
-| `build/`, `electron-builder.yml` | Packaging configuration and icons |
-| `extensions/` | Editor themes and file icons |
-| `bin/DocxToHtml/` | C# sources of the DOCX converter (binaries are not committed) |
-| `scripts/` | Repository tooling |
-| `docs/` | Design and architecture notes, of varying freshness |
+| Path                                  | Contents                                                                                 |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `src/main/`                           | Electron main process: filesystem and OS access, IPC handlers, window and tab management |
+| `src/preload/`                        | Preload entry points (`index`, `browser`, `webview-var`, `embedded-var`)                 |
+| `src/renderer/`                       | The application itself — Svelte 5 with runes, plus a vendored pdf.js and CanvasKit       |
+| `src/renderer/src/extensions/tiptap/` | Editor extensions, one directory per feature                                             |
+| `web/`, `web.vite.config.mts`         | Web target                                                                               |
+| `android/`, `ios/`                    | Capacitor projects                                                                       |
+| `build/`, `electron-builder.yml`      | Packaging configuration and icons                                                        |
+| `extensions/`                         | Editor themes and file icons                                                             |
+| `bin/DocxToHtml/`                     | C# sources of the DOCX converter (binaries are not committed)                            |
+| `scripts/`                            | Repository tooling                                                                       |
+| `docs/`                               | Design and architecture notes, of varying freshness                                      |
 
 `src/main/index.ts` is a single large file. That is known, and it is being
 addressed incrementally rather than in one move.
