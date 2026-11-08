@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/dynadoc/dynadoc/compare/v1.1.0...v1.2.0) (2026-11-08)
+
+
+### Features
+
+* **new-doc:** rebuild the new document screen in the dashboard's language ([#56](https://github.com/dynadoc/dynadoc/issues/56)) ([7151934](https://github.com/dynadoc/dynadoc/commit/715193462a4b54818ac2b5f2c57e68c4824fd0c4))
+
 ## [1.1.0](https://github.com/dynadoc/dynadoc/compare/v1.0.3...v1.1.0) (2026-11-08)
 
 
