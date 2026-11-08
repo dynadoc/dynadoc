@@ -87,3 +87,63 @@ jobs:
             ghcr.io/dynadoc/dynadoc-web:${{ github.sha }}
             ghcr.io/dynadoc/dynadoc-web:latest
             ${{ github.event_name == 'release' && format('ghcr.io/dynadoc/dynadoc-web:{0}', github.event.release.tag_name) || '' }}
+
+      # Prévenir le dépôt de déploiement qu'une image de release existe, pour
+      # qu'il épingle ce SHA exact et laisse ArgoCD faire le reste.
+      #
+      # UNIQUEMENT sur une release publiée. Un push ordinaire sur `main` ne doit
+      # pas atteindre la production : le 8 novembre, cinq PR y sont parties sans
+      # qu'aucune CI n'ait tourné dessus, et le geste manuel était alors la
+      # dernière porte. Elle se déplace sur le merge de la PR de release, elle
+      # ne disparaît pas.
+      #
+      # La cible est un secret, pas une valeur écrite ici. Ce dépôt est public :
+      # le nom du dépôt de déploiement n'a pas à y figurer.
+      #
+      # Sans le secret, l'étape prévient et sort sans échouer. Une image publiée
+      # reste une image publiée, et faire rougir la construction pour une
+      # promotion non configurée induirait en erreur.
+      # Prevenir le depot de deploiement qu'une image de release existe, pour
+      # qu'il epingle ce SHA exact et laisse ArgoCD faire le reste.
+      #
+      # UNIQUEMENT sur une release publiee. Un push ordinaire sur `main` ne doit
+      # pas atteindre la production : le geste manuel qu'on remplace ici etait
+      # la derniere porte, et elle se deplace sur le merge de la PR de release
+      # plutot que de disparaitre.
+      #
+      # La cible est un secret, pas une valeur ecrite ici. Ce depot est public :
+      # le nom du depot de deploiement n'a pas a y figurer.
+      #
+      # Le jeton est un PAT fine-grained, limite a ce seul depot et a la
+      # permission Contents. Un jeton d'App serait plus propre, mais le depot
+      # de deploiement vit sous un compte personnel et non sous cette
+      # organisation : une App creee ici ne peut pas s'y installer sans que son
+      # proprietaire accepte. Le PAT porte donc une date d'expiration, et ce
+      # commentaire est le rappel qu'il faudra le renouveler.
+      #
+      # Sans la configuration, l'etape previent et sort sans echouer. Une image
+      # publiee reste une image publiee, et faire rougir la construction pour
+      # une promotion non configuree induirait en erreur.
+      - name: Tell the deployment repository
+        if: success() && github.event_name == 'release'
+        env:
+          TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          TARGET: ${{ secrets.DEPLOY_DISPATCH_REPO }}
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ] || [ -z "${TARGET}" ]; then
+            echo "::warning::Promotion non configuree (DEPLOY_DISPATCH_TOKEN, DEPLOY_DISPATCH_REPO). Le deploiement n'a pas ete declenche, epinglez le tag a la main."
+            exit 0
+          fi
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${TARGET}/dispatches" \
+            -d "{\"event_type\":\"web-image-published\",\"client_payload\":{\"sha\":\"${GITHUB_SHA}\",\"version\":\"${VERSION}\"}}")"
+          case "${CODE}" in
+            204) echo "Deploiement declenche pour ${VERSION} (${GITHUB_SHA})." ;;
+            401|403) echo "::error::Le depot de deploiement a repondu ${CODE}. Le jeton est probablement expire ou n'a plus la permission Contents. L'image est publiee mais rien n'est epingle." ; exit 1 ;;
+            *)   echo "::error::Le depot de deploiement a repondu ${CODE}. L'image est publiee mais rien n'est epingle." ; exit 1 ;;
+          esac
