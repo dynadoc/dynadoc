@@ -103,26 +103,56 @@ jobs:
       # Sans le secret, l'étape prévient et sort sans échouer. Une image publiée
       # reste une image publiée, et faire rougir la construction pour une
       # promotion non configurée induirait en erreur.
+      # Un jeton d'installation d'App expire au bout d'une heure : une valeur
+      # collée dans un secret serait morte le lendemain. On le fabrique donc à
+      # la volée depuis l'identifiant de l'App et sa clé privée, qui eux ne
+      # périment pas. Une App plutôt qu'un jeton personnel, pour que la chaîne
+      # ne meure pas avec un compte.
+      - name: Mint a short-lived token for the deployment repository
+        id: deploy_token
+        if: success() && github.event_name == 'release' && vars.DEPLOY_APP_ID != ''
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: ${{ secrets.DEPLOY_DISPATCH_OWNER }}
+          repositories: ${{ secrets.DEPLOY_DISPATCH_NAME }}
+
+      # Prévenir le dépôt de déploiement qu'une image de release existe, pour
+      # qu'il épingle ce SHA exact et laisse ArgoCD faire le reste.
+      #
+      # UNIQUEMENT sur une release publiée. Un push ordinaire sur `main` ne doit
+      # pas atteindre la production : le geste manuel qu'on remplace ici était
+      # la dernière porte, et elle se déplace sur le merge de la PR de release
+      # plutôt que de disparaître.
+      #
+      # La cible est un secret, pas une valeur écrite ici. Ce dépôt est public :
+      # le nom du dépôt de déploiement n'a pas à y figurer.
+      #
+      # Sans la configuration, l'étape prévient et sort sans échouer. Une image
+      # publiée reste une image publiée, et faire rougir la construction pour
+      # une promotion non configurée induirait en erreur.
       - name: Tell the deployment repository
         if: success() && github.event_name == 'release'
         env:
-          TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
-          TARGET: ${{ secrets.DEPLOY_DISPATCH_REPO }}
+          TOKEN: ${{ steps.deploy_token.outputs.token }}
+          OWNER: ${{ secrets.DEPLOY_DISPATCH_OWNER }}
+          NAME: ${{ secrets.DEPLOY_DISPATCH_NAME }}
           VERSION: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          if [ -z "${TOKEN}" ] || [ -z "${TARGET}" ]; then
-            echo "::warning::DEPLOY_DISPATCH_TOKEN ou DEPLOY_DISPATCH_REPO absent. Le déploiement n'a pas été déclenché, épinglez le tag à la main."
+          if [ -z "${TOKEN}" ] || [ -z "${OWNER}" ] || [ -z "${NAME}" ]; then
+            echo "::warning::Promotion non configurée (DEPLOY_APP_ID, DEPLOY_APP_PRIVATE_KEY, DEPLOY_DISPATCH_OWNER, DEPLOY_DISPATCH_NAME). Le deploiement n'a pas ete declenche, epinglez le tag a la main."
             exit 0
           fi
           CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             -H "Authorization: Bearer ${TOKEN}" \
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/${TARGET}/dispatches" \
+            "https://api.github.com/repos/${OWNER}/${NAME}/dispatches" \
             -d "{\"event_type\":\"web-image-published\",\"client_payload\":{\"sha\":\"${GITHUB_SHA}\",\"version\":\"${VERSION}\"}}")"
           if [ "${CODE}" != "204" ]; then
-            echo "::error::Le dépôt de déploiement a répondu ${CODE}. L'image est publiée mais rien n'est épinglé."
+            echo "::error::Le depot de deploiement a repondu ${CODE}. L'image est publiee mais rien n'est epingle."
             exit 1
           fi
-          echo "Déploiement déclenché pour ${VERSION} (${GITHUB_SHA})."
+          echo "Deploiement declenche pour ${VERSION} (${GITHUB_SHA})."
