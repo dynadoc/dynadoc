@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/dynadoc/dynadoc/compare/v1.0.3...v1.1.0) (2026-11-08)
+
+
+### Features
+
+* **home:** restructure the dashboard for a quicker, readable overview ([#53](https://github.com/dynadoc/dynadoc/issues/53)) ([db94936](https://github.com/dynadoc/dynadoc/commit/db94936f4000edc7f3f62868929035d859c766fe))
+* **tour:** give the welcome step a readable, tinted feature grid ([#52](https://github.com/dynadoc/dynadoc/issues/52)) ([b3e56bb](https://github.com/dynadoc/dynadoc/commit/b3e56bb0e77946874748d1655e6d080a96d421b1))
+
+
+### Fixes
+
+* **splash:** scope the splash screen's generic selectors to #app-splash ([#50](https://github.com/dynadoc/dynadoc/issues/50)) ([2c8bca2](https://github.com/dynadoc/dynadoc/commit/2c8bca2c556ccba7d535d66c797c63a8c4b892bc))
+* **tour:** ease the popover height between onboarding steps ([#51](https://github.com/dynadoc/dynadoc/issues/51)) ([491bb39](https://github.com/dynadoc/dynadoc/commit/491bb39765637d8d805cb0bbd5177f711fb855d0))
+
 ## [1.0.3](https://github.com/dynadoc/dynadoc/compare/v1.0.2...v1.0.3) (2026-11-08)
 
 
