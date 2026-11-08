@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.3](https://github.com/dynadoc/dynadoc/compare/v1.0.2...v1.0.3) (2026-11-08)
+
+
+### Fixes
+
+* **comments:** extract comment preview text with an inert parser ([#24](https://github.com/dynadoc/dynadoc/issues/24)) ([fe4ca3a](https://github.com/dynadoc/dynadoc/commit/fe4ca3a192fc7f375c3fd919a0f4f9f5674efdbb))
+* **home:** keep the icon rail and its file manager button in view ([#41](https://github.com/dynadoc/dynadoc/issues/41)) ([cfc28fe](https://github.com/dynadoc/dynadoc/commit/cfc28fe24e63d305a58720f57f13e72662df772a)), closes [#39](https://github.com/dynadoc/dynadoc/issues/39)
+* **i18n:** add the 48 missing japanese interface strings ([#35](https://github.com/dynadoc/dynadoc/issues/35)) ([118f945](https://github.com/dynadoc/dynadoc/commit/118f945b52af41c90138151872c256463529c53f)), closes [#29](https://github.com/dynadoc/dynadoc/issues/29)
+* **regions:** offer only the regions whose spoke actually answers ([#28](https://github.com/dynadoc/dynadoc/issues/28)) ([1251f9a](https://github.com/dynadoc/dynadoc/commit/1251f9a5bc1f43b61f82f8821ad252f242f55499))
+* **security:** correct chunked encryption format ([#34](https://github.com/dynadoc/dynadoc/issues/34)) ([b3fb5ba](https://github.com/dynadoc/dynadoc/commit/b3fb5ba1684f3c03b8433c9971b899fe4bf0b217))
+* **tour:** make the onboarding buttons readable and move skip away from next ([#43](https://github.com/dynadoc/dynadoc/issues/43)) ([f77c86b](https://github.com/dynadoc/dynadoc/commit/f77c86ba96d9d9d40e0338a87284703032740edb)), closes [#38](https://github.com/dynadoc/dynadoc/issues/38)
+* **tour:** make the onboarding progress indicator follow the tour ([#42](https://github.com/dynadoc/dynadoc/issues/42)) ([fdccf47](https://github.com/dynadoc/dynadoc/commit/fdccf472798082df96c241e3937af9046300bfc1)), closes [#37](https://github.com/dynadoc/dynadoc/issues/37)
+
+
+### Documentation
+
+* credit co-authors, a model included ([#32](https://github.com/dynadoc/dynadoc/issues/32)) ([41f898e](https://github.com/dynadoc/dynadoc/commit/41f898e37b59274cbf84fe5e03b675ddf35deec6))
+
 ## [1.0.2](https://github.com/dynadoc/dynadoc/compare/v1.0.1...v1.0.2) (2026-11-05)
 
 
