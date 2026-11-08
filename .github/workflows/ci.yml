@@ -7,13 +7,14 @@ on:
 
 # What this CI covers:
 #   - Circular import detection in Tiptap extensions (hard gate)
-#   - ESLint (informational — pre-existing debt)
-#   - TypeScript errors in main/preload (informational — pre-existing debt)
+#   - The four deterministic test suites, via `test:ci` (hard gate)
+#   - ESLint (informational, pre-existing debt)
+#   - TypeScript errors in main/preload (informational, pre-existing debt)
 #
 # Not covered (intentional, tracked in SPEC-001):
 #   - svelte-check (renderer)
 #   - Build / bundle validation
-#   - Unit or integration tests
+#   - test:e2e:open-timing (needs puppeteer's Chrome, skipped by --ignore-scripts)
 #   - electron-rebuild (requires native libs not available on ubuntu-latest)
 
 jobs:
@@ -49,3 +50,14 @@ jobs:
       # Baseline: 255 pre-existing cycles in Tiptap extensions (documented in CLAUDE.md).
       - name: Check circular imports
         run: npm run check:cycles
+
+      # Hard gate. Four suites that need nothing but Node and esbuild, so they
+      # run under the `--ignore-scripts` install above: the preload bridge, the
+      # filesystem path policy, the asset protocol and the chunked encryption
+      # round-trip. All four passed on main when this step was added.
+      #
+      # test:e2e:open-timing is deliberately left out. It needs puppeteer,
+      # whose Chrome download is a postinstall script this job skips, and it
+      # asserts a 5 s wall-clock budget that a shared runner cannot hold.
+      - name: Tests
+        run: npm run test:ci
