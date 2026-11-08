@@ -2,274 +2,313 @@
   import { _ } from 'svelte-i18n'
   import type { DocumentContentType } from '../../../models/Document'
   import EditorCommonUtils from '../../../utils/common.utils'
-  import EditorHelpers from '../../../utils/EditorHelpers'
-  import AnimatedContent from './components/AnimatedContent.svelte'
   import GenerativeCreationBar from './components/GenerativeCreationBar.svelte'
 
-  // --- Props & State (Svelte 5) ---
-  let searchQuery = $state('')
-  let selectedCategory = $state('All')
-
-  // const creationType = "text" |"design"|"slide"|"sheet"
-  // type DocumentContentType = 'text' | 'design' | 'slide' | 'sheet'
-
+  // Même grammaire que les actions de création du tableau de bord : une
+  // couleur par type (--brand-tile-* sur --brand-tint-*), libellé sur la
+  // couleur de texte normale.
   interface CreationType {
     id: DocumentContentType
     labelKey: string
     subKey: string
     icon: string
-    color: string
+    tile: string
+    tint: string
   }
+
   const creationTypes: CreationType[] = [
     {
       id: 'text',
       labelKey: 'Document',
       subKey: 'Standard Text',
-      icon: 'ph-article',
-      color: 'text-blue-400'
+      icon: 'ph-file-text',
+      tile: 'var(--brand-tile-document)',
+      tint: 'var(--brand-tint-document)'
     },
     {
-      id: 'design',
-      labelKey: 'Design',
-      subKey: 'Layers & Vector',
-      icon: 'ph-paint-brush-broad',
-      color: 'text-purple-400'
+      id: 'sheet',
+      // 'Spreadsheet', comme sur le tableau de bord ; 'Worksheet' affichait
+      // un autre nom pour le même type.
+      labelKey: 'Spreadsheet',
+      subKey: 'Data & Formulas',
+      icon: 'ph-table',
+      tile: 'var(--brand-tile-spreadsheet)',
+      tint: 'var(--brand-tint-spreadsheet)'
     },
     {
       id: 'slide',
       labelKey: 'Presentation',
       subKey: 'Animated Slides',
       icon: 'ph-presentation-chart',
-      color: 'text-orange-400'
+      tile: 'var(--brand-tile-presentation)',
+      tint: 'var(--brand-tint-presentation)'
     },
     {
-      id: 'sheet',
-      labelKey: 'Worksheet',
-      subKey: 'Data & Formulas',
-      icon: 'ph-table',
-      color: 'text-green-400'
+      id: 'design',
+      labelKey: 'Design',
+      subKey: 'Layers & Vector',
+      icon: 'ph-paint-brush-broad',
+      tile: 'var(--brand-tile-design)',
+      tint: 'var(--brand-tint-design)'
     },
     {
       id: 'form',
       labelKey: 'Form',
       subKey: 'Quiz & Surveys',
       icon: 'ph-textbox',
-      color: 'text-red-400'
+      tile: 'var(--brand-tile-form)',
+      tint: 'var(--brand-tint-form)'
     },
     {
       id: 'meeting',
       labelKey: 'Meeting',
       subKey: 'Online Meetings',
-      icon: 'ph-video-conference',
-      color: 'text-yellow-400'
+      icon: 'ph-video-camera',
+      tile: 'var(--brand-tile-meeting)',
+      tint: 'var(--brand-tint-meeting)'
     }
   ]
 
-  const templates = $state([
-    {
-      id: 1,
-      titleKey: 'Annual Business Report',
-      typeLabelKey: 'Document',
-      img: 'https://placehold.co/200x260/2b2b2b/ccc?text=Report'
-    },
-    {
-      id: 2,
-      titleKey: 'Social Media Kit',
-      typeLabelKey: 'Design',
-      img: 'https://placehold.co/200x260/2b2b2b/ccc?text=Design'
-    },
-    {
-      id: 3,
-      titleKey: 'Product Pitch Deck',
-      typeLabelKey: 'Presentation',
-      img: 'https://placehold.co/200x260/2b2b2b/ccc?text=Deck'
-    },
-    {
-      id: 4,
-      titleKey: 'Financial Forecast',
-      typeLabelKey: 'Worksheet',
-      img: 'https://placehold.co/200x260/2b2b2b/ccc?text=Sheet'
-    }
-  ])
+  const typeById = Object.fromEntries(creationTypes.map((type) => [type.id, type])) as Record<
+    string,
+    CreationType
+  >
+
+  // Les catégories filtrent vraiment. Les vignettes sont dessinées sur place
+  // (icône du type sur sa teinte) : plus de requête vers placehold.co.
+  const categories = ['All', 'Marketing', 'Education', 'Business', 'Personal'] as const
+  type Category = (typeof categories)[number]
+
+  const templates: Array<{
+    id: number
+    titleKey: string
+    type: DocumentContentType
+    category: Exclude<Category, 'All'>
+  }> = [
+    { id: 1, titleKey: 'Annual Business Report', type: 'text', category: 'Business' },
+    { id: 2, titleKey: 'Social Media Kit', type: 'design', category: 'Marketing' },
+    { id: 3, titleKey: 'Product Pitch Deck', type: 'slide', category: 'Marketing' },
+    { id: 4, titleKey: 'Financial Forecast', type: 'sheet', category: 'Business' }
+  ]
+
+  let selectedCategory = $state<Category>('All')
 
   let filteredTemplates = $derived(
-    templates.filter((t) => t.titleKey.toLowerCase().includes(searchQuery.toLowerCase()))
+    selectedCategory === 'All'
+      ? templates
+      : templates.filter((template) => template.category === selectedCategory)
   )
 
-  async function handleOnClick(type: DocumentContentType) {
-    await EditorCommonUtils.addNewDocumentEditor(
-      null,
-      null,
-      () => {
-        // _canRenderComponents = true
-      },
-      type
-      // null,
-      // '',
-      // associatedMeetingLinks
-    )
+  async function handleOnClick(type: DocumentContentType): Promise<void> {
+    await EditorCommonUtils.addNewDocumentEditor(null, null, () => {}, type)
   }
 </script>
 
-<!-- <div
-  class="h-full w-full bg-base-100 text-base-content flex flex-col font-sans select-none overflow-hidden"
-> -->
-<div
-  class="flex flex-col lg:flex-row bg-base-100 text-base-content font-sans selection:bg-primary/20 transition-colors duration-200"
->
-  <header class="pt-4 pl-4 pb-4 pr-8 lg:pt-8 max-w-6xl mx-auto w-full flex-1">
-    <div class="flex flex-col gap-6">
-      <div class="space-y-1">
-        <!-- <i class="ph-bold i-icon ph-sparkle animate-pulse33"></i> -->
+<div class="nd brand-ui min-h-full bg-base-200 text-base-content font-sans">
+  <div class="max-w-[1180px] mx-auto px-8 py-8 flex flex-col gap-9">
+    <header>
+      <h1 class="text-[28px] font-semibold tracking-tight leading-tight">
+        {$_('New Document')}
+      </h1>
+      <p class="text-sm text-base-content/60 mt-1">
+        {$_('Select a canvas, generate a document or search for a professional template.')}
+      </p>
+    </header>
 
-        <!-- <h1 class="text-3xl font-bold tracking-tight text-base-content">Start writing something dynamically Amazing</h1> -->
-        <AnimatedContent />
-        <p class="text-base-content opacity-50 text-sm">
-          {$_('Select a canvas, generate a document or search for a professional template.')}
-        </p>
-      </div>
-
-      <!-- <div class="relative group">
-        <div class="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-          <i class={'ph-bold i-icon ph-sparkle text-primary text-[18px]'}></i>
-        </div>
-        <input
-          type="text"
-          placeholder="Describe what you want to create (e.g. 'A 3-page flyer for a bake sale')"
-          class="w-full bg-base-200 border-2 border-transparent focus:border-primary rounded-xl py-4 pl-12 pr-4 outline-none text-lg transition-all shadow-inner placeholder:opacity-30"
-        />
-        <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-          <kbd class="kbd kbd-sm bg-base-300">Enter</kbd>
-        </div>
-      </div> -->
-
-      <GenerativeCreationBar />
-    </div>
-  </header>
-  <section class="pt-4 pl-4 pb-4 pr-8 lg:pt-8 flex-1">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] opacity-40">
-        {$_('Blank Engine Presets')}
-      </h2>
-    </div>
-    <div class="grid grid-cols-2 md:grid-cols-2 gap-4">
-      {#each creationTypes as type}
-        <button
-          class="cursor-pointer flex flex-col items-center justify-center gap-4 p-8 bg-base-200 hover:bg-base-300 border border-base-300 rounded-2xl transition-all group hover:-translate-y-1 active:scale-95 shadow-sm"
-          onclick={() => {
-            handleOnClick(type.id)
-          }}
-        >
-          <div
-            class="w-16 h-16 rounded-2xl bg-base-100 flex items-center justify-center shadow-lg group-hover:shadow-primary/20 transition-all"
+    <!-- Partir de zéro : le geste le plus fréquent, en premier. -->
+    <section>
+      <h2 class="nd-label">{$_('Start from scratch')}</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {#each creationTypes as type (type.id)}
+          <button
+            class="dash-create nd-blank"
+            data-kind={type.id}
+            style="--tile:{type.tile}; --tint:{type.tint}"
+            onclick={() => handleOnClick(type.id)}
           >
-            <i class={'ph-light text-[xxx-large] ' + type.icon + '  ' + type.color}></i>
-          </div>
-          <div class="text-center">
-            <div class="font-bold text-base">{$_(type.labelKey)}</div>
-            <div class="text-[10px] opacity-40 uppercase tracking-wider">{$_(type.subKey)}</div>
-          </div>
-        </button>
-      {/each}
-    </div>
-  </section>
-</div>
-<div>
-  <main
-    class="flex-grow overflow-y-auto custom-scrollbar p-8 pt-4 max-w-6xl mx-auto w-full space-y-12"
-  >
-    <section class="space-y-6">
-      <div class="flex items-center justify-between border-b border-base-300 pb-4">
-        <div class="flex gap-6">
-          {#each ['All', 'Marketing', 'Education', 'Business', 'Personal'] as cat}
-            <button
-              onclick={() => (selectedCategory = cat)}
-              class="text-sm font-bold transition-all relative
-              {selectedCategory === cat
-                ? 'text-primary'
-                : 'text-base-content opacity-40 hover:opacity-100'}"
-            >
-              {$_(cat)}
-              {#if selectedCategory === cat}
-                <div class="absolute -bottom-[17px] left-0 w-full h-0.5 bg-primary"></div>
-              {/if}
-            </button>
-          {/each}
-        </div>
+            <span class="dash-create__icon" aria-hidden="true">
+              <i class="ph-light {type.icon} text-[20px]"></i>
+            </span>
+            <span class="min-w-0 flex-1 text-left">
+              <span class="block text-sm font-semibold truncate">{$_(type.labelKey)}</span>
+              <span class="block text-xs text-base-content/60 truncate mt-0.5">
+                {$_(type.subKey)}
+              </span>
+            </span>
+          </button>
+        {/each}
+      </div>
+    </section>
 
-        <div class="flex items-center gap-2 text-sm opacity-60 hover:opacity-100 cursor-pointer">
-          <span>{$_('Browse all templates')}</span>
-          <i class={'ph-bold i-icon ph-arrow-right'}></i>
+    <section>
+      <h2 class="nd-label">{$_('Generate with AI')}</h2>
+      <GenerativeCreationBar />
+    </section>
+
+    <section>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="nd-label !mb-0">{$_('Templates')}</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="dash-seg" role="group" aria-label={$_('Templates')}>
+            {#each categories as category (category)}
+              <button
+                class="dash-seg__item nd-seg-text"
+                class:dash-seg__item--on={selectedCategory === category}
+                aria-pressed={selectedCategory === category}
+                onclick={() => (selectedCategory = category)}
+              >
+                {$_(category)}
+              </button>
+            {/each}
+          </div>
         </div>
       </div>
 
-      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {#each filteredTemplates as temp}
-          <div class="group cursor-pointer">
-            <div
-              class="aspect-[3/4] bg-base-300 rounded-lg overflow-hidden relative border border-base-300 shadow-sm transition-all group-hover:shadow-xl group-hover:border-primary/50"
-            >
-              <img
-                src={temp.img}
-                alt={temp.title}
-                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-              />
-
-              <div
-                class="absolute inset-0 bg-primary/80 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center p-4 transition-opacity duration-300 text-base-content"
-              >
-                <button
-                  class="btn btn-sm btn-ghost border-white text-base-content rounded-full px-6"
-                >
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {#each filteredTemplates as template (template.id)}
+          {@const type = typeById[template.type]}
+          <div class="nd-template" style="--tile:{type.tile}; --tint:{type.tint}">
+            <div class="nd-template__thumb">
+              <i class="ph-light {type.icon} text-[40px]" aria-hidden="true"></i>
+              <div class="nd-template__overlay">
+                <button class="dash-primary" onclick={() => handleOnClick(template.type)}>
                   {$_('Use Template')}
                 </button>
-                <button
-                  class="mt-2 text-[10px] font-bold uppercase tracking-widest opacity-80 hover:opacity-100"
-                >
-                  {$_('Quick Preview')}
-                </button>
-                >
-              </div>
-
-              <div class="absolute top-2 left-2 px-2 py-1 bg-black/50 backdrop-blur-md rounded-md">
-                <i class={'ph-light i-icon ph-lightning text-yellow-400 text-[10px]'}></i>
+                <button class="nd-template__secondary">{$_('Quick Preview')}</button>
               </div>
             </div>
-            <div class="mt-3">
-              <div class="text-sm font-bold truncate">{$_(temp.titleKey)}</div>
-              <div class="text-[10px] opacity-40 uppercase font-bold">
-                {$_(temp.typeLabelKey)}
-              </div>
+            <div class="px-3 py-2.5">
+              <div class="text-sm font-semibold truncate">{$_(template.titleKey)}</div>
+              <div class="text-xs text-base-content/60 mt-0.5">{$_(type.labelKey)}</div>
             </div>
+          </div>
+        {:else}
+          <div class="dash-empty col-span-full">
+            <i class="ph-light ph-layout text-2xl opacity-40" aria-hidden="true"></i>
+            <p class="text-xs text-base-content/60 mt-2">
+              {$_('No templates in this category yet.')}
+            </p>
           </div>
         {/each}
 
-        <button
-          class="aspect-[3/4] border-2 border-dashed border-base-300 rounded-lg flex flex-col items-center justify-center gap-3 opacity-40 hover:opacity-100 hover:border-primary hover:bg-primary/5 transition-all group"
-        >
-          <i class={'ph-bold i-icon ph-plus text-2xl group-hover:scale-110 transition-transform'}
-          ></i>
-          <span class="text-xs font-bold uppercase tracking-wider">{$_('Add Custom')}</span>
+        <button class="nd-template nd-template--add">
+          <i class="ph-light ph-plus text-[22px]" aria-hidden="true"></i>
+          <span class="text-xs font-semibold mt-2">{$_('Add Custom')}</span>
         </button>
       </div>
     </section>
-  </main>
+  </div>
 </div>
 
-<style lang="postcss">
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: oklch(var(--b3));
-    border-radius: 10px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
+<style>
+  .nd-label {
+    margin-bottom: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--color-base-content) 65%, transparent);
   }
 
-  /* Smooth entry for images */
-  img {
-    background: oklch(var(--b2));
+  /* Les tuiles vierges sont l'action principale de l'écran : une surface et
+     un sous-titre, là où le tableau de bord n'a qu'une rangée de raccourcis. */
+  .nd-blank {
+    padding: 14px 16px;
+    border-color: var(--color-base-300);
+    background: var(--color-base-100);
+    box-shadow: 0 1px 2px rgb(16 24 40 / 0.04);
+  }
+
+  .nd-seg-text {
+    width: auto;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+
+  .nd-template {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 12px;
+    border: 1px solid var(--color-base-300);
+    background: var(--color-base-100);
+    box-shadow: 0 1px 2px rgb(16 24 40 / 0.04);
+    transition:
+      border-color 180ms ease,
+      box-shadow 180ms ease;
+  }
+
+  .nd-template:hover,
+  .nd-template:focus-within {
+    border-color: color-mix(in srgb, var(--tile, var(--accent)) 45%, transparent);
+    box-shadow: 0 8px 20px -10px rgb(16 24 40 / 0.25);
+  }
+
+  .nd-template__thumb {
+    position: relative;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 4 / 3;
+    background: var(--tint);
+    color: var(--tile);
+  }
+
+  .nd-template__overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: color-mix(in srgb, var(--color-base-100) 82%, transparent);
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .nd-template:hover .nd-template__overlay,
+  .nd-template:focus-within .nd-template__overlay {
+    opacity: 1;
+  }
+
+  .nd-template__secondary {
+    border: 0;
+    background: transparent;
+    color: var(--color-base-content);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .nd-template__secondary:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .nd-template--add {
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    border-style: dashed;
+    background: transparent;
+    box-shadow: none;
+    color: color-mix(in srgb, var(--color-base-content) 65%, transparent);
+    cursor: pointer;
+  }
+
+  .nd-template--add:hover {
+    color: var(--color-base-content);
+    border-color: color-mix(in srgb, var(--color-base-content) 30%, transparent);
+    box-shadow: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nd-template,
+    .nd-template__overlay {
+      transition: none;
+    }
   }
 </style>
