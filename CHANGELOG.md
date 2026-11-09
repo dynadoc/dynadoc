@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/dynadoc/dynadoc/compare/v1.2.0...v1.2.1) (2026-11-09)
+
+
+### Documentation
+
+* **i18n:** adopt preferred Japanese phrasings from [#36](https://github.com/dynadoc/dynadoc/issues/36) ([#60](https://github.com/dynadoc/dynadoc/issues/60)) ([0479ec5](https://github.com/dynadoc/dynadoc/commit/0479ec5ae3fc0d377d810827fc0695b03325fe9c))
+
 ## [1.2.0](https://github.com/dynadoc/dynadoc/compare/v1.1.0...v1.2.0) (2026-11-08)
 
 
