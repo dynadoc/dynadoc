@@ -5,7 +5,7 @@
 # No pipeline had one, so the image was only ever built by hand and production
 # silently served a frontend days behind main. Building here removes the clone,
 # the token, and the drift: the build context IS the commit being built.
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 

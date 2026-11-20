@@ -1,16 +1,34 @@
 version: 2
+
+# Security updates
+# ----------------
+# Dependabot *security* updates (PRs opened as soon as an advisory affects a
+# dependency in the lockfile) are switched on in the repository settings:
+# Settings → Code security → Dependabot alerts + Dependabot security updates.
+# This file tunes them: the `security` groups below bundle every security fix
+# for an ecosystem into a single PR, so a burst of CVEs does not produce a
+# burst of PRs, and they are kept apart from routine version bumps.
+#
+# Version updates
+# ---------------
+# Routine bumps run weekly and are grouped by family to keep review manageable.
+
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels: [dependencies]
     commit-message:
       prefix: chore
       include: scope
     groups:
+      # Every npm security fix, whatever its severity, bundled in one PR.
+      security:
+        applies-to: security-updates
+        patterns: ['*']
       tiptap:
         patterns: ['@tiptap/*']
       fluentui:
@@ -18,11 +36,24 @@ updates:
       capacitor:
         patterns: ['@capacitor/*', '@capawesome/*']
       eslint:
-        patterns: ['eslint', 'eslint-*', '@typescript-eslint/*', 'prettier', 'prettier-*', 'husky', 'lint-staged']
+        patterns:
+          [
+            'eslint',
+            'eslint-*',
+            '@typescript-eslint/*',
+            'prettier',
+            'prettier-*',
+            'husky',
+            'lint-staged'
+          ]
       types:
         patterns: ['@types/*']
     ignore:
       # Electron + electron-builder major bumps require manual validation (native modules, signing, auto-update).
+      # Caution: Dependabot applies `ignore` rules to *security* updates too.
+      # Electron only patches its latest three majors, so a security fix for
+      # an older major is a major bump that this rule blocks: no PR will be
+      # opened for it. Track Electron's support window and upgrade by hand.
       - dependency-name: electron
         update-types: [version-update:semver-major]
       - dependency-name: electron-builder
@@ -33,8 +64,35 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
     labels: [dependencies, ci]
     commit-message:
       prefix: ci
       include: scope
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Base images of the web image (node builder + nginx runtime).
+  - package-ecosystem: docker
+    directory: /deploy/web
+    schedule:
+      interval: weekly
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # DocxToHtml helper (.NET).
+  - package-ecosystem: nuget
+    directory: /bin/DocxToHtml
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ['*']
