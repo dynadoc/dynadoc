@@ -16,7 +16,11 @@ export default [
       '**/*DELETE*',
       '**/*DELETEE*',
       '**/*DELEETE*',
-      'src/renderer/src/components/common/react/build-fluent.mjs'
+      'src/renderer/src/components/common/react/build-fluent.mjs',
+      // Vendored libraries that ship their own eslint.config, which imports
+      // @eslint/eslintrc (not a dependency here) and crashes the whole run.
+      'src/renderer/src/components/common/web-component/vscode-elements/**',
+      'src/renderer/src/extensions/tiptap/tiptap-pagination-plus-v1.1.2/**'
     ]
   },
   ...electronToolkitTs.configs.recommended,

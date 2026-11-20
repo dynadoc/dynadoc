@@ -262,6 +262,11 @@
 - /src/renderer/src/components/common/web-component/ninja-keys/.vscode/
 - /src/renderer/src/components/common/web-component/vscode-elements/.vscode/
 
+# Lockfiles vendored along with these libraries. npm never installs them (only
+# the root lockfile is read), but GitHub scans every lockfile in the tree and
+# raised ~340 Dependabot alerts on dependencies that never reach the client.
+- /src/renderer/src/**/package-lock.json
+
 # Vite writes these next to the config when it reloads; they are temporary.
 - /.electron.vite.config.ts.*
 - /.electron.vite.config.*.mjs.*
