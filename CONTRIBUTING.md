@@ -13,7 +13,7 @@ npm ci
 npm run dev        # or: npm run dev:web
 ```
 
-Node **20** and npm **10** exactly. [README.md](README.md) lists the
+Node **22** and npm **10** exactly. [README.md](README.md) lists the
 per-platform system packages and the two native modules worth checking after
 install.
 
