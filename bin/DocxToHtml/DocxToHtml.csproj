@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Clippit" Version="3.0.2" />
-    <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
     <PackageReference Include="Open-Xml-PowerTools" Version="4.4.0" />
   </ItemGroup>
 
