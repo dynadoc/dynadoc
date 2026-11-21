@@ -15,7 +15,10 @@ export type VarDropdownItem = {
 
 export function buildVarDropdownItems(vars: Variable[], query: string): VarDropdownItem[] {
   const needle = (query || '').toLowerCase()
+  // Spreadsheet pointers name a whole sheet file, not a value: inserting one
+  // showed its path. Cell refs are inserted from the Spreadsheet Reference box.
   return (vars || [])
+    .filter((v) => v.rawValue?.type !== 'spreadsheet')
     .map((v) => ({
       id: v.name,
       name: v.rawValue?.name || v.name,
