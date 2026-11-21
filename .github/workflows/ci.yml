@@ -24,6 +24,10 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A full run takes about 3 minutes. Before the vendored and minified files
+    # were excluded from ESLint, the lint step alone ran for four hours and
+    # held the required `checks` status the whole time.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
