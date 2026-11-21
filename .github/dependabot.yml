@@ -82,6 +82,10 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    ignore:
+      # CI, the Makefile and the docs pin one Node major; move them together by hand.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
 
   # DocxToHtml helper (.NET).
   - package-ecosystem: nuget
