@@ -131,7 +131,7 @@ If that directory is empty, the integrated terminal will not work.
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `src/main/`                           | Electron main process: filesystem and OS access, IPC handlers, window and tab management |
 | `src/preload/`                        | Preload entry points (`index`, `browser`, `webview-var`, `embedded-var`)                 |
-| `src/renderer/`                       | The application itself — Svelte 5 with runes, plus a vendored pdf.js and CanvasKit       |
+| `src/renderer/`                       | The application itself — Svelte 5 with runes, plus a vendored pdf.js                     |
 | `src/renderer/src/extensions/tiptap/` | Editor extensions, one directory per feature                                             |
 | `web/`, `web.vite.config.mts`         | Web target                                                                               |
 | `android/`, `ios/`                    | Capacitor projects                                                                       |
