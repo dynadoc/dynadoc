@@ -6,6 +6,7 @@
   import Konva from 'konva'
   import { applySlideZOrder } from './zOrder'
   import { Editor } from '@tiptap/core'
+  import { Selection } from '@tiptap/pm/state'
   import { gsap } from 'gsap'
   import StarterKit from '@tiptap/starter-kit'
   import Collaboration from '@tiptap/extension-collaboration'
@@ -15,9 +16,11 @@
   import EditorExtensionHelpers from '../../../../../utils/EditorExtensionHelpers'
   import { CustomAnimationExtension } from '../../../CustomAnimationExtension/CustomAnimationExtension'
   import { CustomVarExtensionProps } from '../../../CustomVarExtension/utils/common.utils'
+  import { CustomSlashCommandExtensionProps } from '../../../CustomSlashCommandExtension/utils/common.utils'
   import { smartSnapping } from '../../../../konva/snapping'
   import type { CanvasCommands } from '../../../../../commands/canvasCommands.types'
   import { _$_canvasCommands } from '../../../../../stores/canvas.store'
+  import { _$_slideTextToEdit } from '../../stores/slide.store'
   import type { Shape } from '../../../../../utils/canvas.types'
   import { GenericFormatingEditorCommands } from '../../../../../components/common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
   //   import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
@@ -61,6 +64,7 @@
   } | null = null;
 
   let slideCommands: CanvasCommands | null = $state(null);
+  let _stopEditRequests: (() => void) | null = null;
   let _animationArmed = false;
 
   function runAnimation() {
@@ -567,6 +571,21 @@
     _editorEl.addEventListener('focusout', () => {
       exitEditMode()
     })
+    // At the edge of the text the browser would carry the caret out of the
+    // box into the presentation behind the slide: keep it in the box.
+    _editorEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (!_editor?.isEditable || e.shiftKey) return
+      const { state, view } = _editor
+      const head = state.selection.$head
+      const last = Selection.atEnd(state.doc).$head
+      const first = Selection.atStart(state.doc).$head
+      const leaves =
+        (e.key === 'ArrowDown' && head.parent === last.parent && view.endOfTextblock('down')) ||
+        (e.key === 'ArrowUp' && head.parent === first.parent && view.endOfTextblock('up')) ||
+        (e.key === 'ArrowRight' && head.pos >= last.pos) ||
+        (e.key === 'ArrowLeft' && head.pos <= first.pos)
+      if (leaves) e.preventDefault()
+    })
     const container = __layer.getStage().container()
     container.tabIndex = 1 // IMPORTANT: makes div focusable
 
@@ -797,7 +816,11 @@
         _editorEl,
         null,
         __shape.content?.placeholder
-      ).map((extension) =>
+      )
+        // No "/" menu in a text box: its commands insert document blocks
+        // (tables, sheets...) that a slide's text box cannot hold.
+        .filter((extension) => extension?.name !== CustomSlashCommandExtensionProps.name)
+        .map((extension) =>
         extension?.name === 'starterKit'
           ? extension.configure({ trailingNode: false })
           : extension?.name === 'placeholder'
@@ -868,10 +891,20 @@
 
     wireBlockInteractions()
 
+    // Just inserted from the toolbar: take the keyboard.
+    _stopEditRequests = _$_slideTextToEdit.subscribe((id) => {
+      if (id !== __shape.id) return
+      _$_slideTextToEdit.set(null)
+      requestAnimationFrame(() => {
+        if (_editor && !_editor.isDestroyed) enterEditMode()
+      })
+    })
+
     __nodeMap.set(__shape.id, _group)
   })
 
   onDestroy(() => {
+    _stopEditRequests?.()
     // 1️⃣ Destroy Konva nodes
     // _rect?.destroy()
 

@@ -70,6 +70,9 @@ export const isSlideDeckInfo = (
   info: { contentType?: unknown; pageKind?: unknown } | null | undefined
 ): boolean => info?.contentType === 'slide' || info?.pageKind === 'slide'
 
+/** A text box just inserted from the toolbar: it takes the keyboard once mounted. */
+export const _$_slideTextToEdit = writable<string | null>(null)
+
 /** Id of the slide the deck UI works on (thumbnail selection, toolbar, notes). */
 export const _$_currentSlideId = writable<string | null>(null)
 

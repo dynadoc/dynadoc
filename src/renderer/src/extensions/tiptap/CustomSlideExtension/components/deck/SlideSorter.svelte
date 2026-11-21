@@ -6,8 +6,9 @@
   import { onDestroy, onMount } from 'svelte'
   import type { Editor } from '@tiptap/core'
   import SlideStatic from './SlideStatic.svelte'
-  import { _$_currentSlideId } from '../../stores/slide.store'
+  import { _$_currentSlideId, _$_slideTextToEdit } from '../../stores/slide.store'
   import { ShapeType } from '../../../../../utils/canvas.types'
+  import { _$_canvasCommands } from '../../../../../stores/canvas.store'
   import {
     addSlide,
     applyDeckTheme,
@@ -57,12 +58,59 @@
     return slides.find((s) => s.id === $_$_currentSlideId) ?? slides[0] ?? null
   }
 
-  function goTo(id: string): void {
-    selectSlide(editorId, id)
+  // While a scroll to a slide is under way, the slide in view does not
+  // take the highlight back.
+  let _followPausedUntil = 0
+
+  /** Makes `id` current and scrolls the editor to it, once its view exists. */
+  function goTo(id: string, attempt = 0): void {
+    if (attempt === 0) selectSlide(editorId, id)
     const slide = listDeckSlides(editor).find((s) => s.id === id)
     if (!slide) return
     const dom = editor.view.nodeDOM(slide.pos) as HTMLElement | null
-    dom?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (!dom) {
+      // A slide just added is drawn a frame or two later.
+      if (attempt < 30) requestAnimationFrame(() => goTo(id, attempt + 1))
+      return
+    }
+    _followPausedUntil = Date.now() + 600
+    dom.scrollIntoView({ block: 'start' })
+  }
+
+  /** The slide that fills most of the editor's view, or null. */
+  function slideInView(shell: HTMLElement): string | null {
+    const view = shell.getBoundingClientRect()
+    let best: { id: string; visible: number } | null = null
+    for (const slide of listDeckSlides(editor)) {
+      const dom = editor.view.nodeDOM(slide.pos) as HTMLElement | null
+      if (!dom) continue
+      const rect = dom.getBoundingClientRect()
+      const visible = Math.min(rect.bottom, view.bottom) - Math.max(rect.top, view.top)
+      if (visible > 0 && (!best || visible > best.visible)) best = { id: slide.id, visible }
+    }
+    return best?.id ?? null
+  }
+
+  // The highlighted thumbnail follows the slide scrolled into view.
+  let _stopFollowing: (() => void) | null = null
+  function followScroll(): void {
+    const shell = editor.view.dom.closest('.editor-shell') as HTMLElement | null
+    if (!shell) return
+    let frame = 0
+    const onScroll = (): void => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        if (Date.now() < _followPausedUntil) return
+        const id = slideInView(shell)
+        if (id && id !== $_$_currentSlideId) selectSlide(editorId, id)
+      })
+    }
+    shell.addEventListener('scroll', onScroll, { passive: true })
+    _stopFollowing = (): void => {
+      shell.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
   }
 
   async function newSlide(layout: SlideLayoutId): Promise<void> {
@@ -89,8 +137,19 @@
   }
 
   async function insert(kind: SlideInsertKind): Promise<void> {
+    // The toolbar button gives the focus up, so typing (or Space) does not
+    // press it again.
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
     const slide = current()
-    if (slide) await insertIntoSlide(slide, kind)
+    if (!slide) return
+    const id = await insertIntoSlide(slide, kind)
+    // A new text box is edited at once: what is typed next goes into it.
+    if (id) _$_slideTextToEdit.set(id)
+  }
+
+  function deleteSelectedElements(): void {
+    const slide = current()
+    if (slide) _$_canvasCommands.get(slide.id)?.deleteSelected()
   }
 
   async function onImagePicked(event: Event): Promise<void> {
@@ -155,10 +214,12 @@
   onMount(() => {
     refresh()
     editor.on('update', refresh)
+    followScroll()
   })
 
   onDestroy(() => {
     editor.off('update', refresh)
+    _stopFollowing?.()
   })
 </script>
 
@@ -237,6 +298,14 @@
         class="hidden-input"
         onchange={onImagePicked}
       />
+      <button
+        class="tool"
+        data-action="delete-element"
+        title={$_('Delete the selected element (Delete)')}
+        onclick={deleteSelectedElements}
+      >
+        <i class="ph-light ph-trash"></i>
+      </button>
     </div>
     <div class="tool-group">
       <button

@@ -200,12 +200,17 @@ async function slideCommands(slide: DeckSlide): Promise<CanvasCommands | null | 
 export type SlideInsertKind =
   'text' | ShapeType.Rect | ShapeType.Ellipse | ShapeType.Triangle | ShapeType.Line
 
-export async function insertIntoSlide(slide: DeckSlide, kind: SlideInsertKind): Promise<void> {
+/** Puts a new element on the slide; returns the new text box's id for 'text'. */
+export async function insertIntoSlide(
+  slide: DeckSlide,
+  kind: SlideInsertKind
+): Promise<string | null> {
   const commands = await slideCommands(slide)
-  if (!commands) return
-  const { accent, count } = await withSlideCanvas(slide, (canvas) => ({
+  if (!commands) return null
+  const { accent, count, ids } = await withSlideCanvas(slide, (canvas) => ({
     accent: getSlideTheme(canvas.meta.get('theme')).accent,
-    count: canvas.shapes.size
+    count: canvas.shapes.size,
+    ids: new Set(canvas.shapes.keys())
   }))
   // Each new object lands a little lower-right of the previous one.
   const offset = (count % 6) * 24
@@ -218,7 +223,11 @@ export async function insertIntoSlide(slide: DeckSlide, kind: SlideInsertKind): 
       // No content type: a free text box starts as a paragraph, not a bullet list.
       content: { value: '', placeholder: 'Type text' } as ShapeContent
     })
-    return
+    // addText does not return the id: it is the one key that is new.
+    return withSlideCanvas(
+      slide,
+      (canvas) => [...canvas.shapes.keys()].find((id) => !ids.has(id)) ?? null
+    )
   }
   if (kind === ShapeType.Line) {
     commands.addShape(ShapeType.Line, {
@@ -229,9 +238,10 @@ export async function insertIntoSlide(slide: DeckSlide, kind: SlideInsertKind): 
       stroke: accent,
       strokeWidth: 4
     })
-    return
+    return null
   }
   commands.addShape(kind, { x: 540 + offset, y: 260 + offset, w: 200, h: 200, fill: accent })
+  return null
 }
 
 /** Copies an image into the document's assets and puts it on the slide. */
