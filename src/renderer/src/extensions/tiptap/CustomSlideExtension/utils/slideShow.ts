@@ -98,7 +98,8 @@ function watchDeck(editor: Editor, editorId: string): void {
       window.presentationAPI?.sendData(IPC_PRESENTATION_UPDATE, payload)
     }, 300)
   }
-  setPresentationUpdateHandler(refresh)
+  // Put back on stop: documents' own shows use the handler that was there.
+  const previousHandler = setPresentationUpdateHandler(refresh)
   editor.on('update', refresh)
   const stopVariables = onVariableChange(refresh)
   const unsubscribe = presentation.subscribe((state) => {
@@ -106,7 +107,7 @@ function watchDeck(editor: Editor, editorId: string): void {
   })
   _stopWatching = (): void => {
     _stopWatching = null
-    setPresentationUpdateHandler(null)
+    setPresentationUpdateHandler(previousHandler)
     editor.off('update', refresh)
     stopVariables()
     queueMicrotask(unsubscribe)

@@ -27,8 +27,11 @@ const PERSISTED_ORIGIN = Symbol('canvas-persisted')
 
 let presentationUpdateHandler: (() => void) | null = null
 
-export const setPresentationUpdateHandler = (handler: (() => void) | null) => {
+/** Sets the handler and returns the one it replaces, so a caller can put it back. */
+export const setPresentationUpdateHandler = (handler: (() => void) | null): (() => void) | null => {
+    const previous = presentationUpdateHandler
     presentationUpdateHandler = handler
+    return previous
 }
 
 export { ShapeType } from './canvas.types'
