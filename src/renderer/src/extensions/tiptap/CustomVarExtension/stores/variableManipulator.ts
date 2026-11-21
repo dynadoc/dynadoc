@@ -7,7 +7,7 @@ import { nodeApi } from '../../../../utils/shims/node'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { setSheetVariablesApi, sheetRegistry } from '../../../../stores/sheetBridge.store'
 import { Node, mergeAttributes, InputRule, Editor } from '@tiptap/core'
-import SSF from 'ssf'
+import { formatVariableValue } from '../utils/variableFormat.utils'
 // import { persistStore } from '../../../../../utils/storePersistenceePersistence'
 import Utils from '../../../../utils/Utils'
 import { runAI } from '../../CustomAIExtension/utils/utils'
@@ -526,42 +526,7 @@ export class VariableManipulatorUtils {
     } */
 
   static formatValue(value: any, format: string | number, autoUpdate?: boolean): any {
-    if (!format || value === null || value === undefined || value === '') {
-      return value
-    }
-    if (typeof value === 'string' && value.trim().startsWith('#')) {
-      return value
-    }
-
-    let processingValue = value
-
-    // 1. Try to treat it as a number first (Excel's native way)
-    const parsedNum = Number(value)
-    const isNumeric = !isNaN(parsedNum) && isFinite(parsedNum) && typeof value !== 'boolean'
-
-    if (isNumeric) {
-      processingValue = parsedNum
-    } else {
-      // 2. If it's a string, check if it's a valid Date
-      // Handle Auto-update trigger
-      if (autoUpdate) {
-        processingValue = new Date() // Use current system time
-      } else {
-        const parsedDate = new Date(value)
-        if (parsedDate instanceof Date && !isNaN(parsedDate.getTime())) {
-          processingValue = parsedDate
-        }
-      }
-    }
-
-    try {
-      // SSF.format(format, processingValue)
-      // will now correctly handle Numbers OR Date Objects
-      return SSF.format(format, processingValue)
-    } catch (e) {
-      console.error('formatValue error', e)
-      return String(value)
-    }
+    return formatVariableValue(value, format, autoUpdate)
   }
 
   /**
