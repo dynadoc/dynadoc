@@ -9,6 +9,10 @@ on:
   # every queued pull request waits forever.
   merge_group:
 
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
+
 # What this CI covers:
 #   - Circular import detection in Tiptap extensions (hard gate)
 #   - The four deterministic test suites, via `test:ci` (hard gate)
@@ -28,7 +32,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # --ignore-scripts: skips electron-rebuild postinstall which requires
