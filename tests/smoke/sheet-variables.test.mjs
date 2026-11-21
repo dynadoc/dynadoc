@@ -63,7 +63,8 @@ const {
   isGlobalVisibility,
   toPlainNumber,
   isCellVarName,
-  CELL_VAR_TRIGGER
+  CELL_VAR_TRIGGER,
+  findVarTrigger
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -184,6 +185,36 @@ check(
   'no trigger in e-mails, after a digit start or past a dash',
   ['a@b', '@2x', '@a-b', '@a.b'].map(trigger),
   [null, null, null, null]
+)
+// The dropdown stays open while the name is typed one key at a time, and the
+// query is what follows the `@` (the list is filtered on it).
+check(
+  'each key of @cli keeps the trigger',
+  ['@', '@c', '@cl', '@cli'].map((text) => findVarTrigger(text, true)),
+  [
+    { query: '', atIndex: 0 },
+    { query: 'c', atIndex: 0 },
+    { query: 'cl', atIndex: 0 },
+    { query: 'cli', atIndex: 0 }
+  ]
+)
+check(
+  'the @ index is where the name starts',
+  [findVarTrigger('Dear @cl', true), findVarTrigger('=B2*@taux', true)],
+  [
+    { query: 'cl', atIndex: 5 },
+    { query: 'taux', atIndex: 4 }
+  ]
+)
+check(
+  'the trigger ends at a space, an e-mail or a name the cell cannot read',
+  ['@cli ', 'a@b', '@2', '@a-b', '', null].map((text) => findVarTrigger(text, true)),
+  [null, null, null, null, null, null]
+)
+check(
+  'outside a cell a name may hold . and -',
+  [findVarTrigger('to @my.var-1', false), findVarTrigger('a@b', false)],
+  [{ query: 'my.var-1', atIndex: 3 }, null]
 )
 
 // --- spreadsheet refs: a range sums --------------------------------------

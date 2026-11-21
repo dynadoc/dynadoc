@@ -60,6 +60,25 @@ const CELL_VAR_TOKEN = /(^|[^\p{L}\p{N}_.@])@([\p{L}_][\p{L}\p{N}_]*)/gu
 /** `@` and a partial name at the end of `textBefore`, by the same grammar. */
 export const CELL_VAR_TRIGGER = /(^|[^\p{L}\p{N}_.@])@((?:[\p{L}_][\p{L}\p{N}_]*)?)$/u
 
+// `@` and a partial name anywhere else (web fields, browser inputs): names
+// there may also hold `.` and `-`.
+const VAR_TRIGGER = /(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u
+
+/**
+ * The `@query` the caret sits right after, if any: the query typed so far and
+ * the index of its `@` in `textBefore` (the text before the caret). `cellToken`
+ * picks the cell grammar, where a name holds letters, digits and `_` only.
+ */
+export function findVarTrigger(
+  textBefore: string,
+  cellToken: boolean
+): { query: string; atIndex: number } | null {
+  const match = String(textBefore ?? '').match(cellToken ? CELL_VAR_TRIGGER : VAR_TRIGGER)
+  if (!match) return null
+  const query = match[2] || ''
+  return { query, atIndex: textBefore.length - query.length - 1 }
+}
+
 /** A name that can be written as `@name` in a cell. */
 export function isCellVarName(name: unknown): boolean {
   return typeof name === 'string' && /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name)

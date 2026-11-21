@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { _ } from 'svelte-i18n'
   import toast from 'svelte-hot-french-toast'
   import { _$_documentEditorsList } from '../../../../stores/editor.store'
@@ -144,10 +145,23 @@
     }
   })
 
+  // The name field follows the typed `@query` until the user edits it, so a
+  // variable created from here is named after what was typed in full.
+  let nameEdited = $state(false)
+  let lastQuery = ''
   $effect(() => {
-    if (!newVarName && query) {
-      newVarName = query
-    }
+    const next = query || ''
+    if (next === lastQuery) return
+    lastQuery = next
+    untrack(() => {
+      if (nameEdited && newVarName) return
+      nameEdited = false
+      if (newVarName === next) return
+      newVarName = next
+      // A match found for the previous query is not the one being typed now.
+      editingOriginalName = null
+      if (!valueDirty) newVarValue = ''
+    })
   })
 
   $effect(() => {
@@ -260,6 +274,7 @@
     onAddVariable?.({ name, type: selectedType, value: input })
     addToHistory({ name, type: selectedType })
     newVarName = ''
+    nameEdited = false
     newVarValue = ''
     newVarFormat = VariableManipulatorUtils.EXCEL_FORMATS.GENERAL
     newVarAutoUpdate = false
@@ -352,6 +367,7 @@
       oninput={() => {
         if (nameError) nameError = ''
         editingOriginalName = null
+        nameEdited = true
       }}
     />
     {#if nameError}
