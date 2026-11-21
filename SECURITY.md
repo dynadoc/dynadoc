@@ -17,10 +17,10 @@ Please include:
 
 ### What to expect
 
-| | |
-|---|---|
-| Acknowledgement | within 5 business days |
-| Initial assessment | within 10 business days |
+|                                    |                                                            |
+| ---------------------------------- | ---------------------------------------------------------- |
+| Acknowledgement                    | within 5 business days                                     |
+| Initial assessment                 | within 10 business days                                    |
 | Fix for a confirmed critical issue | we aim for 30 days, and will tell you if we cannot meet it |
 
 We will keep you informed while the advisory is open, and credit you in it
@@ -65,3 +65,19 @@ The Electron hardening work on this client is in progress and tracked
 internally. If you are looking at the main process and preload configuration
 and it surprises you, you are probably right; a report that explains a concrete
 exploitation path is still useful to us and will be treated as in scope.
+
+## Known dependency advisories
+
+`npm audit` still reports these. They have no drop-in fix and are accepted
+until the work below lands; the `Security` workflow gates on `critical` only
+because of them.
+
+| Dependency                                     | Severity | Why it is not fixed yet                                                                                                                                               |
+| ---------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron` 40.x                                | high     | Out of support; the fix is a major upgrade (45.x) that needs manual validation of native modules, signing and auto-update. Dependabot will not propose it.            |
+| `xlsx` 0.18.5                                  | high     | Reachable: parses user-supplied spreadsheets. The fixed release is only published on cdn.sheetjs.com, not on npm.                                                     |
+| `tui-image-editor` → `fabric` 4                | high     | Unmaintained; the XSS is in SVG export, which this codebase does not call. Replacing the editor is the real fix.                                                      |
+| `monaco-editor` 0.56 → bundled DOMPurify 3.4.8 | moderate | monaco ships its own copy of DOMPurify inside its build, so an npm override cannot replace it. Needs a monaco release that bundles DOMPurify ≥ 3.4.17.                |
+| `dree` → `minimatch` 10                        | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
+| `katex`, `mermaid`                             | low      | Fixed only in a major release.                                                                                                                                        |
+| `electron-builder`, `js-beautify` chains       | moderate | Build-time or CLI only, not reachable from the client.                                                                                                                |

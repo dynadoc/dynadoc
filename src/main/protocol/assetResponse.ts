@@ -113,13 +113,22 @@ export function parseRange(header: string | null, size: number): ParsedRange {
 }
 
 /**
+ * Which policy a response carries. `document` is a file a document reached
+ * through ddoc://asset: untrusted, so it is isolated (see the headers below).
+ * `app` is the renderer's own page and bundle on ddoc://bundle: it must run
+ * its scripts, and its policy comes from the CSP in index.html.
+ */
+export type AssetResponsePolicy = 'document' | 'app'
+
+/**
  * `method` matters: Chromium sends HEAD to learn a file's size before deciding
  * how to fetch it, and a HEAD that answers with a body is a protocol error.
  */
 export function buildAssetResponse(
   filePath: string,
   rangeHeader: string | null,
-  method: string
+  method: string,
+  policy: AssetResponsePolicy = 'document'
 ): Response {
   let stat: fs.Stats
   try {
@@ -150,17 +159,23 @@ export function buildAssetResponse(
     // Without this the media stack reports seekable = 0 and silently refuses to
     // move, even though ranged requests would have worked.
     'accept-ranges': 'bytes',
+    'x-content-type-options': 'nosniff'
+  }
+  if (policy === 'document') {
     // Every document's extracted assets share this one origin, and the scheme
     // is registered as CSP-bypassing, so an HTML asset served here used to run
     // as a first-class origin with no policy of its own -- same-origin with
-    // every other document's assets on the machine. These three headers give
+    // every other document's assets on the machine. These headers give
     // each response the policy the origin does not have: no script, no frames,
     // no subresources beyond the asset itself, and no cross-origin reads.
-    'content-security-policy':
+    //
+    // Never on ddoc://bundle: `sandbox` without `allow-scripts` stops the
+    // renderer's own page from running any script, and a packaged build then
+    // never gets past its splash screen.
+    headers['content-security-policy'] =
       "default-src 'none'; img-src 'self' data: blob:; media-src 'self' data: blob:; " +
-      "font-src 'self' data:; style-src 'unsafe-inline'; sandbox",
-    'cross-origin-resource-policy': 'same-origin',
-    'x-content-type-options': 'nosniff'
+      "font-src 'self' data:; style-src 'unsafe-inline'; sandbox"
+    headers['cross-origin-resource-policy'] = 'same-origin'
   }
   if (range) headers['content-range'] = `bytes ${from}-${to}/${stat.size}`
 

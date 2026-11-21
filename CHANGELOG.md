@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0](https://github.com/dynadoc/dynadoc/compare/v1.2.0...v1.3.0) (2026-11-21)
+
+
+### Features
+
+* **variables:** share variables across files and spreadsheets ([#73](https://github.com/dynadoc/dynadoc/issues/73)) ([44b2050](https://github.com/dynadoc/dynadoc/commit/44b2050caeeadc0e268897b97a782c0904f148e9))
+
+
+### Fixes
+
+* **design:** load the CanvasKit wasm that ships with canvaskit-wasm ([#74](https://github.com/dynadoc/dynadoc/issues/74)) ([d49c8f5](https://github.com/dynadoc/dynadoc/commit/d49c8f5a029d74c6a679cdd0ff51c9e25dc63895))
+* **protocol:** stop sandboxing the app's own bundle ([#65](https://github.com/dynadoc/dynadoc/issues/65)) ([e06c0f1](https://github.com/dynadoc/dynadoc/commit/e06c0f188847cbd20e1d2c14d262db66eff173a6))
+
+
+### Documentation
+
+* **i18n:** adopt preferred Japanese phrasings from [#36](https://github.com/dynadoc/dynadoc/issues/36) ([#60](https://github.com/dynadoc/dynadoc/issues/60)) ([0479ec5](https://github.com/dynadoc/dynadoc/commit/0479ec5ae3fc0d377d810827fc0695b03325fe9c))
+
 ## [1.2.0](https://github.com/dynadoc/dynadoc/compare/v1.1.0...v1.2.0) (2026-11-08)
 
 

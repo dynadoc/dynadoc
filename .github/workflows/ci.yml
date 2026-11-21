@@ -4,6 +4,14 @@ on:
   push:
     branches: ['main', 'master']
   pull_request:
+  # The merge queue runs the required `checks` job on its temporary
+  # merge-group branch. Without this trigger the job never starts there and
+  # every queued pull request waits forever.
+  merge_group:
+
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
 
 # What this CI covers:
 #   - Circular import detection in Tiptap extensions (hard gate)
@@ -24,7 +32,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # --ignore-scripts: skips electron-rebuild postinstall which requires

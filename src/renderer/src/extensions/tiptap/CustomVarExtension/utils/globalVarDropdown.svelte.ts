@@ -6,6 +6,7 @@ import { listVariables } from '../stores/variableManipulator'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { buildVarDropdownItems } from './variableDropdown.utils'
 import { formatVariableInsertText } from './variableInsert.utils'
+import { CELL_VAR_TRIGGER, isCellVarName } from './sheetVariables.utils'
 
 type DropdownItem = {
   name: string
@@ -50,10 +51,15 @@ function getActiveDoc() {
   return get(_$_documentEditorsList.getActive())
 }
 
-function buildItems(query: string): DropdownItem[] {
+// `@name` inserts are parsed as cell tokens (spreadsheet cells): only names
+// that grammar can read are offered there.
+const insertsCellToken = (template: string): boolean => template === '@name'
+
+function buildItems(query: string, template: string): DropdownItem[] {
   const activeDoc = getActiveDoc()
   if (!activeDoc) return []
-  return buildVarDropdownItems(listVariables([], activeDoc), query)
+  const items = buildVarDropdownItems(listVariables([], activeDoc), query)
+  return insertsCellToken(template) ? items.filter((item) => isCellVarName(item.name)) : items
 }
 
 function getInputTextBeforeCaret(el: HTMLInputElement | HTMLTextAreaElement) {
@@ -73,8 +79,11 @@ function getContentEditableTextBeforeCaret(el: HTMLElement) {
   return { text, caret: text.length }
 }
 
-function findTrigger(textBefore: string) {
-  const match = textBefore.match(/(^|\s)@([\w.-]*)$/)
+function findTrigger(textBefore: string, template: string) {
+  // `@` may follow an operator (`=B2*@taux`) but not a word (`a@b.com`).
+  const match = textBefore.match(
+    insertsCellToken(template) ? CELL_VAR_TRIGGER : /(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u
+  )
   if (!match) return null
   const query = match[2] || ''
   const atIndex = textBefore.length - query.length - 1
@@ -137,9 +146,15 @@ function replaceContentEditableRange(
 ) {
   const range = rangeFromCharacterOffsets(el, start, end)
   if (!range) return
+  const selection = window.getSelection()
+  // Inserted as typing would be: into the existing text node, caret after it.
+  // Editors that track the caret by node (the spreadsheet cell editor) keep
+  // their place; a separate text node left the next keystroke misplaced.
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  if (document.execCommand?.('insertText', false, insertText)) return
   range.deleteContents()
   range.insertNode(document.createTextNode(insertText))
-  const selection = window.getSelection()
   if (selection) {
     selection.removeAllRanges()
     const caret = document.createRange()
@@ -169,13 +184,15 @@ export function initGlobalVarDropdown() {
   let isOpen = false
   let container: HTMLElement | null = null
   let component: any = null
-  let state: DropdownState = {
+  // $state: the mounted dropdown re-renders when these change (a plain object
+  // left it hidden, its position never reaching the component).
+  const state: DropdownState = $state({
     items: [],
     activeIndex: 0,
     query: '',
     position: null,
     selectItem: () => undefined
-  }
+  })
 
   const updatePosition = async () => {
     if (!isOpen || !activeElement || !container) return
@@ -268,14 +285,15 @@ export function initGlobalVarDropdown() {
         ? getInputTextBeforeCaret(el).text
         : getContentEditableTextBeforeCaret(el).text
 
-    const trigger = findTrigger(textBefore)
+    const template = getInsertionTemplate(el)
+    const trigger = findTrigger(textBefore, template)
     if (!trigger) {
       closeDropdown()
       return
     }
 
     triggerIndex = trigger.atIndex
-    const items = buildItems(trigger.query)
+    const items = buildItems(trigger.query, template)
     updateDropdown(items, trigger.query)
   }
 
@@ -286,24 +304,31 @@ export function initGlobalVarDropdown() {
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()
+      event.stopPropagation()
       state.activeIndex = (state.activeIndex + 1) % Math.max(state.items.length, 1)
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
+      event.stopPropagation()
       state.activeIndex =
         (state.activeIndex - 1 + Math.max(state.items.length, 1)) %
         Math.max(state.items.length, 1)
       return
     }
     if (event.key === 'Enter') {
-      if (!state.items.length) return
+      if (!state.items.length) {
+        closeDropdown()
+        return
+      }
       event.preventDefault()
+      event.stopPropagation()
       state.selectItem(state.items[state.activeIndex])
       return
     }
     if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       closeDropdown()
     }
   }

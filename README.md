@@ -45,7 +45,7 @@ contributors.
 
 |         |                                                                                                                                                                |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js | **20 LTS**, exactly — the CI pins it and nothing in the repo enforces it for you                                                                               |
+| Node.js | **22 LTS**, exactly — the CI pins it and nothing in the repo enforces it for you                                                                               |
 | npm     | **10** — npm 11 silently skips install scripts unless you approve them, which leaves you with an incomplete `node_modules` and no error                        |
 | Git     | any recent version                                                                                                                                             |
 | Linux   | `build-essential`, `python3`, `libcairo2-dev`, `libpango1.0-dev`, `libjpeg-dev`, `libgif-dev`, `librsvg2-dev` — the `postinstall` step runs `electron-rebuild` |
@@ -131,7 +131,7 @@ If that directory is empty, the integrated terminal will not work.
 | ------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `src/main/`                           | Electron main process: filesystem and OS access, IPC handlers, window and tab management |
 | `src/preload/`                        | Preload entry points (`index`, `browser`, `webview-var`, `embedded-var`)                 |
-| `src/renderer/`                       | The application itself — Svelte 5 with runes, plus a vendored pdf.js and CanvasKit       |
+| `src/renderer/`                       | The application itself — Svelte 5 with runes, plus a vendored pdf.js                     |
 | `src/renderer/src/extensions/tiptap/` | Editor extensions, one directory per feature                                             |
 | `web/`, `web.vite.config.mts`         | Web target                                                                               |
 | `android/`, `ios/`                    | Capacitor projects                                                                       |

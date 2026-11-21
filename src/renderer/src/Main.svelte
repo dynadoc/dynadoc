@@ -151,7 +151,7 @@
   import FileBackstage from './components/app/backstage/FileBackstage.svelte'
   import toast, { Toaster } from 'svelte-hot-french-toast'
   import DownloadManager from './components/common/download/DownloadManager.svelte'
-  import { initGlobalVarDropdown } from './extensions/tiptap/CustomVarExtension/utils/globalVarDropdown'
+  import { initGlobalVarDropdown } from './extensions/tiptap/CustomVarExtension/utils/globalVarDropdown.svelte'
   import { setupOverlaySource } from './utils/overlayBridge'
   import IncludeFromDocumentModal from './components/common/modal/IncludeFromDocumentModal.svelte'
   import UpgradePlanModal from './components/common/upgrade/UpgradePlanModal.svelte'

@@ -105,7 +105,7 @@ installer.
 | **Tectonic** | MIT | TeX engine. Bundles TeX Live resources with their own licences. |
 | **DocxToHtml** | project-owned | Sources are in `bin/DocxToHtml/`; only the compiled output is absent. |
 | **pdf.js** | Apache-2.0 | Vendored under `src/renderer/pdfjs/`, including Foxit and Liberation fonts and Adobe CMap data, each under its own terms. |
-| **CanvasKit / Skia** | BSD-3-Clause | Vendored as `src/renderer/canvaskit/canvaskit.wasm`. |
+| **CanvasKit / Skia** | BSD-3-Clause | Not vendored: the build emits `bin/canvaskit.wasm` from the `canvaskit-wasm` npm package. |
 | **Fluent UI System Icons** | MIT | Vendored SVG set, by Microsoft. |
 | **Croscore fonts** (Arimo, Tinos, Carlito) | Apache-2.0 / SIL OFL | Vendored under `src/renderer/public/fonts/`. |
 

@@ -9,7 +9,7 @@
 SHELL         := /bin/bash
 .DEFAULT_GOAL := start
 
-NODE_MAJOR := 20
+NODE_MAJOR := 22
 STUB_PORT  := 7070
 STAMP      := node_modules/.make-install-stamp
 OPEN       ?= 1
