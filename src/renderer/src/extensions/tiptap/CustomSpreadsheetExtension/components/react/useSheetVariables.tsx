@@ -17,12 +17,11 @@ import { getSheetVariablesApi } from '../../../../../stores/sheetBridge.store'
 import {
   evaluateCellVarInput,
   hasCellVarTokens,
+  isCellVarName,
   type CellVarResolution
 } from '../../../CustomVarExtension/utils/sheetVariables.utils'
 
 export const VAR_SOURCE_KEY = 'varSource'
-
-const VARIABLE_NAME = /^[\p{L}_][\p{L}\p{N}_]*$/u
 
 type SheetCell = { v?: unknown; m?: unknown; f?: string; [key: string]: unknown }
 
@@ -47,7 +46,6 @@ type Options = {
 
 type SheetHooks = {
   beforeUpdateCell: (row: number, column: number, value: unknown) => boolean
-  afterUpdateCell: (row: number, column: number, oldValue: unknown, newValue: unknown) => void
   afterActivateSheet: () => void
 }
 
@@ -81,7 +79,8 @@ export function useSheetVariables({
 }: Options): { hooks: SheetHooks; overlay: React.ReactElement } {
   const parentDocRef = useRef(parentDoc)
   parentDocRef.current = parentDoc
-  const plainEdits = useRef(new Set<string>())
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
   const applied = useRef(new Map<string, string>())
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // The form keeps its own state: re-rendering the editor re-renders the
@@ -100,7 +99,22 @@ export function useSheetVariables({
     if (result.kind === 'formula') {
       workbook.setCellValue(row, column, { f: result.formula, [VAR_SOURCE_KEY]: source })
     } else {
-      workbook.setCellValue(row, column, { v: result.value, [VAR_SOURCE_KEY]: source })
+      const value = result.value
+      const cell = workbook.getSheet?.()?.data?.[row]?.[column]
+      const isTextFormat = (cell?.ct as { fa?: string } | undefined)?.fa === '@'
+      // FortuneSheet reads number-like text ('01234', '1e3') as a number unless
+      // the cell is formatted as text; a number put back gets General again.
+      const ct =
+        typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))
+          ? { fa: '@', t: 's' }
+          : typeof value === 'number' && isTextFormat
+            ? { fa: 'General', t: 'n' }
+            : undefined
+      workbook.setCellValue(row, column, {
+        v: value,
+        ...(ct ? { ct } : {}),
+        [VAR_SOURCE_KEY]: source
+      })
     }
   }
   const applySourceRef = useRef(applySource)
@@ -122,8 +136,6 @@ export function useSheetVariables({
       cells?.forEach((cell, column) => {
         const source = cell?.[VAR_SOURCE_KEY]
         if (typeof source !== 'string' || !source) return
-        // Cleared with Delete: the source is left behind, the cell is empty.
-        if (cell.v == null && cell.f == null && cell.m == null) return
         const result = evaluateCellVarInput(source, resolve)
         const signature = JSON.stringify(result)
         const key = `${sheet.id}:${row}:${column}`
@@ -131,7 +143,7 @@ export function useSheetVariables({
         const upToDate =
           result.kind === 'formula'
             ? cell.f === result.formula
-            : cell.f == null && cell.v === result.value
+            : cell.f == null && (cell.v ?? '') === result.value
         if (upToDate) {
           applied.current.set(key, signature)
           return
@@ -152,22 +164,22 @@ export function useSheetVariables({
 
   const hooks = useMemo<SheetHooks>(
     () => ({
+      // Runs inside FortuneSheet's state update, so writes wait until it is
+      // done. Delete and "Clear content" empty the whole cell, source included;
+      // any other input that has no `@name` replaces the variable.
       beforeUpdateCell: (row, column, value) => {
-        if (readOnly || typeof value !== 'string') return true
+        if (readOnlyRef.current || typeof value !== 'string') return true
         if (!hasCellVarTokens(value)) {
-          plainEdits.current.add(`${row}:${column}`)
+          const cell = workbookRef.current?.getSheet?.()?.data?.[row]?.[column]
+          if (cell?.[VAR_SOURCE_KEY]) {
+            setTimeout(() =>
+              workbookRef.current?.setCellFormat?.(row, column, VAR_SOURCE_KEY, null)
+            )
+          }
           return true
         }
-        // Inside FortuneSheet's state update: write once it is done.
         setTimeout(() => applySourceRef.current(row, column, value))
         return false
-      },
-      afterUpdateCell: (row, column, _oldValue, newValue) => {
-        if (!plainEdits.current.delete(`${row}:${column}`)) return
-        // A plain input replaced a variable cell: drop its source.
-        if ((newValue as SheetCell | null)?.[VAR_SOURCE_KEY]) {
-          workbookRef.current?.setCellFormat?.(row, column, VAR_SOURCE_KEY, null)
-        }
       },
       afterActivateSheet: () => scheduleRefresh()
     }),
@@ -214,7 +226,10 @@ export function useSheetVariables({
       if (nowEditing && !editing) {
         const source = selectedSource()
         // Empty when typing over the cell: then the typed text wins.
-        if (source && cellInput.innerText.trim() !== '') cellInput.textContent = source
+        if (source && cellInput.innerText.trim() !== '') {
+          cellInput.textContent = source
+          fxInput.textContent = source
+        }
       }
       editing = nowEditing
     })
@@ -289,10 +304,10 @@ export function useSheetVariables({
   const createVariable = (form: CreateForm, name: string, visibility: string): string | null => {
     const api = getSheetVariablesApi()
     if (!api) return 'Variables are not available here.'
-    if (!VARIABLE_NAME.test(name)) {
+    if (!isCellVarName(name)) {
       return 'Use letters, digits and _ only, not starting with a digit.'
     }
-    if (resolve(name).found) return `Variable "${name}" already exists.`
+    if (api.exists(name, parentDocRef.current)) return `Variable "${name}" already exists.`
     const value = workbookRef.current?.getCellValue?.(form.row, form.column)
     const id = api.defineFromCell(
       name,

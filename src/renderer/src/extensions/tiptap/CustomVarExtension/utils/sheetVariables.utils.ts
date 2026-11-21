@@ -57,6 +57,14 @@ export function reduceRefValues(ref: string, values: number[]): number | null {
 // so `a@b.com` is an e-mail address, not a variable.
 const CELL_VAR_TOKEN = /(^|[^\p{L}\p{N}_.@])@([\p{L}_][\p{L}\p{N}_]*)/gu
 
+/** `@` and a partial name at the end of `textBefore`, by the same grammar. */
+export const CELL_VAR_TRIGGER = /(^|[^\p{L}\p{N}_.@])@((?:[\p{L}_][\p{L}\p{N}_]*)?)$/u
+
+/** A name that can be written as `@name` in a cell. */
+export function isCellVarName(name: unknown): boolean {
+  return typeof name === 'string' && /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name)
+}
+
 export const CELL_VAR_ERROR = '#VAR?'
 
 type Segment = { text: string; quoted: boolean }
@@ -116,16 +124,21 @@ export type CellVarResult =
   | { kind: 'formula'; formula: string }
   | { kind: 'error'; value: string; missing: string[] }
 
-const toNumber = (value: unknown): number | null => {
+/**
+ * A number, or text that is a plain decimal (`-12`, `0.25`). Text such as
+ * `01234`, `0612345678`, `0x1F` or `1e3` is a code or an identifier more often
+ * than a quantity, so it stays text.
+ */
+export function toPlainNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
-  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
-    return Number(value)
+  if (typeof value === 'string' && /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.trim())) {
+    return Number(value.trim())
   }
   return null
 }
 
 const toFormulaLiteral = (value: unknown): string => {
-  const number = toNumber(value)
+  const number = toPlainNumber(value)
   if (number !== null) return String(number)
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
   return `"${String(value ?? '').replace(/"/g, '""')}"`
@@ -173,7 +186,7 @@ export function evaluateCellVarInput(
   const single = /^\s*@([\p{L}_][\p{L}\p{N}_]*)\s*$/u.exec(input)
   if (single) {
     const value = values.get(single[1])
-    const number = toNumber(value)
+    const number = toPlainNumber(value)
     return { kind: 'value', value: number !== null ? number : (value ?? '') }
   }
   return { kind: 'value', value: replace((value) => String(value ?? '')) }

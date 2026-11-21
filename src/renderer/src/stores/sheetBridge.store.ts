@@ -122,6 +122,7 @@ export type SheetVariablesApi = {
   load: (parentDoc: unknown) => Promise<void>
   isReady: (parentDoc: unknown) => boolean
   resolve: (name: string, parentDoc: unknown) => { found: boolean; value?: unknown }
+  exists: (name: string, parentDoc: unknown) => boolean
   onChange: (fn: () => void) => () => void
   defineFromCell: (
     name: string,

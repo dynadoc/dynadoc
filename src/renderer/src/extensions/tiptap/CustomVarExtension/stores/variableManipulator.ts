@@ -25,7 +25,8 @@ import {
 import {
   isGlobalVisibility,
   reduceRefValues,
-  selectVisibleGlobals
+  selectVisibleGlobals,
+  toPlainNumber
 } from '../utils/sheetVariables.utils'
 // import Utils from '../../../../../utils/Utils/utils/Utils'
 
@@ -1740,7 +1741,10 @@ async function getSpreadsheetNumericValue(
   if (resolvedValue === undefined) {
     const targetRef = sheetName ? `${sheetName}!${cellRef}` : cellRef
     const result = await window.api?.spreadsheetGetCell?.({ path, cellRef: targetRef })
-    if (!result || result.status !== 'ok') return null
+    // spreadsheet:get-cell answers { value } (SpreadsheetManager.getCellValue);
+    // there is no `status`, and checking for one made every read of a sheet
+    // that is not open come back empty.
+    if (!result) return null
     values = flattenRangeValue(result.value)
     if (values.length === 0) {
       const scalar = Number(result.value)
@@ -2635,6 +2639,15 @@ export function resolveVariableForCell(
   const variableId = resolveVariableId(name, resolvedEditor)
   const raw = variableId ? (variableMap?.get(variableId)?.rawValue as VariableValue) : null
   if (!raw || raw.type === VariableManipulatorUtils.VAR_TYPE.spreadsheet) return { found: false }
+  // Plain text keeps its text: the engine reads '01234' as the number 1234.
+  if (
+    raw.type === VariableManipulatorUtils.VAR_TYPE.text &&
+    typeof raw.value === 'string' &&
+    !raw.value.trim().startsWith('=') &&
+    !/\{[^}]+\}/.test(raw.value)
+  ) {
+    return { found: true, value: raw.value }
+  }
   let value: unknown = getVariable(variableId, resolvedEditor)
   if (value && typeof value === 'object') {
     // A raw VariableValue (non-text types) or a HyperFormula error.
@@ -2667,13 +2680,17 @@ export function defineSheetCellVariable(
 }
 
 // The document editor a spreadsheet belongs to, from its parent document.
+// The document editor a spreadsheet belongs to, from its parent document.
+// A sheet opened without one (the spreadsheet modals) belongs to the active
+// document; a sheet whose document is not open has none.
 function findEditorForDocument(parentDoc: unknown): DocumentEditorModel | null {
+  if (!parentDoc) return resolveDocumentEditor()
   const list = _$_documentEditorsList.getList() || []
-  const uuid = (parentDoc as { uuid?: string } | null)?.uuid
+  const uuid = (parentDoc as { uuid?: string }).uuid
   return (
-    list.find((editor) => parentDoc && editor?.document === parentDoc) ||
+    list.find((editor) => editor?.document === parentDoc) ||
     list.find((editor) => uuid && editor?.document?.uuid === uuid) ||
-    resolveDocumentEditor()
+    null
   )
 }
 
@@ -2687,6 +2704,11 @@ setSheetVariablesApi({
     const editor = findEditorForDocument(parentDoc)
     return editor ? resolveVariableForCell(name, editor) : { found: false }
   },
+  // Any variable by that name, spreadsheet pointers included.
+  exists: (name, parentDoc) => {
+    const editor = findEditorForDocument(parentDoc)
+    return !!editor && !!resolveVariableId(name, editor)
+  },
   onChange: (fn) => onVariableChange(fn),
   defineFromCell: (name, options, parentDoc) => {
     const editor = findEditorForDocument(parentDoc)
@@ -2696,18 +2718,18 @@ setSheetVariablesApi({
 
 const _watchedSheetSourcePaths = new Set<string>()
 
+// The open sheet when there is one (an empty cell is empty, not "ask the
+// file"), the file on disk otherwise.
 async function readSheetCellValue(source: SheetCellSource): Promise<unknown> {
-  const live = await getLiveCellValue(source.path, source.cell, source.sheet)
-  let value = live
-  if (live === null || live === undefined) {
+  let value: unknown
+  if (getLiveSheetEntry(source.path)?.methods) {
+    value = await getLiveCellValue(source.path, source.cell, source.sheet)
+  } else {
     const cellRef = source.sheet ? `${source.sheet}!${source.cell}` : source.cell
     const result = await window.api?.spreadsheetGetCell?.({ path: source.path, cellRef })
     value = result?.value
   }
-  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
-    return Number(value)
-  }
-  return value ?? ''
+  return toPlainNumber(value) ?? value ?? ''
 }
 
 /**
@@ -2751,8 +2773,24 @@ export async function refreshSheetSourcedVariables(path?: string): Promise<void>
     } catch {
       continue
     }
-    if (String(value) === String(raw.value ?? '')) continue
-    const next = { ...raw, value }
+    // Read again: the variable may have been renamed, moved or deleted
+    // while the cell was being read.
+    const current = (
+      editor
+        ? _variableMaps.get(getDocumentId(editor))?.get(id)?.rawValue
+        : getGlobalVariables()[id]
+    ) as VariableValue | undefined
+    const currentSource = current?.sheetSource
+    if (
+      !currentSource ||
+      currentSource.path !== source.path ||
+      currentSource.sheet !== source.sheet ||
+      currentSource.cell !== source.cell
+    ) {
+      continue
+    }
+    if (String(value) === String(current.value ?? '')) continue
+    const next = { ...current, value }
     if (editor) defineVariable(id, next, true, editor)
     else setGlobalVariable(id, next)
   }

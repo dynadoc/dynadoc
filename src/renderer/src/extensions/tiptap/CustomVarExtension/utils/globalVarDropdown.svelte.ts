@@ -6,6 +6,7 @@ import { listVariables } from '../stores/variableManipulator'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { buildVarDropdownItems } from './variableDropdown.utils'
 import { formatVariableInsertText } from './variableInsert.utils'
+import { CELL_VAR_TRIGGER, isCellVarName } from './sheetVariables.utils'
 
 type DropdownItem = {
   name: string
@@ -50,10 +51,15 @@ function getActiveDoc() {
   return get(_$_documentEditorsList.getActive())
 }
 
-function buildItems(query: string): DropdownItem[] {
+// `@name` inserts are parsed as cell tokens (spreadsheet cells): only names
+// that grammar can read are offered there.
+const insertsCellToken = (template: string): boolean => template === '@name'
+
+function buildItems(query: string, template: string): DropdownItem[] {
   const activeDoc = getActiveDoc()
   if (!activeDoc) return []
-  return buildVarDropdownItems(listVariables([], activeDoc), query)
+  const items = buildVarDropdownItems(listVariables([], activeDoc), query)
+  return insertsCellToken(template) ? items.filter((item) => isCellVarName(item.name)) : items
 }
 
 function getInputTextBeforeCaret(el: HTMLInputElement | HTMLTextAreaElement) {
@@ -73,9 +79,11 @@ function getContentEditableTextBeforeCaret(el: HTMLElement) {
   return { text, caret: text.length }
 }
 
-function findTrigger(textBefore: string) {
+function findTrigger(textBefore: string, template: string) {
   // `@` may follow an operator (`=B2*@taux`) but not a word (`a@b.com`).
-  const match = textBefore.match(/(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u)
+  const match = textBefore.match(
+    insertsCellToken(template) ? CELL_VAR_TRIGGER : /(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u
+  )
   if (!match) return null
   const query = match[2] || ''
   const atIndex = textBefore.length - query.length - 1
@@ -277,14 +285,15 @@ export function initGlobalVarDropdown() {
         ? getInputTextBeforeCaret(el).text
         : getContentEditableTextBeforeCaret(el).text
 
-    const trigger = findTrigger(textBefore)
+    const template = getInsertionTemplate(el)
+    const trigger = findTrigger(textBefore, template)
     if (!trigger) {
       closeDropdown()
       return
     }
 
     triggerIndex = trigger.atIndex
-    const items = buildItems(trigger.query)
+    const items = buildItems(trigger.query, template)
     updateDropdown(items, trigger.query)
   }
 
