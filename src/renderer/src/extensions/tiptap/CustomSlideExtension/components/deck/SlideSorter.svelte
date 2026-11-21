@@ -328,7 +328,7 @@
           onclick={() => goTo(slide.id)}
           title={$_('Slide') + ' ' + (index + 1)}
         >
-          <SlideStatic slideId={slide.id} src={slide.src} width={160} />
+          <SlideStatic slideId={slide.id} src={slide.src} width={160} {editorId} />
         </button>
         <div class="item-actions">
           <button

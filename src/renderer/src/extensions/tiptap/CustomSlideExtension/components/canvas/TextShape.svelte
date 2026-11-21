@@ -13,6 +13,7 @@
   import CollaborationCaret from '@tiptap/extension-collaboration-caret'
   import EditorExtensionHelpers from '../../../../../utils/EditorExtensionHelpers'
   import { CustomAnimationExtension } from '../../../CustomAnimationExtension/CustomAnimationExtension'
+  import { CustomVarExtensionProps } from '../../../CustomVarExtension/utils/common.utils'
   import { smartSnapping } from '../../../../konva/snapping'
   import type { CanvasCommands } from '../../../../../commands/canvasCommands.types'
   import { _$_canvasCommands } from '../../../../../stores/canvas.store'
@@ -31,7 +32,9 @@
     __nodeMap, 
     __provider, 
     __awareness, 
-    __onSelect 
+    __onSelect,
+    // The presentation's editor id: `@` and variable chips use its variables.
+    __editorId = null
   } = $props();
 
   // 2. State variables
@@ -797,7 +800,9 @@
           ? extension.configure({ trailingNode: false })
           : extension?.name === 'placeholder'
             ? extension.configure({ showOnlyWhenEditable: false })
-            : extension
+            : extension?.name === CustomVarExtensionProps.name && __editorId
+              ? extension.configure({ editorId: __editorId })
+              : extension
       ),
       CustomAnimationExtension
     ]

@@ -653,6 +653,7 @@
         {__provider}
         __yText={getOrCreateTextFragment(__texts, shape.id)}
         {__awareness}
+        __editorId={__wysiwygEditorIdToUpdate}
         __onSelect={(id, ev) => __onSelect?.(id || shape.id, ev)}
       />
     {:else}

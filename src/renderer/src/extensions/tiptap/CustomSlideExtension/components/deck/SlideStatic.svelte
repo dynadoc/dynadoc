@@ -1,33 +1,41 @@
 <script lang="ts">
   // A slide drawn as static HTML from its Y.Doc: thumbnails and previews.
-  // Redraws when the slide changes.
+  // Redraws when the slide, or a variable shown on it, changes.
   import { onDestroy, onMount } from 'svelte'
   import { createSlide } from '../../collab/collab'
   import { toAssetUrl } from '../../../../../utils/assetUrl'
   import type { CollaborativeCanvas } from '../../../../../utils/canvas.types'
   import { readSlideData, renderSlideHtml } from '../../utils/slideContent'
+  import { makeVariableResolver } from '../../utils/slideRender'
+  import { onVariableChange } from '../../../CustomVarExtension/stores/variableManipulator'
   import { SLIDE_HEIGHT, SLIDE_WIDTH } from '../../utils/slideDesign'
 
   interface Props {
     slideId: string
     src: string
     width?: number
+    /** The presentation's editor id, whose variables the slide shows. */
+    editorId?: string | null
   }
 
-  let { slideId, src, width = 192 }: Props = $props()
+  let { slideId, src, width = 192, editorId = null }: Props = $props()
 
   let _html = $state('')
   let _slideWidth = $state(SLIDE_WIDTH)
   let _slideHeight = $state(SLIDE_HEIGHT)
   let _canvas: CollaborativeCanvas | null = null
   let _raf = 0
+  let _stopVariables: (() => void) | null = null
 
   const redraw = (): void => {
     if (_raf) return
     _raf = requestAnimationFrame(() => {
       _raf = 0
       if (!_canvas) return
-      const data = readSlideData(_canvas.ydoc)
+      const data = readSlideData(
+        _canvas.ydoc,
+        editorId ? makeVariableResolver(editorId) : undefined
+      )
       _slideWidth = data.width
       _slideHeight = data.height
       _html = renderSlideHtml(data, toAssetUrl)
@@ -38,18 +46,23 @@
     _canvas = await createSlide(slideId, src)
     await _canvas.load?.()
     _canvas.ydoc.on('update', redraw)
+    _stopVariables = editorId ? onVariableChange(redraw) : null
     redraw()
   })
 
   onDestroy(() => {
     if (_raf) cancelAnimationFrame(_raf)
+    _stopVariables?.()
     _canvas?.ydoc.off('update', redraw)
     _canvas?.release?.()
     _canvas = null
   })
 </script>
 
-<div class="slide-static-frame" style={`width:${width}px;height:${(width * _slideHeight) / _slideWidth}px`}>
+<div
+  class="slide-static-frame"
+  style={`width:${width}px;height:${(width * _slideHeight) / _slideWidth}px`}
+>
   <div style={`transform:scale(${width / _slideWidth});transform-origin:0 0`}>
     <!-- Built by renderSlideHtml, which escapes every text and attribute value. -->
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->

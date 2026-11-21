@@ -4,6 +4,7 @@ import { IPC_PRESENTATION_START, IPC_PRESENTATION_UPDATE } from '../../../../sha
 import type { PresentationPayload } from '../../../../utils/shared.type'
 import { toAssetUrl } from '../../../../utils/assetUrl'
 import { setPresentationUpdateHandler } from '../../../../utils/canvas.utils'
+import { onVariableChange } from '../../CustomVarExtension/stores/variableManipulator'
 import {
   currentSlide,
   presentation,
@@ -82,7 +83,10 @@ if (deckApi) {
     startSlideShow(editor as Editor, editorId, from)
 }
 
-/** While the show runs, edits to the deck (or its slides) reach the screen. */
+/**
+ * While the show runs, edits to the deck (or its slides) and changes to the
+ * variables it shows reach the screen.
+ */
 function watchDeck(editor: Editor, editorId: string): void {
   _stopWatching?.()
   const refresh = (): void => {
@@ -96,6 +100,7 @@ function watchDeck(editor: Editor, editorId: string): void {
   }
   setPresentationUpdateHandler(refresh)
   editor.on('update', refresh)
+  const stopVariables = onVariableChange(refresh)
   const unsubscribe = presentation.subscribe((state) => {
     if (!state.active) _stopWatching?.()
   })
@@ -103,6 +108,7 @@ function watchDeck(editor: Editor, editorId: string): void {
     _stopWatching = null
     setPresentationUpdateHandler(null)
     editor.off('update', refresh)
+    stopVariables()
     queueMicrotask(unsubscribe)
   }
 }
