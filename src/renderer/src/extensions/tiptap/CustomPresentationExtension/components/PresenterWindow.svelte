@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import {
     bufferedSlides,
     nextSlide,
@@ -117,12 +117,9 @@
     }
   })
 
-  onDestroy(() => {
-    presentation.update((p) => ({
-      ...p,
-      active: false
-    }))
-  })
+  // No "show ended" on destroy: minimising the presenter view swaps this
+  // component for the minimised one while the show goes on. The show ends
+  // through exit() / End Show, or when its window closes.
 
   function exit() {
     window.presentationAPI?.stop('all')

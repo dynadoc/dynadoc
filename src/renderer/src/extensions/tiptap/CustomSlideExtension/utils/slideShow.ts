@@ -102,11 +102,25 @@ function watchDeck(editor: Editor, editorId: string): void {
   const previousHandler = setPresentationUpdateHandler(refresh)
   editor.on('update', refresh)
   const stopVariables = onVariableChange(refresh)
+  // The stop of a show ended just before this one started can arrive after
+  // this one has started (the windows' events are not ordered). A show that
+  // really ended stays inactive: stop watching only if it is still inactive
+  // a moment later.
+  let stopTimer: ReturnType<typeof setTimeout> | null = null
   const unsubscribe = presentation.subscribe((state) => {
-    if (!state.active) _stopWatching?.()
+    if (state.active) {
+      if (stopTimer) clearTimeout(stopTimer)
+      stopTimer = null
+      return
+    }
+    stopTimer ??= setTimeout(() => {
+      stopTimer = null
+      if (!get(presentation).active) _stopWatching?.()
+    }, 2000)
   })
   _stopWatching = (): void => {
     _stopWatching = null
+    if (stopTimer) clearTimeout(stopTimer)
     setPresentationUpdateHandler(previousHandler)
     editor.off('update', refresh)
     stopVariables()
