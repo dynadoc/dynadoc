@@ -369,7 +369,19 @@ export function renderSlideHtml(
         const base = elementTextStyle(el, theme.id)
         const text = blocksToHtml(el.blocks ?? [])
         const fontFamily = safeFontFamily(base.fontFamily)
-        return `<div class="slide-static-text"${styleAttr([box, 'padding:6px', 'box-sizing:border-box', 'overflow:hidden', fontFamily && `font-family:'${fontFamily}'`, `font-size:${safeNumber(base.fontSize, 24)}px`, `color:${safeCssColor(base.color) ?? '#111827'}`, `background:${fill}`])}>${text}</div>`
+        return `<div class="slide-static-text"${styleAttr([
+          box,
+          'padding:6px',
+          // left unless a paragraph says otherwise (a thumbnail sits in a <button>,
+          // which centres its text)
+          'text-align:left',
+          'box-sizing:border-box',
+          'overflow:hidden',
+          fontFamily && `font-family:'${fontFamily}'`,
+          `font-size:${safeNumber(base.fontSize, 24)}px`,
+          `color:${safeCssColor(base.color) ?? '#111827'}`,
+          `background:${fill}`
+        ])}>${text}</div>`
       }
     }
   })
