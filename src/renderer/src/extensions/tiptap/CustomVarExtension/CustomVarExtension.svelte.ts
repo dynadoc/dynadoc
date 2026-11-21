@@ -331,6 +331,8 @@ export const CustomVarExtension = Node.create({
         // return
         const varAttr = extensionTagAttributeName
         const currentName = currentNode.attrs[varAttr]
+        // Unresolved when the chip mounted before the variables were loaded.
+        if (!currentVarId) currentVarId = resolveVarId(currentName)
         const isMatch = name === currentVarId || name === currentName
         // console.log("name onVariableChange", name, currentName, value, type)
         if (type == VariableManipulatorUtils.VAR_UPDATE_TYPE.value) {

@@ -113,3 +113,34 @@ export const sheetBridge = {
     return get(activeSheet)
   }
 }
+
+// Variables as a spreadsheet editor needs them, keyed by the sheet's parent
+// document. Registered by the variable store (variableManipulator.ts) rather
+// than imported by the React editor, which would close an import cycle
+// through editor.store.
+export type SheetVariablesApi = {
+  load: (parentDoc: unknown) => Promise<void>
+  isReady: (parentDoc: unknown) => boolean
+  resolve: (name: string, parentDoc: unknown) => { found: boolean; value?: unknown }
+  exists: (name: string, parentDoc: unknown) => boolean
+  onChange: (fn: () => void) => () => void
+  defineFromCell: (
+    name: string,
+    options: {
+      source: { path: string; sheet?: string; cell: string }
+      visibility?: string
+      value?: unknown
+    },
+    parentDoc: unknown
+  ) => string | null
+}
+
+let sheetVariablesApi: SheetVariablesApi | null = null
+
+export function setSheetVariablesApi(api: SheetVariablesApi): void {
+  sheetVariablesApi = api
+}
+
+export function getSheetVariablesApi(): SheetVariablesApi | null {
+  return sheetVariablesApi
+}
