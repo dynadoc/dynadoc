@@ -39,6 +39,9 @@
     // Phones: the list comes first, so it stays in view above the on-screen
     // keyboard; the form to create a variable follows it.
     suggestionsFirst = false,
+    // A name the field can take, checked before anything is created: the
+    // message, or null. A spreadsheet cell only reads `@letters_digits`.
+    validateName = null,
     // The list's id, for a field that points at it (aria-controls).
     listboxId = `dd-var-listbox-${++nextListboxId}`
   } = $props()
@@ -230,6 +233,12 @@
         position: 'bottom-start',
         style: 'background: #333; color: #fff; font-size: 12px; border: 1px solid #f44336;'
       })
+      return
+    }
+
+    const invalid = validateName?.(name)
+    if (invalid) {
+      nameError = invalid
       return
     }
 

@@ -6,7 +6,12 @@ import { listVariables } from '../stores/variableManipulator'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { buildVarDropdownItems } from './variableDropdown.utils'
 import { formatVariableInsertText } from './variableInsert.utils'
-import { findVarTrigger, isCellVarName, queryReplaceRange } from './sheetVariables.utils'
+import {
+  cellVarNameError,
+  findVarTrigger,
+  isCellVarName,
+  queryReplaceRange
+} from './sheetVariables.utils'
 
 type DropdownItem = {
   name: string
@@ -26,6 +31,7 @@ type DropdownState = {
   onAddVariable: (variable: { name: string }) => void
   suggestionsFirst: boolean
   listboxId: string
+  validateName: ((name: string) => string | null) | null
 }
 
 type AllowedElement = HTMLInputElement | HTMLTextAreaElement | HTMLElement
@@ -219,7 +225,8 @@ export function initGlobalVarDropdown() {
     selectItem: () => undefined,
     onAddVariable: () => undefined,
     suggestionsFirst: false,
-    listboxId: LISTBOX_ID
+    listboxId: LISTBOX_ID,
+    validateName: null
   })
 
   // The field announces the list and its highlighted entry (the caret stays
@@ -349,6 +356,11 @@ export function initGlobalVarDropdown() {
     state.selectItem = insertItem
     state.onAddVariable = handleAddVariable
     state.suggestionsFirst = isCompactScreen()
+    // A cell reads only `@letters_digits`: say so before creating anything.
+    state.validateName =
+      activeElement && insertsCellToken(getInsertionTemplate(activeElement))
+        ? cellVarNameError
+        : null
 
     if (!component) {
       component = mount(CustomVarExtensionDropdown, {

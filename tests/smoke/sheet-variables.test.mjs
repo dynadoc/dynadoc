@@ -68,7 +68,9 @@ const {
   plainTextValue,
   displayVariableValue,
   SHEET_REF_LOADING,
-  queryReplaceRange
+  queryReplaceRange,
+  cellVarNameError,
+  toCellVarName
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -202,6 +204,33 @@ check('names a cell cannot read', ['user name', 'a-b', 'a.b', '2x', '', 42].map(
   false,
   false
 ])
+// Creating a variable from a cell: a name the cell cannot read is refused
+// before anything is saved, with a name it can read to try instead.
+check(
+  'names a cell can read are accepted',
+  ['client', 'mon_client', 'prixTTC', 'été'].map(cellVarNameError),
+  [null, null, null, null]
+)
+check(
+  'a name with a space is refused with a suggestion',
+  cellVarNameError('mon client'),
+  'Use letters, digits and _ in a cell (no spaces), not starting with a digit. Try "mon_client".'
+)
+check(
+  'the suggestion is a name the cell can read',
+  ['mon client', ' a - b ', '2x', 'taux (%)', '***'].map(toCellVarName),
+  ['mon_client', 'a_b', '_2x', 'taux', '']
+)
+check(
+  'no suggestion when nothing is left',
+  cellVarNameError('***'),
+  'Use letters, digits and _ in a cell (no spaces), not starting with a digit.'
+)
+check(
+  'every suggestion passes',
+  ['mon client', ' a - b ', '2x', 'taux (%)'].map((n) => isCellVarName(toCellVarName(n))),
+  [true, true, true, true]
+)
 const trigger = (text) => {
   const m = text.match(CELL_VAR_TRIGGER)
   return m ? m[2] : null

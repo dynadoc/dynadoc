@@ -99,6 +99,28 @@ export function isCellVarName(name: unknown): boolean {
   return typeof name === 'string' && /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name)
 }
 
+/** `name` made into one a cell can read: `mon client` → `mon_client`. */
+export function toCellVarName(name: string): string {
+  const cleaned = String(name ?? '')
+    .trim()
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/^_+|_+$/g, '')
+  if (!cleaned) return ''
+  return /^\p{N}/u.test(cleaned) ? `_${cleaned}` : cleaned
+}
+
+/**
+ * Why `name` cannot be created from a spreadsheet cell, or null when it can.
+ * Checked before anything is created: a name the cell cannot read would be
+ * saved and then never inserted.
+ */
+export function cellVarNameError(name: string): string | null {
+  if (isCellVarName(name)) return null
+  const suggestion = toCellVarName(name)
+  const hint = 'Use letters, digits and _ in a cell (no spaces), not starting with a digit.'
+  return suggestion ? `${hint} Try "${suggestion}".` : hint
+}
+
 export const CELL_VAR_ERROR = '#VAR?'
 
 type Segment = { text: string; quoted: boolean }
