@@ -28,7 +28,10 @@
   import { openConfirmModal } from '../../../stores/confirmModal.store'
   import { openSettingsModal } from '../../../stores/settingsModal.store'
   import { _$_documentEditorsList } from '../../../stores/editor.store'
-  import { getSlideDeckApi } from '../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
+  import {
+    getSlideDeckApi,
+    isSlideDeckInfo
+  } from '../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
   import { activeSheet } from '../../../stores/sheetBridge.store'
   import { _$_sessionRecovery } from '../../../stores/sessionRecovery.store'
   import { _$_pinnedRecentDocuments } from '../../../stores/common.store'
@@ -165,7 +168,7 @@
   const activeDoc = $derived.by(() => editors.find((editor) => editor.isActive))
   const hasActiveDoc = $derived.by(() => Boolean(activeDoc))
   const hasActiveSheet = $derived.by(() => Boolean(activeSheetEntry?.methods))
-  const hasActiveDeck = $derived.by(() => activeDoc?.document?.info?.contentType === 'slide')
+  const hasActiveDeck = $derived.by(() => isSlideDeckInfo(activeDoc?.document?.info))
   const lastSyncLabel = $derived.by(() => formatDate(activeDoc?.document?.info?.updatedAt))
   const isUnsaved = $derived.by(() => {
     const docPath = activeDoc?.document?.path

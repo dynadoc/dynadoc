@@ -62,6 +62,14 @@
 
 import { writable } from 'svelte/store'
 
+/**
+ * Whether a document's info marks it as a presentation: new decks have
+ * contentType 'slide', imported .pptx files also carry pageKind 'slide'.
+ */
+export const isSlideDeckInfo = (
+  info: { contentType?: unknown; pageKind?: unknown } | null | undefined
+): boolean => info?.contentType === 'slide' || info?.pageKind === 'slide'
+
 /** Id of the slide the deck UI works on (thumbnail selection, toolbar, notes). */
 export const _$_currentSlideId = writable<string | null>(null)
 

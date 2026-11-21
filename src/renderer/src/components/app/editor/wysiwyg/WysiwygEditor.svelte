@@ -267,6 +267,7 @@
   import { nodeApi } from '../../../../utils/shims/node'
   import SlideSorter from '../../../../extensions/tiptap/CustomSlideExtension/components/deck/SlideSorter.svelte'
   import SlideNotesBar from '../../../../extensions/tiptap/CustomSlideExtension/components/deck/SlideNotesBar.svelte'
+  import { isSlideDeckInfo } from '../../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
   import {
     decodeStyleBlocksInHtml,
     prepareStyleHtmlForEditor
@@ -321,10 +322,9 @@
   const _isReadOnly = $derived(!!__isReadOnly)
   // Presentations (new, or imported from .pptx) get the slide sorter and notes.
   const _documentEditorStore = _$_documentEditorsList.get(__wysiwygEditorId)
-  const _isSlideDeck = $derived.by(() => {
-    const info = $_documentEditorStore?.document?.info
-    return !_isReadOnly && (info?.contentType === 'slide' || info?.pageKind === 'slide')
-  })
+  const _isSlideDeck = $derived(
+    !_isReadOnly && isSlideDeckInfo($_documentEditorStore?.document?.info)
+  )
   // export let handleWysiwygChange = (event, content: string = null): void => {}
   // export let handleWysiwygKeydown = (event): void => {}
   // export let handleWysiwygInput = (event): void => {}
@@ -2842,7 +2842,10 @@ if (yXml.length === 0) {
 
 <!-- <MeetingFloatingToolbar/> -->
 
-<div class="h-full min-h-0 w-full flex flex-col overflow-hidden">
+<div
+  class="h-full min-h-0 w-full flex flex-col overflow-hidden"
+  class:slide-deck-layout={_isSlideDeck && _editor}
+>
   <!-- <svelte:document on:selectionchange={handleDocumentSelectionChange} /> -->
 
   <InputModal
@@ -2859,159 +2862,158 @@ if (yXml.length === 0) {
     <UtilityBar {_editorPaginationOptions} {_editor} {__wysiwygEditorId} />
   {/if} -->
 
-  <!-- Layout with ruler -->
-  <div class="flex flex-1 min-h-0 w-full">
-    {#if _isSlideDeck && _editor}
+  {#if _isSlideDeck && _editor}
+    <!-- In the root's left padding (.slide-deck-layout). -->
+    <div class="slide-deck-sorter">
       <SlideSorter editor={_editor} editorId={__wysiwygEditorId} />
-    {/if}
-    <div class="flex flex-col flex-1 min-h-0 min-w-0">
-      <div
-        id="editor-{__parentContainerKey}"
-        class="editor-shell flex flex-1 min-h-0 w-full overflow-auto px-6 py-8"
-        style="width: 100%; margin: 0;"
-        bind:this={_editorContainerRoot}
-      >
-        <!-- <pdf src="./2.pdf" width="100%" height="600px" type="application/pdf"></pdf> -->
-        <!-- <ZoomWrapper> -->
-        <!-- <ZoomWrapper initialScale={1} minScale={0.5} maxScale={2} step={0.2}> -->
-        <ZoomWrapper
-          __zoomControlContainer={document.getElementById('status-bar-right')}
-          __zoomKey={__filePathToOpenFromDocument || __wysiwygEditorId}
-        >
-          <div class="editor-stage">
-            <div bind:this={_editorContainer} class="editor-container relative">
-              {#if $_$_findBar.open && _editor}
-                <FindBar editor={_editor} />
-              {/if}
+    </div>
+  {/if}
 
-              <!-- <div class="page"> -->
+  <!-- Layout with ruler -->
+  <div
+    id="editor-{__parentContainerKey}"
+    class="editor-shell flex flex-1 min-h-0 w-full overflow-auto px-6 py-8"
+    style="width: 100%; margin: 0;"
+    bind:this={_editorContainerRoot}
+  >
+    <!-- <pdf src="./2.pdf" width="100%" height="600px" type="application/pdf"></pdf> -->
+    <!-- <ZoomWrapper> -->
+    <!-- <ZoomWrapper initialScale={1} minScale={0.5} maxScale={2} step={0.2}> -->
+    <ZoomWrapper
+      __zoomControlContainer={document.getElementById('status-bar-right')}
+      __zoomKey={__filePathToOpenFromDocument || __wysiwygEditorId}
+    >
+      <div class="editor-stage">
+        <div bind:this={_editorContainer} class="editor-container relative">
+          {#if $_$_findBar.open && _editor}
+            <FindBar editor={_editor} />
+          {/if}
 
-              {#if !_isEditorReady}
-                <div class="wysiwyg-loader">
-                  <div class="loader-card">
-                    <div class="loader-logo">
-                      <i class="ph-bold ph-sparkle"></i>
-                    </div>
-                    <div class="loader-text">
-                      <div class="title">
-                        {_loadError
-                          ? $_('This document could not be read')
-                          : $_('Preparing editor')}
-                      </div>
-                      <!-- The document exists; its content did not come back. Saying
-                           "not found" would send the reader looking for a file that
-                           is where it has always been. The technical reason stays in
-                           the console and in this element's tooltip. -->
-                      <div class="subtitle" title={_loadError}>
-                        {_loadError
-                          ? $_(
-                              'Its content did not arrive, so it was not opened. Nothing has been changed. Try again in a moment.'
-                            )
-                          : $_('Loading layout, pagination, and tools…')}
-                      </div>
-                    </div>
-                    {#if _loadError}
-                      <button type="button" class="loader-retry" onclick={() => location.reload()}>
-                        {$_('Reload')}
-                      </button>
-                    {:else}
-                      <div class="loader-bar"></div>
-                    {/if}
+          <!-- <div class="page"> -->
+
+          {#if !_isEditorReady}
+            <div class="wysiwyg-loader">
+              <div class="loader-card">
+                <div class="loader-logo">
+                  <i class="ph-bold ph-sparkle"></i>
+                </div>
+                <div class="loader-text">
+                  <div class="title">
+                    {_loadError ? $_('This document could not be read') : $_('Preparing editor')}
+                  </div>
+                  <!-- The document exists; its content did not come back. Saying
+                       "not found" would send the reader looking for a file that
+                       is where it has always been. The technical reason stays in
+                       the console and in this element's tooltip. -->
+                  <div class="subtitle" title={_loadError}>
+                    {_loadError
+                      ? $_(
+                          'Its content did not arrive, so it was not opened. Nothing has been changed. Try again in a moment.'
+                        )
+                      : $_('Loading layout, pagination, and tools…')}
                   </div>
                 </div>
-              {/if}
-
-              {#if !_isReadOnly}
-                <div class="sidebar">
-                  <div id="var-label-widget">
-                    {#if _editor}
-                      <div id="grammar-suggestion-widget">
-                        <GrammarSuggestion editor={_editor}></GrammarSuggestion>
-                      </div>
-
-                      <div id="word-comment-gutter-widget">
-                        <WordCommentGutter editor={_editor}></WordCommentGutter>
-                      </div>
-
-                      <div class="pointer-events-none">
-                        {#each _editor.storage?.excelTable?.items ?? [] as item (item.id)}
-                          <!-- {#each _editor.storage.CustomExcelTableExtension.items as item (item.id)} -->
-                          <CustomExcelTableExtensionVarLabel editor={_editor} {item} />
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                  <!-- </div> -->
-                  <div class="!hidden" style="display: none">
-                    <div id="bubble-menu-widget" class="z-1000">
-                      <BubbleMenuWidget></BubbleMenuWidget>
-                    </div>
-                  </div>
-                </div>
-              {/if}
-
-              <div
-                class="relative m-auto {_editorPaginationOptions?.enabled
-                  ? 'bg-[white]'
-                  : 'bg-checkerboard'} {_isEditorReady ? '' : 'wysiwyg-hidden'}"
-                style:margin-left={!_editorPaginationOptions?.enabled
-                  ? `-${_editorPaginationOptions?.marginLeft}px`
-                  : 'none'}
-                style:background={!_editorPaginationOptions?.enabled ? `none` : 'white'}
-                style:margin-right={!_editorPaginationOptions?.enabled
-                  ? `-${_editorPaginationOptions?.marginRight}px`
-                  : 'none'}
-                style="width:{_editorPaginationOptions?.pageWidth}px;
-                    padding:{!_editorPaginationOptions?.enabled ? '2% 1%' : 'none'};
-                    min-height:{_editorPaginationOptions?.enabled
-                  ? `${_editorPaginationOptions?.pageHeight || 1100}px`
-                  : '100rem'};
-                    "
-              >
-                <div
-                  class="editor-content w-full h-full"
-                  bind:this={_editorElement}
-                  oncontextmenu={(e) => openContextMenuAtEvent(e)}
-                  onclick={() => hideContextMenu()}
-                  onscroll={() => hideContextMenu()}
-                ></div>
-                {#if _editor}
-                  <EditorPlaceholder
-                    editor={_editor}
-                    visible={_interactivePlaceholderVisible && !_isReadOnly}
-                  />
+                {#if _loadError}
+                  <button type="button" class="loader-retry" onclick={() => location.reload()}>
+                    {$_('Reload')}
+                  </button>
+                {:else}
+                  <div class="loader-bar"></div>
                 {/if}
               </div>
-
-              <HeaderFooterOverlay
-                show={_isEditingHeader}
-                title={$_('Edit Header')}
-                hint={$_('Use {page} for page numbers')}
-                position={_headerOverlay}
-                bind:contentEl={_headerEditorEl}
-                onClose={closeHeaderFooterOverlay}
-              />
-
-              <HeaderFooterOverlay
-                show={_isEditingFooter}
-                title={$_('Edit Footer')}
-                hint={$_('Use {page} for page numbers')}
-                position={_footerOverlay}
-                bind:contentEl={_footerEditorEl}
-                onClose={closeHeaderFooterOverlay}
-              />
-              <!-- </div> -->
             </div>
-            <!-- </div> -->
-            <!-- </div> -->
-          </div></ZoomWrapper
-        >
-      </div>
-      {#if _isSlideDeck && _editor}
-        <SlideNotesBar editor={_editor} />
-      {/if}
-    </div>
+          {/if}
+
+          {#if !_isReadOnly}
+            <div class="sidebar">
+              <div id="var-label-widget">
+                {#if _editor}
+                  <div id="grammar-suggestion-widget">
+                    <GrammarSuggestion editor={_editor}></GrammarSuggestion>
+                  </div>
+
+                  <div id="word-comment-gutter-widget">
+                    <WordCommentGutter editor={_editor}></WordCommentGutter>
+                  </div>
+
+                  <div class="pointer-events-none">
+                    {#each _editor.storage?.excelTable?.items ?? [] as item (item.id)}
+                      <!-- {#each _editor.storage.CustomExcelTableExtension.items as item (item.id)} -->
+                      <CustomExcelTableExtensionVarLabel editor={_editor} {item} />
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+              <!-- </div> -->
+              <div class="!hidden" style="display: none">
+                <div id="bubble-menu-widget" class="z-1000">
+                  <BubbleMenuWidget></BubbleMenuWidget>
+                </div>
+              </div>
+            </div>
+          {/if}
+
+          <div
+            class="relative m-auto {_editorPaginationOptions?.enabled
+              ? 'bg-[white]'
+              : 'bg-checkerboard'} {_isEditorReady ? '' : 'wysiwyg-hidden'}"
+            style:margin-left={!_editorPaginationOptions?.enabled
+              ? `-${_editorPaginationOptions?.marginLeft}px`
+              : 'none'}
+            style:background={!_editorPaginationOptions?.enabled ? `none` : 'white'}
+            style:margin-right={!_editorPaginationOptions?.enabled
+              ? `-${_editorPaginationOptions?.marginRight}px`
+              : 'none'}
+            style="width:{_editorPaginationOptions?.pageWidth}px;
+                padding:{!_editorPaginationOptions?.enabled ? '2% 1%' : 'none'};
+                min-height:{_editorPaginationOptions?.enabled
+              ? `${_editorPaginationOptions?.pageHeight || 1100}px`
+              : '100rem'};
+                "
+          >
+            <div
+              class="editor-content w-full h-full"
+              bind:this={_editorElement}
+              oncontextmenu={(e) => openContextMenuAtEvent(e)}
+              onclick={() => hideContextMenu()}
+              onscroll={() => hideContextMenu()}
+            ></div>
+            {#if _editor}
+              <EditorPlaceholder
+                editor={_editor}
+                visible={_interactivePlaceholderVisible && !_isReadOnly}
+              />
+            {/if}
+          </div>
+
+          <HeaderFooterOverlay
+            show={_isEditingHeader}
+            title={$_('Edit Header')}
+            hint={$_('Use {page} for page numbers')}
+            position={_headerOverlay}
+            bind:contentEl={_headerEditorEl}
+            onClose={closeHeaderFooterOverlay}
+          />
+
+          <HeaderFooterOverlay
+            show={_isEditingFooter}
+            title={$_('Edit Footer')}
+            hint={$_('Use {page} for page numbers')}
+            position={_footerOverlay}
+            bind:contentEl={_footerEditorEl}
+            onClose={closeHeaderFooterOverlay}
+          />
+          <!-- </div> -->
+        </div>
+        <!-- </div> -->
+        <!-- </div> -->
+      </div></ZoomWrapper
+    >
   </div>
+
+  {#if _isSlideDeck && _editor}
+    <SlideNotesBar editor={_editor} />
+  {/if}
 
   <ExportOptionsModal />
 
@@ -3026,6 +3028,19 @@ if (yXml.length === 0) {
 </div>
 
 <style lang="postcss">
+  /* A presentation: the slide sorter fills a column on the left, the editor
+     and the notes bar take the rest. */
+  .slide-deck-layout {
+    position: relative;
+    padding-left: 212px;
+  }
+  .slide-deck-sorter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+  }
   :global(.editor-shell) {
     @apply relative flex items-start justify-center;
     /* WPS mockup: flat canvas using the --bg token (was a radial gradient) */
