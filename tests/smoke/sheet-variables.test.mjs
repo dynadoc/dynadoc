@@ -64,7 +64,8 @@ const {
   toPlainNumber,
   isCellVarName,
   CELL_VAR_TRIGGER,
-  findVarTrigger
+  findVarTrigger,
+  plainTextValue
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -159,6 +160,28 @@ check('a number stays a number', [toPlainNumber(3), toPlainNumber(NaN)], [3, nul
     formula: '="0x1F"&"1e3"'
   })
 }
+
+// What a cell and a chip show of a text variable: its text as typed, which
+// the formula engine would have read as a number.
+check(
+  'plain text is shown as typed',
+  [
+    { type: 'text', value: '01234' },
+    { type: 'text', value: 'ACME' }
+  ].map(plainTextValue),
+  ['01234', 'ACME']
+)
+check(
+  'formulas, {name} references and other types go through the engine',
+  [
+    { type: 'text', value: '=@a+1' },
+    { type: 'text', value: 'Total {price}' },
+    { type: 'datetime', value: '2026-01-01' },
+    { type: 'text', value: 42 },
+    null
+  ].map(plainTextValue),
+  [null, null, null, null, null]
+)
 
 // --- names the cell grammar can read, and the dropdown trigger -------------
 check('cell names', ['client', 'taux_2', '_x', 'prixTTC', 'été'].map(isCellVarName), [

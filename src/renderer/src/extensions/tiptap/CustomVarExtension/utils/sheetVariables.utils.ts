@@ -210,3 +210,17 @@ export function evaluateCellVarInput(
   }
   return { kind: 'value', value: replace((value) => String(value ?? '')) }
 }
+
+/**
+ * The text of a text variable that holds plain text (not a formula, no
+ * `{name}` reference), as typed; null for anything else. The formula engine
+ * reads such text as a number when it can ('01234' as 1234), so what is shown
+ * of it comes from here: the cell and the chip both keep '01234'.
+ */
+export function plainTextValue(
+  raw: { type?: unknown; value?: unknown } | null | undefined
+): string | null {
+  if (!raw || raw.type !== 'text' || typeof raw.value !== 'string') return null
+  if (raw.value.trim().startsWith('=') || /\{[^}]+\}/.test(raw.value)) return null
+  return raw.value
+}

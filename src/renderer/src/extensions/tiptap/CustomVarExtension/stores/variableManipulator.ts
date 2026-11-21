@@ -24,6 +24,7 @@ import {
 } from './globalVariables'
 import {
   isGlobalVisibility,
+  plainTextValue,
   reduceRefValues,
   selectVisibleGlobals,
   toPlainNumber
@@ -2605,14 +2606,8 @@ export function resolveVariableForCell(
   const raw = variableId ? (variableMap?.get(variableId)?.rawValue as VariableValue) : null
   if (!raw || raw.type === VariableManipulatorUtils.VAR_TYPE.spreadsheet) return { found: false }
   // Plain text keeps its text: the engine reads '01234' as the number 1234.
-  if (
-    raw.type === VariableManipulatorUtils.VAR_TYPE.text &&
-    typeof raw.value === 'string' &&
-    !raw.value.trim().startsWith('=') &&
-    !/\{[^}]+\}/.test(raw.value)
-  ) {
-    return { found: true, value: raw.value }
-  }
+  const text = plainTextValue(raw)
+  if (text !== null) return { found: true, value: text }
   let value: unknown = getVariable(variableId, resolvedEditor)
   if (value && typeof value === 'object') {
     // A raw VariableValue (non-text types) or a HyperFormula error.

@@ -28,6 +28,7 @@
   import ContextMenu from '../../../../components/common/contextMenu/ContextMenu.svelte'
   import CustomVarExtensionEditWidget from './CustomVarExtensionEditWidget.svelte'
   import { formatSpreadsheetRefName } from '../utils/utils'
+  import { plainTextValue } from '../utils/sheetVariables.utils'
 
   let { rawValue, value, type, name, __maxPageHeight = 0, __maxPageWidth = 0 } = $props()
   // useNodeViewWrapper?: boolean
@@ -102,9 +103,9 @@
     {#if type === 'object'}
       {#if (rawValue as VariableValue).type === VariableManipulatorUtils.VAR_TYPE.text}
         <!-- {(value as VariableValue).value} -->
+        <!-- Plain text as typed: the engine's value of '01234' is 1234. -->
         {VariableManipulatorUtils.formatValue(
-          value,
-          // (value as VariableValue).value,
+          plainTextValue(rawValue) ?? value,
           (rawValue as VariableValue).format
         )}
       {:else if (rawValue as VariableValue).type === VariableManipulatorUtils.VAR_TYPE.datetime}
