@@ -17,7 +17,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -76,7 +76,9 @@ if (buildResponse.status !== 0) {
   rmSync(outDir, { recursive: true, force: true })
   process.exit(1)
 }
-const { parseRange, contentTypeFor } = await import(`file://${compiledResponse}`)
+const { parseRange, contentTypeFor, buildAssetResponse } = await import(
+  `file://${compiledResponse}`
+)
 
 const ALLOWED_ROOT = '/Users/someone/Library/Application Support/ddoc-office/assets'
 // Stands in for FilesystemPathPolicy. Prefix matching is NOT good enough for a
@@ -468,6 +470,43 @@ for (const [what, url, expected] of refusals) {
     } else {
       fail('bundle: the URL the windows load resolves to the page', JSON.stringify(roundTrip))
     }
+  }
+}
+
+// --- response headers: which policy each host carries ----------------------
+//
+// A document's asset is isolated with a `sandbox` CSP. The app's own bundle
+// must not be: `sandbox` without `allow-scripts` stops the renderer page from
+// running any script, and a packaged build then hangs on its splash screen.
+{
+  const page = path.join(outDir, 'page.html')
+  writeFileSync(page, '<!doctype html><script>1</script>')
+  const asDocument = buildAssetResponse(page, null, 'GET')
+  const asApp = buildAssetResponse(page, null, 'GET', 'app')
+  const docCsp = asDocument.headers.get('content-security-policy') || ''
+  if (/\bsandbox\b/.test(docCsp) && asDocument.headers.get('cross-origin-resource-policy')) {
+    ok('headers: a document asset is sandboxed by default')
+  } else {
+    fail('headers: a document asset is sandboxed by default', `csp=${docCsp}`)
+  }
+  if (
+    !asApp.headers.has('content-security-policy') &&
+    !asApp.headers.has('cross-origin-resource-policy')
+  ) {
+    ok('headers: the app bundle carries no sandbox, so its scripts run')
+  } else {
+    fail(
+      'headers: the app bundle carries no sandbox, so its scripts run',
+      `csp=${asApp.headers.get('content-security-policy')}`
+    )
+  }
+  if (asApp.headers.get('x-content-type-options') === 'nosniff') {
+    ok('headers: the app bundle keeps nosniff')
+  } else {
+    fail(
+      'headers: the app bundle keeps nosniff',
+      String(asApp.headers.get('x-content-type-options'))
+    )
   }
 }
 

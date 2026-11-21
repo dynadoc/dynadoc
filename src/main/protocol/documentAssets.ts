@@ -116,6 +116,11 @@ export function handleDocumentAssetProtocol(): void {
         headers: { 'content-type': 'text/plain; charset=utf-8' }
       })
     }
-    return buildAssetResponse(resolved.filePath, request.headers.get('range'), request.method)
+    return buildAssetResponse(
+      resolved.filePath,
+      request.headers.get('range'),
+      request.method,
+      isBundle ? 'app' : 'document'
+    )
   })
 }
