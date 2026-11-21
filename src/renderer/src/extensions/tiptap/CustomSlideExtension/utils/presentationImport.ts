@@ -28,6 +28,8 @@ export type DynadocPresentation = {
   widthPx?: number
   heightPx?: number
   assetsBasePath?: string
+  /** Slide theme (slideDesign.ts) every slide gets, when known. */
+  themeId?: string
   slides?: DynadocSlide[]
 }
 
@@ -334,6 +336,7 @@ const createSlideSnapshotFromPresentation = async (
     meta.set('master', normalizedMaster)
   }
   if (slideBackground) meta.set('background', slideBackground)
+  if (presentation?.themeId) meta.set('theme', presentation.themeId)
   if (presentation?.widthPx) meta.set('slideWidth', presentation.widthPx)
   if (presentation?.heightPx) meta.set('slideHeight', presentation.heightPx)
 

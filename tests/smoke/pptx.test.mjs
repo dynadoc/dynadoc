@@ -292,6 +292,81 @@ results.push([
   json(inEllipse)
 ])
 
+results.push([
+  'elements keep their stacking order in spTree and on import',
+  slide2.indexOf('prst="rect"') < slide2.indexOf('prst="ellipse"') &&
+    slide2.indexOf('prst="ellipse"') < slide2.indexOf('<p:pic>') &&
+    json(kinds) === json(['rect', 'ellipse', 'image']),
+  json(kinds)
+])
+results.push([
+  'the deck theme comes back (its text colour, fonts and list markers)',
+  deck.themeId === 'midnight',
+  deck.themeId
+])
+const listXml = S.blocksToParagraphXml(
+  [
+    { kind: 'bullet', level: 0, runs: [{ text: 'coloured', color: '#38bdf8' }] },
+    { kind: 'number', level: 0, runs: [{ text: 'plain' }] }
+  ],
+  { fontSize: 24, fontFamily: 'Verdana', color: '#f1f5f9' }
+)
+results.push([
+  'list markers carry the colour of their text (buClr)',
+  listXml.includes('<a:buClr><a:srgbClr val="38BDF8"></a:srgbClr></a:buClr><a:buFont') &&
+    listXml.includes('<a:buClr><a:srgbClr val="F1F5F9"></a:srgbClr></a:buClr><a:buAutoNum'),
+  listXml
+])
+
+{
+  // pptx-to-json fills a text box's style from its first run.
+  const bleed = S.pptxToPresentation(
+    {
+      slideDimensions: { width: 1280, height: 720 },
+      slides: [
+        {
+          components: [
+            {
+              type: 'text',
+              x: 10,
+              y: 10,
+              width: 400,
+              height: 200,
+              content: 'Red first\nPlain second',
+              style: { color: '#C01010', fontSize: 18 },
+              richText: {
+                type: 'doc',
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [
+                      {
+                        type: 'text',
+                        text: 'Red first',
+                        marks: [{ type: 'textStyle', attrs: { color: '#C01010' } }]
+                      }
+                    ]
+                  },
+                  { type: 'paragraph', content: [{ type: 'text', text: 'Plain second' }] }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {}
+  )
+  const runs = bleed.slides[0].elements[0].tiptapContent.content.map(
+    (para) => para.content[0].marks?.[0]?.attrs?.color ?? null
+  )
+  results.push([
+    "one run's colour does not spread to the runs without one",
+    json(runs) === json(['#C01010', null]),
+    json(runs)
+  ])
+}
+
 // --- export details ----------------------------------------------------------
 {
   const doc = new Y.Doc()

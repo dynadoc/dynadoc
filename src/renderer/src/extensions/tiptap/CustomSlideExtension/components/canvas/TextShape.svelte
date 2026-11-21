@@ -4,6 +4,7 @@
 
   import { onDestroy, onMount } from 'svelte'
   import Konva from 'konva'
+  import { applySlideZOrder } from './zOrder'
   import { Editor } from '@tiptap/core'
   import { gsap } from 'gsap'
   import StarterKit from '@tiptap/starter-kit'
@@ -110,7 +111,7 @@
       _group.rotation(__shape.rotation || 0);
       _rect.size({ width: __shape.w, height: __shape.h });
       _rect.rotation(0);
-      _group.zIndex(__shape.z ?? 0);
+      applySlideZOrder(_group, __shape.z ?? 0);
 
       __layer.batchDraw();
       syncEditorPosition();
@@ -163,7 +164,7 @@
     // Update rect size
     _rect.size({ width: __shape.w, height: __shape.h })
     _rect.rotation(__shape.rotation || 0)
-    _group.zIndex(__shape.z ?? 0)
+    applySlideZOrder(_group, __shape.z ?? 0)
 
     // Redraw layer
     __layer.batchDraw()
@@ -783,6 +784,7 @@
 
     _group.add(_rect)
     __layer.add(_group)
+    applySlideZOrder(_group, __shape.z ?? 0)
     __layer.draw()
 
     // Add smart snapping

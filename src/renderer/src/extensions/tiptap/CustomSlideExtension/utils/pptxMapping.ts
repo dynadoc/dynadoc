@@ -1,7 +1,7 @@
 import { strToU8, zipSync } from 'fflate'
 import { ShapeType } from '../../../../utils/canvas.types'
 import type { DynadocElement, DynadocPresentation, DynadocSlide } from './presentationImport'
-import { SLIDE_HEIGHT, SLIDE_WIDTH, getSlideTheme } from './slideDesign'
+import { SLIDE_HEIGHT, SLIDE_THEMES, SLIDE_WIDTH, getSlideTheme } from './slideDesign'
 import { elementTextStyle, type SlideData, type SlideElement, type TextBlock } from './slideContent'
 import { safeCssColor, safeFontFamily, safeTextAlign } from './cssValues'
 
@@ -184,10 +184,14 @@ export function blocksToParagraphXml(
       if (block.kind === 'bullet' || block.kind === 'number') {
         const level = Math.max(0, block.level)
         const marL = 342900 * (level + 1)
+        // The marker takes the colour of the item's text, written out so that
+        // readers which default it to the master's text colour agree.
+        const markerColor = colorXml(block.runs[0]?.color || base.color)
         const bullet =
-          block.kind === 'bullet'
+          (markerColor ? `<a:buClr>${markerColor}</a:buClr>` : '') +
+          (block.kind === 'bullet'
             ? '<a:buFont typeface="Arial"/><a:buChar char="&#8226;"/>'
-            : '<a:buAutoNum type="arabicPeriod"/>'
+            : '<a:buAutoNum type="arabicPeriod"/>')
         pPr = `<a:pPr marL="${marL}" lvl="${Math.min(8, level)}" indent="-342900"${algn}>${bullet}</a:pPr>`
       }
       // A heading is bold on the slide (static HTML and editor both draw h1 at 700).
@@ -526,7 +530,11 @@ const ptToPx = (value: Json, scale: number): number | undefined => {
 /** Rewrites a pptx-to-json rich text doc into this editor's marks (textStyle, px). */
 function mapRichText(doc: Json, style: Json, scale: number, isTitle: boolean): Json {
   const baseSize = ptToPx(style?.fontSize, scale)
-  const baseColor = normalizeImportedColor(style?.color)
+  // pptx-to-json fills `style` from the first run. Its colour is the box's
+  // only when no run has a colour of its own; otherwise it would spread the
+  // first run's colour to every run.
+  const anyRunColor = JSON.stringify(doc ?? {}).includes('"color":')
+  const baseColor = anyRunColor ? undefined : normalizeImportedColor(style?.color)
   const baseFont = safeFontFamily(style?.fontFamily)
   const align = style?.textAlign !== 'left' ? safeTextAlign(style?.textAlign) : null
   const visit = (node: Json): Json => {
@@ -678,5 +686,12 @@ export function pptxToPresentation(parsed: Json, raw: Record<string, Json>): Dyn
       elements
     }
   })
-  return { version: '1', widthPx, heightPx, slides }
+  // A deck exported from here names its theme (theme1.xml); bring it back, so
+  // the slides get the theme's text colour, fonts and list markers again.
+  const themeName = raw?.['ppt/theme/theme1.xml']?.['a:theme']?.['$name']
+  const themeId =
+    typeof themeName === 'string'
+      ? SLIDE_THEMES.find((theme) => theme.name.toLowerCase() === themeName.toLowerCase())?.id
+      : undefined
+  return { version: '1', widthPx, heightPx, themeId, slides }
 }

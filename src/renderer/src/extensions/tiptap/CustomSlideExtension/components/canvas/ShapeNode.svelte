@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Konva from 'konva'
+  import { applySlideZOrder } from './zOrder'
   import * as Y from 'yjs'
   import { gsap } from 'gsap'
 
@@ -134,7 +135,7 @@
     if (!_group || !_node || !__shape) return
     _group.position({ x: __shape.x, y: __shape.y })
     _group.rotation(__shape.rotation || 0)
-    _group.zIndex(__shape.z ?? 0)
+    applySlideZOrder(_group, __shape.z ?? 0)
 
     if (_node instanceof Konva.Line) {
       _node.points([0, 0, __shape.w, __shape.h])
@@ -298,6 +299,7 @@
     }
 
     __layer.add(_group)
+    applySlideZOrder(_group, __shape.z ?? 0)
     __nodeMap.set(__shape.id, _group)
 
     _group.on('mousedown tap', (e) => {
