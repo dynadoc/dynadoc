@@ -4,6 +4,16 @@
 import SSF from 'ssf'
 import { toPlainNumber } from './sheetVariables.utils'
 
+// `.5` and `1.` are decimals too, as Number() read them; `01.` still is not.
+const HALF_DECIMAL = /^[+-]?(?:\.\d+|(?:0|[1-9]\d*)\.)$/
+
+function toFormatNumber(value: unknown): number | null {
+  const number = toPlainNumber(value)
+  if (number !== null) return number
+  if (typeof value === 'string' && HALF_DECIMAL.test(value.trim())) return Number(value.trim())
+  return null
+}
+
 /**
  * @param value The raw value
  * @param format The Excel format string (e.g. "#,##0.00") or ID
@@ -22,9 +32,10 @@ export function formatVariableValue(
   let processingValue: unknown = value
 
   // 1. A number, the way a spreadsheet cell reads it: only a plain decimal
-  //    (`-12`, `0.25`). `01234`, `0612345678`, `1e3` or `0x1F` is a code more
-  //    often than a quantity, and stays as typed (the sheet shows it so too).
-  const number = typeof value === 'boolean' ? null : toPlainNumber(value)
+  //    (`-12`, `0.25`), or one written without a digit on one side of the
+  //    point (`.5`, `1.`). `01234`, `0612345678`, `1e3` or `0x1F` is a code
+  //    more often than a quantity, and stays as typed (the sheet shows it so).
+  const number = typeof value === 'boolean' ? null : toFormatNumber(value)
   if (number !== null) {
     processingValue = number
   } else if (typeof value === 'string' && Number.isFinite(Number(value))) {

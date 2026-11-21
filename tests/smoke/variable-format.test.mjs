@@ -62,9 +62,14 @@ const { formatVariableValue: format } = await import(`file://${compiled}`)
 check('a zip code keeps its zero', format('01234', 'General'), '01234')
 check('a phone number keeps its zero', format('0612345678', 'General'), '0612345678')
 check(
-  'exponent, hex and partial decimals stay text',
-  ['1e3', '0x1F', '.5', '1.'].map((v) => format(v, 'General')),
-  ['1e3', '0x1F', '.5', '1.']
+  'exponent, hex and zero-led half decimals stay text',
+  ['1e3', '0x1F', '01.', '00.5'].map((v) => format(v, 'General')),
+  ['1e3', '0x1F', '01.', '00.5']
+)
+check(
+  'a decimal without a digit on one side is a number',
+  [format('.5', '0.00'), format('-.25', '0.00'), format('1.', '0.00'), format('0.', '0.0')],
+  ['0.50', '-0.25', '1.00', '0.0']
 )
 check('a code keeps its zero under a number format', format('007', '0.00'), '007')
 
