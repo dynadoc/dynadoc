@@ -10,6 +10,7 @@
     nextSlide,
     presentation,
     previousSlide,
+    showStartedAt,
     syncFromPayload
   } from '../store/presentation.store'
   import type { PresentationPayload } from '../../../../utils/shared.type'
@@ -66,6 +67,8 @@
     presentationAPI.onData((data) => {
       console.log('resentationAPI.onData', { data })
       if (!data) return
+      // A show starts: the presenter's elapsed time starts with it.
+      showStartedAt.set(Date.now())
       payload = data
       syncFromPayload(payload)
     })

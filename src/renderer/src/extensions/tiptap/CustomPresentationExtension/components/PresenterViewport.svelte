@@ -12,6 +12,7 @@
     nextSlide,
     presentation,
     previousSlide,
+    showStartedAt,
     totalSlides,
     visibleSlideIndexes
   } from '../store/presentation.store'
@@ -31,7 +32,6 @@
   let timer = $state(0)
   let timerInterval: any
   let showNotes = $state(true)
-  let startTime = Date.now()
   let clock = $state(new Date().toLocaleTimeString())
 
   // --- Animation Logic ---
@@ -45,7 +45,9 @@
   // Timer logic
   onMount(() => {
     timerInterval = setInterval(() => {
-      timer = Math.floor((Date.now() - startTime) / 1000)
+      // Counted from the start of the show, not of this slide's view (one
+      // view per slide is mounted).
+      timer = Math.floor((Date.now() - get(showStartedAt)) / 1000)
       clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }, 1000)
   })
@@ -94,6 +96,9 @@
     const max = Math.max(0, $totalSlides - 1)
     return Math.min(index + 1, max)
   })
+
+  // On the last slide there is no next one to preview.
+  let isLastSlide = $derived(index >= Math.max(0, $totalSlides - 1))
 
   let nextActualIndex = $derived.by(() => {
     return $visibleSlideIndexes?.[nextVisibleIndex] ?? nextVisibleIndex
@@ -189,7 +194,7 @@
     </div>
 
     <div class="flex gap-2">
-      <button class="theme-top-btn" onclick={() => (startTime = Date.now())}>Reset Timer</button>
+      <button class="theme-top-btn" onclick={() => showStartedAt.set(Date.now())}>Reset Timer</button>
       <button
         class="theme-top-btn text-base-content bg-primary border-transparent hover:bg-[#1473e6]"
         onclick={endShow}>{$_('End Show')}</button
@@ -269,12 +274,21 @@
             bind:this={nextViewportEl}
             class="absolute inset-0 pointer-events-none origin-top flex items-start justify-center"
           >
-            <div
-              class="bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] slide-scale"
-              style="transform: scale({nextScale}) translateY(-{nextActualIndex * payload.pageHeight}px); transform-origin: top;"
-            >
-              {@html payload.html}
-            </div>
+            {#if isLastSlide}
+              <div
+                class="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-widest text-[#888]"
+                data-role="end-of-show"
+              >
+                {$_('End of show')}
+              </div>
+            {:else}
+              <div
+                class="bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] slide-scale"
+                style="transform: scale({nextScale}) translateY(-{nextActualIndex * payload.pageHeight}px); transform-origin: top;"
+              >
+                {@html payload.html}
+              </div>
+            {/if}
           </div>
         </div>
       </div>
