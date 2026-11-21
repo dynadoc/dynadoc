@@ -20,7 +20,15 @@
    plain .mjs: there is no type annotation syntax to satisfy this rule here. */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, existsSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  symlinkSync,
+  rmSync,
+  existsSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -229,6 +237,34 @@ try {
   const restored = new FilesystemPathPolicy([root])
   for (const g of exported) restored.grant(g)
   check('a restored grant still allows its file', restored.check(chosen).allowed, true)
+
+  log('every native file dialog grants what the user picked')
+  // A path outside the application's folders becomes reachable only through
+  // a grant made inside the dialog handler that learned it. A handler that
+  // returns chosen paths without granting them leaves the renderer unable to
+  // read the file the user just picked (it is refused as DENIED).
+  const mainSource = readFileSync(path.join(repoRoot, 'src', 'main', 'index.ts'), 'utf-8')
+  const handlerStarts = [...mainSource.matchAll(/ipcMain\.handle\('(dialog:[^']+)'/g)]
+  let dialogHandlers = 0
+  for (const match of handlerStarts) {
+    // A handler inside a /* ... */ block is commented out: it does not count.
+    // (Comment markers are told from globs such as '**/x' by the whitespace
+    // around them.)
+    const before = mainSource.slice(0, match.index)
+    const lastOpen = Math.max(-1, ...[...before.matchAll(/(?<=^|\s)\/\*/gm)].map((m) => m.index))
+    const lastClose = Math.max(-1, ...[...before.matchAll(/\*\/(?=\s|$)/gm)].map((m) => m.index))
+    if (lastOpen > lastClose) continue
+    const end = mainSource.indexOf('ipcMain.', match.index + match[0].length)
+    const body = mainSource.slice(match.index, end < 0 ? undefined : end)
+    if (!/dialog\.show(Open|Save)Dialog\(/.test(body)) continue
+    dialogHandlers++
+    check(
+      `${match[1]} grants the chosen path(s)`,
+      /grant(DialogResult|UserChosenPath)\(/.test(body),
+      true
+    )
+  }
+  check('the dialog handlers were found', dialogHandlers >= 4, true)
 
   if (failures > 0) {
     console.error(`\n[fs-policy] FAIL: ${failures} check(s) failed\n`)

@@ -6441,6 +6441,9 @@ Hello from Dynadoc \\LaTeX!
       filters: filters || []
     })
     if (canceled) return []
+    // As in dialog:openFile: exactly the files the user picked become
+    // reachable, granted here before the paths go back to the renderer.
+    grantDialogResult(filePaths || [], false)
     return filePaths || []
   })
 
