@@ -4,6 +4,10 @@ on:
   push:
     branches: ['main', 'master']
   pull_request:
+  # The merge queue runs the required `checks` job on its temporary
+  # merge-group branch. Without this trigger the job never starts there and
+  # every queued pull request waits forever.
+  merge_group:
 
 # What this CI covers:
 #   - Circular import detection in Tiptap extensions (hard gate)
