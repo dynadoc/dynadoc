@@ -292,6 +292,63 @@ results.push([
   json(inEllipse)
 ])
 
+// --- export details ----------------------------------------------------------
+{
+  const doc = new Y.Doc()
+  S.seedSlideDoc(doc, 'blank', 'midnight', newId)
+  doc
+    .getMap('shapes')
+    .set('s', { id: 's', type: 'file', x: 0, y: 0, w: 10, h: 10, z: 1, src: '/x/a.svg' })
+  doc
+    .getMap('meta')
+    .set('notes', 'bad\uFFFE\uFFFF chars \uD800 here, \uDE00 there, \uD83D\uDE00 kept')
+  doc.getMap('meta').set('background', { stops: [{ color: '#123456', position: 0 }] })
+  const data = S.readSlideData(doc)
+  data.elements.push({
+    id: 'tiny',
+    type: 'text',
+    x: 0,
+    y: 0,
+    w: 100,
+    h: 20,
+    blocks: [
+      { kind: 'paragraph', level: 1, runs: [{ text: 'tiny', fontSize: 0.01 }] },
+      { kind: 'paragraph', level: 1, runs: [{ text: 'huge', fontSize: 999999 }] }
+    ]
+  })
+  const svg = new Map([['/x/a.svg', { data: S.strToU8('<svg/>'), ext: 'svg' }]])
+  const out = S.unzipSync(await S.buildPptx([data], svg.get.bind(svg)))
+  const slide = S.strFromU8(out['ppt/slides/slide1.xml'])
+  results.push([
+    'a bare SVG is not written as a picture (the exporter rasterises SVG first)',
+    !slide.includes('<p:pic>') && !Object.keys(out).some((name) => name.endsWith('.svg')),
+    Object.keys(out).join(', ')
+  ])
+  const sizes = [...slide.matchAll(/ sz="(\d+)"/g)].map((m) => Number(m[1]))
+  results.push([
+    'font sizes are clamped to 100..400000',
+    sizes.length > 0 &&
+      sizes.every((sz) => sz >= 100 && sz <= 400000) &&
+      sizes.includes(100) &&
+      sizes.includes(400000),
+    json(sizes)
+  ])
+  results.push([
+    'a gradient with one stop is a solid fill',
+    slide.includes('<p:bg><p:bgPr><a:solidFill><a:srgbClr val="123456">') &&
+      !slide.includes('gradFill'),
+    slide.match(/<p:bg>.*?<\/p:bg>/)?.[0]
+  ])
+  const notes = S.strFromU8(out['ppt/notesSlides/notesSlide1.xml'])
+  results.push([
+    'characters XML 1.0 forbids are dropped, a surrogate pair is kept',
+    !/[\uFFFE\uFFFF]/.test(notes) &&
+      !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(notes) &&
+      notes.includes('\uD83D\uDE00 kept'),
+    json(notes.match(/bad.*kept/)?.[0])
+  ])
+}
+
 // --- a crafted file: markup in colour, background and font values -----------
 {
   const evil = 'FF0000"&gt;&lt;img src=x onerror=alert(1)&gt;'

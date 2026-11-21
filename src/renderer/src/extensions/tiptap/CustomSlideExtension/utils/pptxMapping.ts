@@ -26,9 +26,13 @@ const xmlEscape = (value: string): string =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    // Characters XML 1.0 does not allow at all.
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    // Characters XML 1.0 does not allow: C0 controls other than tab, LF and
+    // CR, lone surrogates (a pair is kept), U+FFFE and U+FFFF.
+    .replace(
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+      ''
+    )
 
 const NAMED_COLORS: Record<string, string> = {
   white: 'FFFFFF',
@@ -135,7 +139,9 @@ function xfrm(el: SlideElement, extra = ''): string {
 
 // ---------------------------------------------------------------- text ------
 
-const pxToHundredthsPt = (px: number): number => Math.round(px * 0.75 * 100)
+/** A font size in px as OOXML `sz` (hundredths of a point), within the schema's 100..400000. */
+const pxToHundredthsPt = (px: number): number =>
+  Math.min(400000, Math.max(100, Math.round((Number(px) || 0) * 0.75 * 100)))
 
 function runXml(
   run: TextBlock['runs'][number],
@@ -239,7 +245,8 @@ function backgroundXml(background: Json): string {
     typeof background === 'object' &&
     Array.isArray(background.stops || background.Stops)
   ) {
-    const stops = (background.stops || background.Stops)
+    const stopList: Json[] = background.stops || background.Stops
+    const stops = stopList
       .map((stop: Json) => {
         const color = colorXml(stop.color ?? stop.Color)
         const pos = Math.round(
@@ -251,8 +258,11 @@ function backgroundXml(background: Json): string {
     const angle = Number(background.angle ?? background.Angle ?? 180)
     // CSS 180deg (top to bottom) is OOXML 90deg.
     const ang = Math.round(((((angle - 90) % 360) + 360) % 360) * 60000)
-    if (stops)
+    // A gradient needs two stops at least; one valid stop is a solid fill.
+    const valid = stopList.filter((stop: Json) => colorXml(stop?.color ?? stop?.Color))
+    if (valid.length >= 2)
       fill = `<a:gradFill rotWithShape="1"><a:gsLst>${stops}</a:gsLst><a:lin ang="${ang}" scaled="0"/></a:gradFill>`
+    else if (valid.length === 1) fill = solidFill(valid[0].color ?? valid[0].Color)
   } else {
     const value =
       typeof background === 'string' ? background : background?.color || background?.fill
@@ -303,8 +313,9 @@ const IMAGE_TYPES: Record<string, string> = {
   jpg: 'image/jpeg',
   gif: 'image/gif',
   bmp: 'image/bmp',
-  webp: 'image/webp',
-  svg: 'image/svg+xml'
+  webp: 'image/webp'
+  // No svg: an SVG must reach buildPptx already rasterised to PNG (see
+  // pptxExport.ts); a bare SVG blip is not valid for PowerPoint.
 }
 
 /**
@@ -653,7 +664,8 @@ export function pptxToPresentation(parsed: Json, raw: Record<string, Json>): Dyn
             normalizeImportedColor(comp.style?.borderColor ?? comp.style?.color) ??
             (isLine ? '#111827' : null),
           strokeWidth:
-            Number(comp.style?.borderWidth ?? comp.style?.lineWidth) || (isLine ? 2 : null)
+            (Number(comp.style?.borderWidth ?? comp.style?.lineWidth) || 0) * scale ||
+            (isLine ? 2 : null)
         })
       }
     }

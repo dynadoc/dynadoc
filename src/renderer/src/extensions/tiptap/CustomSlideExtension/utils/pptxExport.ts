@@ -16,8 +16,47 @@ import { loadDeckData } from './slideRender'
 
 const IMAGE_EXT: Record<string, string> = { jpg: 'jpeg', jpe: 'jpeg', svg: 'svg' }
 
-/** An image element's bytes, from a data: URI or a local file; null when unreadable. */
+/** An SVG drawn to a PNG (longest side 1024 to 4096 px); null when it cannot be drawn. */
+async function svgToPng(data: Uint8Array): Promise<Uint8Array | null> {
+  const url = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml' }))
+  try {
+    const img = new Image()
+    await new Promise<void>((resolve, reject) => {
+      img.onload = (): void => resolve()
+      img.onerror = (): void => reject(new Error('SVG could not be loaded'))
+      img.src = url
+    })
+    const width = img.naturalWidth || 512
+    const height = img.naturalHeight || 512
+    const scale = Math.min(
+      4096 / Math.max(width, height),
+      Math.max(1, 1024 / Math.max(width, height))
+    )
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(width * scale))
+    canvas.height = Math.max(1, Math.round(height * scale))
+    canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null
+  } catch {
+    return null
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+/**
+ * An image element's bytes, from a data: URI or a local file; null when
+ * unreadable. SVG is rasterised to PNG: a bare SVG blip is not valid in a .pptx.
+ */
 async function loadImage(src: string): Promise<PptxImage | null> {
+  const image = await readImage(src)
+  if (image?.ext !== 'svg') return image
+  const png = await svgToPng(image.data)
+  return png ? { data: png, ext: 'png' } : null
+}
+
+async function readImage(src: string): Promise<PptxImage | null> {
   try {
     const dataUri = src.match(/^data:image\/([a-z0-9.+-]+)(;base64)?,(.*)$/is)
     if (dataUri) {
