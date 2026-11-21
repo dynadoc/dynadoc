@@ -1,6 +1,7 @@
 import { PowerPointParser, PPTXParser } from '@cliftonc/pptx-to-json'
 import { convertPresentationToSlidesHtml } from './presentationImport'
 import { pptxToPresentation } from './pptxMapping'
+import { checkZipLimits } from './zipLimits'
 import { nodeApi } from '../../../../utils/shims/node'
 
 // const fs = nodeApi.fs
@@ -31,8 +32,11 @@ export async function convertPptxToSlidesHtml(
   // shapes, images (as data: URIs), notes, and the slide backgrounds read from
   // the raw parts. pptxMapping.ts turns that into the presentation shape the
   // slide files are written from.
-  const bytes = await nodeApi.fsPromises.readFile(pptxPath)
-  const raw = await new PPTXParser().buffer2json(new Uint8Array(bytes))
+  const bytes = new Uint8Array(await nodeApi.fsPromises.readFile(pptxPath))
+  // The parser inflates the whole archive in memory: refuse oversized ones first.
+  const problem = checkZipLimits(bytes)
+  if (problem) throw new Error(problem)
+  const raw = await new PPTXParser().buffer2json(bytes)
   const parsed = await new PowerPointParser().parseJson(raw)
   return convertPresentationToSlidesHtml(
     pptxToPresentation(parsed, raw),

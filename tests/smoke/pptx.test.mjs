@@ -37,7 +37,8 @@ writeFileSync(
     `export { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate'`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideDesign.ts'))}`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideContent.ts'))}`,
-    `export * from ${JSON.stringify(path.join(slideUtils, 'pptxMapping.ts'))}`
+    `export * from ${JSON.stringify(path.join(slideUtils, 'pptxMapping.ts'))}`,
+    `export * from ${JSON.stringify(path.join(slideUtils, 'zipLimits.ts'))}`
   ].join('\n')
 )
 const build = spawnSync(
@@ -341,6 +342,53 @@ results.push([
     !JSON.stringify(mapped).includes('onerror') && mapped.slides[0].background === undefined,
     json(mapped.slides[0].background)
   ])
+}
+
+// --- zip limits -------------------------------------------------------------
+{
+  results.push([
+    'a normal presentation is within the import limits',
+    S.checkZipLimits(bytes) === null,
+    S.checkZipLimits(bytes)
+  ])
+  const zeros = new Uint8Array(3 * 1024 * 1024)
+  // Declares 300 MB in the central directory: refused before anything is inflated.
+  const declared = S.zipSync({ 'a.xml': zeros })
+  const view = new DataView(declared.buffer, declared.byteOffset, declared.byteLength)
+  for (let i = 0; i < declared.length - 4; i++) {
+    if (view.getUint32(i, true) === 0x02014b50) view.setUint32(i + 24, 300 * 1024 * 1024, true)
+  }
+  const tooBig = S.checkZipLimits(declared)
+  results.push([
+    'an archive that declares 300 MB is refused',
+    /too large/.test(tooBig ?? ''),
+    tooBig
+  ])
+  // Declares 100 bytes but inflates to 3 MB: caught while inflating.
+  const lying = S.zipSync({ 'a.xml': zeros })
+  const lyingView = new DataView(lying.buffer, lying.byteOffset, lying.byteLength)
+  for (let i = 0; i < lying.length - 4; i++) {
+    const sig = lyingView.getUint32(i, true)
+    if (sig === 0x02014b50) lyingView.setUint32(i + 24, 100, true)
+    if (sig === 0x04034b50) lyingView.setUint32(i + 22, 100, true)
+  }
+  const limits = { maxTotalBytes: 1024 * 1024, maxEntryBytes: 1024 * 1024, maxEntries: 10 }
+  const lied = S.checkZipLimits(lying, limits)
+  results.push([
+    'an archive that lies about its sizes is caught while inflating',
+    /too large/.test(lied ?? ''),
+    lied
+  ])
+  const many = {}
+  for (let i = 0; i < 12; i++) many[`f${i}.xml`] = S.strToU8('x')
+  const tooMany = S.checkZipLimits(S.zipSync(many), limits)
+  results.push([
+    'an archive with too many entries is refused',
+    /too many/.test(tooMany ?? ''),
+    tooMany
+  ])
+  const notZip = S.checkZipLimits(S.strToU8('not a zip at all, just some text'))
+  results.push(['a file that is not a zip is refused', /not a valid/.test(notZip ?? ''), notZip])
 }
 
 rmSync(outDir, { recursive: true, force: true })
