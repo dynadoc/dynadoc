@@ -6493,11 +6493,24 @@ Hello from Dynadoc \\LaTeX!
     })
 
     if (canceled || !filePath) return null
+    // On Linux the dialog returns the name as typed. When the filters allow a
+    // single extension and the name lacks it, add it here, so the path that
+    // is granted is the file the caller will write (a caller adding it later
+    // would write outside the grant).
+    const extensions: string[] = (options?.filters || [])
+      .flatMap((filter: { extensions?: unknown }) =>
+        Array.isArray(filter?.extensions) ? filter.extensions : []
+      )
+      .filter((ext: unknown) => typeof ext === 'string' && /^[a-z0-9]+$/i.test(ext))
+    const chosenPath =
+      extensions.length === 1 && !filePath.toLowerCase().endsWith(`.${extensions[0].toLowerCase()}`)
+        ? `${filePath}.${extensions[0]}`
+        : filePath
     // A save target usually does not exist yet; the policy resolves the nearest
     // existing ancestor, so granting the chosen path covers the write that
     // follows.
-    grantUserChosenPath({ path: filePath, directory: false })
-    return filePath
+    grantUserChosenPath({ path: chosenPath, directory: false })
+    return chosenPath
   })
 
   ipcMain.handle('load-system-font', async (_, fontFamily = 'Geneva') => {

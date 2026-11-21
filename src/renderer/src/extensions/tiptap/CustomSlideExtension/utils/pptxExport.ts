@@ -3,7 +3,6 @@ import { get } from 'svelte/store'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { openAlertModal } from '../../../../stores/alertModal.store'
 import { toLocalPath } from '../../../../utils/assetUrl'
-import { writeFileEnsuringDirAsync } from '../../../../utils/documentFileUtils'
 import { nodeApi } from '../../../../utils/shims/node'
 import { showExportToast } from '../../../../services/export/export.common.utils'
 import { getSlideDeckApi } from '../stores/slide.store'
@@ -102,7 +101,9 @@ export async function exportDeckToPptx(
   try {
     const slides = await loadDeckData(editor, editorId)
     const bytes = await buildPptx(slides, loadImage, { title })
-    await writeFileEnsuringDirAsync(outputPath, bytes)
+    // Written as chosen: the save dialog grants that file, not its folder, so
+    // creating the folder first would be refused outside the app's folders.
+    await nodeApi.fsPromises.writeFile(outputPath, bytes)
   } catch (error) {
     await openAlertModal({
       title: 'Export failed',
