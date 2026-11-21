@@ -8,6 +8,13 @@ import {
   resolveSlideBackground,
   type PlaceholderRole
 } from './slideDesign'
+import {
+  escapeHtmlAttribute,
+  safeCssColor,
+  safeFontFamily,
+  safeNumber,
+  safeTextAlign
+} from './cssValues'
 
 // A slide's content read out of its Y.Doc into plain data, and that data as
 // static HTML. Thumbnails, the slideshow and the .pptx exporter all read slides
@@ -170,7 +177,12 @@ export function blocksToPlainText(blocks: TextBlock[]): string {
 const escapeHtml = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-const escapeAttr = (value: string): string => escapeHtml(value).replace(/'/g, '&#39;')
+const escapeAttr = escapeHtmlAttribute
+
+// Every style value below is checked (cssValues.ts) before it is written, and
+// the whole attribute is escaped as well.
+const styleAttr = (css: (string | false | null | undefined)[]): string =>
+  ` style="${escapeHtml(css.filter(Boolean).join(';'))}"`
 
 function runToHtml(run: TextRun): string {
   const css: string[] = []
@@ -178,13 +190,17 @@ function runToHtml(run: TextRun): string {
   if (run.italic) css.push('font-style:italic')
   const decoration = [run.underline && 'underline', run.strike && 'line-through'].filter(Boolean)
   if (decoration.length) css.push(`text-decoration:${decoration.join(' ')}`)
-  if (run.color) css.push(`color:${run.color}`)
-  if (run.highlight) css.push(`background:${run.highlight}`)
-  if (run.fontSize) css.push(`font-size:${run.fontSize}px`)
-  if (run.fontFamily) css.push(`font-family:'${run.fontFamily.replace(/'/g, '')}'`)
+  const color = safeCssColor(run.color)
+  if (color) css.push(`color:${color}`)
+  const highlight = safeCssColor(run.highlight)
+  if (highlight) css.push(`background:${highlight}`)
+  const fontSize = safeNumber(run.fontSize)
+  if (fontSize > 0) css.push(`font-size:${fontSize}px`)
+  const fontFamily = safeFontFamily(run.fontFamily)
+  if (fontFamily) css.push(`font-family:'${fontFamily}'`)
   const text = escapeHtml(run.text).replace(/\n/g, '<br>')
   const attrs = run.variable ? ` data-variable="${escapeAttr(run.variable)}"` : ''
-  return css.length || attrs ? `<span style="${css.join(';')}"${attrs}>${text}</span>` : text
+  return css.length || attrs ? `<span${styleAttr(css)}${attrs}>${text}</span>` : text
 }
 
 /** Blocks as HTML; consecutive list blocks share one <ul>/<ol>. */
@@ -202,12 +218,14 @@ export function blocksToHtml(blocks: TextBlock[]): string {
       openList = tag
     }
     const inner = block.runs.map(runToHtml).join('') || '<br>'
-    const style = block.align ? ` style="text-align:${block.align}"` : ''
+    const align = safeTextAlign(block.align)
+    const style = align ? styleAttr([`text-align:${align}`]) : ''
     if (tag) {
-      const indent = block.level ? ` style="margin-left:${block.level * 1.5}em"` : ''
+      const level = safeNumber(block.level)
+      const indent = level ? styleAttr([`margin-left:${level * 1.5}em`]) : ''
       html += `<li${indent}><p${style}>${inner}</p></li>`
     } else if (block.kind === 'heading') {
-      const level = Math.min(6, Math.max(1, block.level))
+      const level = Math.min(6, Math.max(1, Math.round(safeNumber(block.level, 1))))
       html += `<h${level}${style}>${inner}</h${level}>`
     } else {
       html += `<p${style}>${inner}</p>`
@@ -257,18 +275,23 @@ export function readSlideData(
   }
 }
 
+/** A slide background as a CSS value; white when it is not a valid colour or gradient. */
 export function backgroundToCss(background: SlideBackground): string {
   if (!background) return '#ffffff'
-  if (typeof background === 'string') return background
-  if (background.color || background.fill) return background.color || background.fill
+  if (typeof background === 'string') return safeCssColor(background) ?? '#ffffff'
+  if (background.color || background.fill)
+    return safeCssColor(background.color || background.fill) ?? '#ffffff'
   const stops = background.stops || background.Stops
   if (Array.isArray(stops) && stops.length) {
-    const angle = background.angle ?? background.Angle ?? 180
-    const parts = stops.map(
-      (stop) =>
-        `${stop.color ?? stop.Color} ${Math.round((stop.position ?? stop.Position ?? 0) * 100)}%`
-    )
-    return `linear-gradient(${angle}deg, ${parts.join(', ')})`
+    const angle = safeNumber(background.angle ?? background.Angle, 180)
+    const parts: string[] = []
+    for (const stop of stops) {
+      const color = safeCssColor(stop?.color ?? stop?.Color)
+      const position = Math.round(safeNumber(stop?.position ?? stop?.Position) * 100)
+      if (color) parts.push(`${color} ${position}%`)
+    }
+    if (parts.length === 1) return parts[0].split(' ')[0]
+    if (parts.length) return `linear-gradient(${angle}deg, ${parts.join(', ')})`
   }
   return '#ffffff'
 }
@@ -298,51 +321,59 @@ export function renderSlideHtml(
 ): string {
   const theme = getSlideTheme(slide.themeId)
   const parts = slide.elements.map((el) => {
+    const x = safeNumber(el.x)
+    const y = safeNumber(el.y)
+    const w = safeNumber(el.w)
+    const h = safeNumber(el.h)
+    const rotation = safeNumber(el.rotation)
     const box = [
       'position:absolute',
-      `left:${el.x}px`,
-      `top:${el.y}px`,
-      `width:${Math.max(1, el.w)}px`,
-      `height:${Math.max(1, el.h)}px`,
-      el.rotation ? `transform:rotate(${el.rotation}deg);transform-origin:0 0` : ''
+      `left:${x}px`,
+      `top:${y}px`,
+      `width:${Math.max(1, w)}px`,
+      `height:${Math.max(1, h)}px`,
+      rotation ? `transform:rotate(${rotation}deg);transform-origin:0 0` : ''
     ]
       .filter(Boolean)
       .join(';')
-    const fill = el.fill || 'transparent'
-    const stroke = el.stroke ? `${el.strokeWidth ?? 1}px solid ${el.stroke}` : 'none'
+    const fill = safeCssColor(el.fill) ?? 'transparent'
+    const strokeColor = safeCssColor(el.stroke)
+    const strokeWidth = safeNumber(el.strokeWidth, 1)
+    const stroke = strokeColor ? `${strokeWidth}px solid ${strokeColor}` : 'none'
     switch (el.type) {
       case ShapeType.File:
         return el.src
-          ? `<img src="${escapeAttr(assetUrl(el.src))}" style="${box};object-fit:fill" alt="">`
+          ? `<img src="${escapeAttr(assetUrl(String(el.src)))}"${styleAttr([box, 'object-fit:fill'])} alt="">`
           : ''
       case ShapeType.Rect:
-        return `<div style="${box};background:${fill};border:${stroke};box-sizing:border-box;border-radius:${el.cornerRadius || 0}px"></div>`
+        return `<div${styleAttr([box, `background:${fill}`, `border:${stroke}`, 'box-sizing:border-box', `border-radius:${safeNumber(el.cornerRadius)}px`])}></div>`
       case ShapeType.Ellipse:
       case ShapeType.Circle:
-        return `<div style="${box};background:${fill};border:${stroke};box-sizing:border-box;border-radius:50%"></div>`
+        return `<div${styleAttr([box, `background:${fill}`, `border:${stroke}`, 'box-sizing:border-box', 'border-radius:50%'])}></div>`
       case ShapeType.Triangle: {
         // Konva draws a regular triangle inscribed in the box's inner circle.
-        const r = Math.max(4, Math.min(el.w, el.h) / 2)
-        const cx = el.w / 2
-        const cy = el.h / 2
+        const r = Math.max(4, Math.min(w, h) / 2)
+        const cx = w / 2
+        const cy = h / 2
         const pts = [0, 1, 2]
           .map((i) => {
             const a = -Math.PI / 2 + (i * 2 * Math.PI) / 3
             return `${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`
           })
           .join(' ')
-        return `<svg style="${box};overflow:visible" viewBox="0 0 ${el.w} ${el.h}"><polygon points="${pts}" fill="${fill}" stroke="${el.stroke || 'none'}" stroke-width="${el.stroke ? (el.strokeWidth ?? 1) : 0}"/></svg>`
+        return `<svg${styleAttr([box, 'overflow:visible'])} viewBox="0 0 ${w} ${h}"><polygon points="${pts}" fill="${escapeAttr(fill)}" stroke="${escapeAttr(strokeColor ?? 'none')}" stroke-width="${strokeColor ? strokeWidth : 0}"/></svg>`
       }
       case ShapeType.Line:
-        return `<svg style="${box};overflow:visible" viewBox="0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}"><line x1="0" y1="0" x2="${el.w}" y2="${el.h}" stroke="${el.stroke || '#111827'}" stroke-width="${el.strokeWidth ?? 2}" stroke-linecap="round"/></svg>`
+        return `<svg${styleAttr([box, 'overflow:visible'])} viewBox="0 0 ${Math.max(1, w)} ${Math.max(1, h)}"><line x1="0" y1="0" x2="${w}" y2="${h}" stroke="${escapeAttr(strokeColor ?? '#111827')}" stroke-width="${safeNumber(el.strokeWidth, 2)}" stroke-linecap="round"/></svg>`
       default: {
         const base = elementTextStyle(el, theme.id)
         const text = blocksToHtml(el.blocks ?? [])
-        return `<div class="slide-static-text" style="${box};padding:6px;box-sizing:border-box;overflow:hidden;font-family:'${base.fontFamily}';font-size:${base.fontSize}px;color:${base.color};background:${el.fill || 'transparent'}">${text}</div>`
+        const fontFamily = safeFontFamily(base.fontFamily)
+        return `<div class="slide-static-text"${styleAttr([box, 'padding:6px', 'box-sizing:border-box', 'overflow:hidden', fontFamily && `font-family:'${fontFamily}'`, `font-size:${safeNumber(base.fontSize, 24)}px`, `color:${safeCssColor(base.color) ?? '#111827'}`, `background:${fill}`])}>${text}</div>`
       }
     }
   })
-  return `<div class="slide-static" style="position:relative;overflow:hidden;width:${slide.width}px;height:${slide.height}px;background:${backgroundToCss(slide.background)}">${parts.join('')}</div>`
+  return `<div class="slide-static"${styleAttr(['position:relative', 'overflow:hidden', `width:${safeNumber(slide.width, SLIDE_WIDTH)}px`, `height:${safeNumber(slide.height, SLIDE_HEIGHT)}px`, `background:${backgroundToCss(slide.background)}`])}>${parts.join('')}</div>`
 }
 
 /** CSS the static HTML relies on (headings, lists, paragraph spacing). */

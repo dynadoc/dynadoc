@@ -64,7 +64,8 @@
   style={`width:${width}px;height:${(width * _slideHeight) / _slideWidth}px`}
 >
   <div style={`transform:scale(${width / _slideWidth});transform-origin:0 0`}>
-    <!-- Built by renderSlideHtml, which escapes every text and attribute value. -->
+    <!-- Built by renderSlideHtml: text and attribute values are escaped, and
+         every style value is checked against an allow-list (cssValues.ts). -->
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     {@html _html}
   </div>

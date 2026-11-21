@@ -301,6 +301,109 @@ const json = JSON.stringify
   ])
 }
 
+// --- hostile style values ----------------------------------------------------
+// A collaborator (or an imported file) can write any string into a slide's
+// Y.Doc. Style values must never leave the style attribute they are put in.
+{
+  const evil = 'red;"><img src=x onerror=alert(1)>'
+  const doc = new Y.Doc()
+  S.seedSlideDoc(doc, 'title', 'midnight', newId)
+  const shapes = doc.getMap('shapes')
+  shapes.set('r', {
+    id: 'r',
+    type: 'rect',
+    x: '1px"><img src=x onerror=alert(2)>',
+    y: 0,
+    w: 10,
+    h: 10,
+    z: 5,
+    fill: evil,
+    stroke: evil,
+    strokeWidth: '1"><script>alert(3)</script>',
+    cornerRadius: '0"><b>'
+  })
+  shapes.set('t', {
+    id: 't',
+    type: 'triangle',
+    x: 0,
+    y: 0,
+    w: 50,
+    h: 50,
+    z: 6,
+    fill: evil,
+    stroke: evil
+  })
+  shapes.set('l', { id: 'l', type: 'line', x: 0, y: 0, w: 50, h: 50, z: 7, stroke: evil })
+  const textShape = { id: 'x', type: 'text', x: 0, y: 0, w: 100, h: 40, z: 8, fill: evil }
+  shapes.set('x', textShape)
+  const fragment = new Y.XmlFragment()
+  doc.getMap('texts').set('x', fragment)
+  const para = new Y.XmlElement('paragraph')
+  para.setAttribute('textAlign', 'center"><img src=x onerror=alert(4)>')
+  const text = new Y.XmlText()
+  para.insert(0, [text])
+  fragment.insert(0, [para])
+  text.insert(0, 'Hello', {
+    textStyle: {
+      color: evil,
+      backgroundColor: '#fff"><img src=x onerror=alert(5)>',
+      fontFamily: 'Arial"><img src=x onerror=alert(6)>',
+      fontSize: '12px"><b>'
+    }
+  })
+  text.insert(5, ' ok', { textStyle: { color: 'rgba(37, 99, 235, 0.5)', fontFamily: 'Georgia' } })
+  doc.getMap('meta').set('background', 'url(x)"><img src=x onerror=alert(7)>')
+  const html = S.renderSlideHtml(S.readSlideData(doc))
+  results.push([
+    'no element, event handler or quote escapes a style value',
+    !/<img|<script|<b>|onerror/i.test(html) &&
+      !html.includes('alert(') &&
+      // every attribute is one of those the renderer writes
+      [...html.matchAll(/\s([a-z-]+)=/g)].every((m) =>
+        [
+          'class',
+          'style',
+          'viewBox',
+          'points',
+          'fill',
+          'stroke',
+          'stroke-width',
+          'x1',
+          'y1',
+          'x2',
+          'y2',
+          'stroke-linecap'
+        ].includes(m[1])
+      ),
+    html
+  ])
+  results.push([
+    'valid colours and fonts next to them are kept',
+    html.includes('color:rgba(37, 99, 235, 0.5)') && html.includes("font-family:'Georgia'"),
+    html
+  ])
+  results.push([
+    'an invalid background falls back to white',
+    html.includes('background:#ffffff'),
+    html.slice(0, 200)
+  ])
+  results.push([
+    'background gradients keep only valid stops (and only the number of the angle)',
+    S.backgroundToCss({
+      stops: [
+        { color: '#000', position: 0 },
+        { color: 'red)"><x', position: 0.5 },
+        { color: '#fff', position: 1 }
+      ],
+      angle: '90"><x'
+    }) === 'linear-gradient(90deg, #000 0%, #fff 100%)',
+    S.backgroundToCss({
+      stops: [{ color: '#000' }, { color: 'red)"><x' }, { color: '#fff', position: 1 }],
+      angle: '90"><x'
+    })
+  ])
+}
+
 rmSync(outDir, { recursive: true, force: true })
 let failures = 0
 for (const [what, passed, detail] of results) {

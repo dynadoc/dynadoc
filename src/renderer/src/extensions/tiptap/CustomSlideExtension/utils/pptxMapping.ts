@@ -3,6 +3,7 @@ import { ShapeType } from '../../../../utils/canvas.types'
 import type { DynadocElement, DynadocPresentation, DynadocSlide } from './presentationImport'
 import { SLIDE_HEIGHT, SLIDE_WIDTH, getSlideTheme } from './slideDesign'
 import { elementTextStyle, type SlideData, type SlideElement, type TextBlock } from './slideContent'
+import { safeCssColor, safeFontFamily, safeTextAlign } from './cssValues'
 
 // .pptx both ways. Export writes the OOXML parts itself and zips them with
 // fflate (already a dependency). Import maps what @cliftonc/pptx-to-json
@@ -502,7 +503,8 @@ export function normalizeImportedColor(value: Json): string | undefined {
   const m = v.match(/^#?([0-9a-fA-F]{1,6})$/)
   if (m && (v.startsWith('#') || m[1].length === 6))
     return `#${m[1].padStart(6, '0').toUpperCase()}`
-  return v
+  // Anything else only when it is a valid CSS colour.
+  return safeCssColor(v) ?? undefined
 }
 
 const ptToPx = (value: Json, scale: number): number | undefined => {
@@ -514,8 +516,8 @@ const ptToPx = (value: Json, scale: number): number | undefined => {
 function mapRichText(doc: Json, style: Json, scale: number, isTitle: boolean): Json {
   const baseSize = ptToPx(style?.fontSize, scale)
   const baseColor = normalizeImportedColor(style?.color)
-  const baseFont = style?.fontFamily
-  const align = style?.textAlign && style.textAlign !== 'left' ? style.textAlign : null
+  const baseFont = safeFontFamily(style?.fontFamily)
+  const align = style?.textAlign !== 'left' ? safeTextAlign(style?.textAlign) : null
   const visit = (node: Json): Json => {
     if (!node || typeof node !== 'object') return node
     const next: Json = { ...node }
@@ -528,8 +530,10 @@ function mapRichText(doc: Json, style: Json, scale: number, isTitle: boolean): J
         else if (mark?.type === 'strike') attrs.textDecoration = 'line-through'
         else if (mark?.type === 'textStyle') {
           const a = mark.attrs || {}
-          if (a.color) attrs.color = normalizeImportedColor(a.color)
-          if (a.fontFamily) attrs.fontFamily = a.fontFamily
+          const color = normalizeImportedColor(a.color)
+          if (color) attrs.color = color
+          const fontFamily = safeFontFamily(a.fontFamily)
+          if (fontFamily) attrs.fontFamily = fontFamily
           const size = ptToPx(a.fontSize, scale)
           if (size) attrs.fontSize = `${size}px`
         }
@@ -579,7 +583,7 @@ function rawSlideBackground(
   if (!slideFile) return undefined
   const bg = raw?.[slideFile]?.['p:sld']?.['p:cSld']?.['p:bg']
   const hex = bg?.['p:bgPr']?.['a:solidFill']?.['a:srgbClr']?.['$val']
-  return typeof hex === 'string' ? `#${hex.toUpperCase()}` : undefined
+  return typeof hex === 'string' && /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toUpperCase()}` : undefined
 }
 
 /**

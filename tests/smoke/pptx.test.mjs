@@ -34,7 +34,7 @@ writeFileSync(
   entry,
   [
     `export * as Y from 'yjs'`,
-    `export { unzipSync, strFromU8 } from 'fflate'`,
+    `export { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate'`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideDesign.ts'))}`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideContent.ts'))}`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'pptxMapping.ts'))}`
@@ -290,6 +290,58 @@ results.push([
     Math.abs(inEllipse.rotation - 30) < 0.5,
   json(inEllipse)
 ])
+
+// --- a crafted file: markup in colour, background and font values -----------
+{
+  const evil = 'FF0000"&gt;&lt;img src=x onerror=alert(1)&gt;'
+  const parts = S.unzipSync(bytes)
+  let xml = S.strFromU8(parts['ppt/slides/slide1.xml'])
+  // run colour, background colour and font face, each as the parser reads them
+  xml = xml.replace(/<a:srgbClr val="F1F5F9">/, `<a:srgbClr val='${evil}'>`)
+  xml = xml.replace(
+    /<p:bg><p:bgPr><a:solidFill><a:srgbClr val="0F172A">/,
+    `<p:bg><p:bgPr><a:solidFill><a:srgbClr val='${evil}'>`
+  )
+  xml = xml.replace(
+    /<a:latin typeface="[^"]*"/,
+    `<a:latin typeface='Arial"&gt;&lt;img src=x onerror=alert(2)&gt;'`
+  )
+  parts['ppt/slides/slide1.xml'] = S.strToU8(xml)
+  const crafted = S.zipSync(parts)
+  const craftedRaw = await new P.PPTXParser().buffer2json(crafted)
+  const craftedParsed = await new P.PowerPointParser().parseJson(craftedRaw)
+  results.push([
+    'the parser does hand the crafted values on (the test is live)',
+    JSON.stringify([craftedParsed, craftedRaw]).includes('onerror'),
+    ''
+  ])
+  const mapped = S.pptxToPresentation(craftedParsed, craftedRaw)
+  // Every style value the mapping produced, wherever it sits.
+  const styleValues = []
+  const stack = [mapped]
+  while (stack.length) {
+    const node = stack.pop()
+    if (!node || typeof node !== 'object') continue
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        typeof value === 'string' &&
+        /^(color|fill|stroke|background|fontFamily|textAlign|fontSize)$/.test(key)
+      )
+        styleValues.push(value)
+      else if (value && typeof value === 'object') stack.push(value)
+    }
+  }
+  results.push([
+    'no style value from the crafted file carries markup, quotes or a handler',
+    styleValues.length > 0 && styleValues.every((v) => !/[<>"'=]|on\w+/i.test(v)),
+    json(styleValues)
+  ])
+  results.push([
+    'the crafted run colour and background are dropped',
+    !JSON.stringify(mapped).includes('onerror') && mapped.slides[0].background === undefined,
+    json(mapped.slides[0].background)
+  ])
+}
 
 rmSync(outDir, { recursive: true, force: true })
 let failures = 0
