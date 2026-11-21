@@ -60,7 +60,10 @@ const {
   reduceRefValues,
   isSingleCellRef,
   selectVisibleGlobals,
-  isGlobalVisibility
+  isGlobalVisibility,
+  toPlainNumber,
+  isCellVarName,
+  CELL_VAR_TRIGGER
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -126,6 +129,62 @@ check('e-mail cell is left as text', evaluateCellVarInput('a@b.com', resolve), {
   kind: 'value',
   value: 'a@b.com'
 })
+
+// --- only plain decimals become numbers ------------------------------------
+check(
+  'plain decimals',
+  ['0', '42', '-3', '+7', '0.25', ' 12.5 '].map(toPlainNumber),
+  [0, 42, -3, 7, 0.25, 12.5]
+)
+check(
+  'look-alikes stay text',
+  ['01234', '0612345678', '0x1F', '1e3', '1.', '.5', '', '12a', 'Infinity'].map(toPlainNumber),
+  [null, null, null, null, null, null, null, null, null]
+)
+check('a number stays a number', [toPlainNumber(3), toPlainNumber(NaN)], [3, null])
+{
+  const codes = { zip: '01234', phone: '0612345678', hex: '0x1F', sci: '1e3' }
+  const r = (name) => (name in codes ? { found: true, value: codes[name] } : { found: false })
+  check('a zip code keeps its zero', evaluateCellVarInput('@zip', r), {
+    kind: 'value',
+    value: '01234'
+  })
+  check('a phone number stays text', evaluateCellVarInput('@phone', r), {
+    kind: 'value',
+    value: '0612345678'
+  })
+  check('hex and exponent stay text in formulas', evaluateCellVarInput('=@hex&@sci', r), {
+    kind: 'formula',
+    formula: '="0x1F"&"1e3"'
+  })
+}
+
+// --- names the cell grammar can read, and the dropdown trigger -------------
+check('cell names', ['client', 'taux_2', '_x', 'prixTTC', 'été'].map(isCellVarName), [
+  true,
+  true,
+  true,
+  true,
+  true
+])
+check('names a cell cannot read', ['user name', 'a-b', 'a.b', '2x', '', 42].map(isCellVarName), [
+  false,
+  false,
+  false,
+  false,
+  false,
+  false
+])
+const trigger = (text) => {
+  const m = text.match(CELL_VAR_TRIGGER)
+  return m ? m[2] : null
+}
+check('trigger after an operator', ['=B2*@ta', '@', 'x @cl'].map(trigger), ['ta', '', 'cl'])
+check(
+  'no trigger in e-mails, after a digit start or past a dash',
+  ['a@b', '@2x', '@a-b', '@a.b'].map(trigger),
+  [null, null, null, null]
+)
 
 // --- spreadsheet refs: a range sums --------------------------------------
 check('single cell', isSingleCellRef('C2'), true)
