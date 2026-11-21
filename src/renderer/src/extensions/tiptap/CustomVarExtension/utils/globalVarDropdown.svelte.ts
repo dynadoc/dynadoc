@@ -74,7 +74,8 @@ function getContentEditableTextBeforeCaret(el: HTMLElement) {
 }
 
 function findTrigger(textBefore: string) {
-  const match = textBefore.match(/(^|\s)@([\w.-]*)$/)
+  // `@` may follow an operator (`=B2*@taux`) but not a word (`a@b.com`).
+  const match = textBefore.match(/(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u)
   if (!match) return null
   const query = match[2] || ''
   const atIndex = textBefore.length - query.length - 1
@@ -137,9 +138,15 @@ function replaceContentEditableRange(
 ) {
   const range = rangeFromCharacterOffsets(el, start, end)
   if (!range) return
+  const selection = window.getSelection()
+  // Inserted as typing would be: into the existing text node, caret after it.
+  // Editors that track the caret by node (the spreadsheet cell editor) keep
+  // their place; a separate text node left the next keystroke misplaced.
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  if (document.execCommand?.('insertText', false, insertText)) return
   range.deleteContents()
   range.insertNode(document.createTextNode(insertText))
-  const selection = window.getSelection()
   if (selection) {
     selection.removeAllRanges()
     const caret = document.createRange()
@@ -169,13 +176,15 @@ export function initGlobalVarDropdown() {
   let isOpen = false
   let container: HTMLElement | null = null
   let component: any = null
-  let state: DropdownState = {
+  // $state: the mounted dropdown re-renders when these change (a plain object
+  // left it hidden, its position never reaching the component).
+  const state: DropdownState = $state({
     items: [],
     activeIndex: 0,
     query: '',
     position: null,
     selectItem: () => undefined
-  }
+  })
 
   const updatePosition = async () => {
     if (!isOpen || !activeElement || !container) return
@@ -286,24 +295,31 @@ export function initGlobalVarDropdown() {
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()
+      event.stopPropagation()
       state.activeIndex = (state.activeIndex + 1) % Math.max(state.items.length, 1)
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
+      event.stopPropagation()
       state.activeIndex =
         (state.activeIndex - 1 + Math.max(state.items.length, 1)) %
         Math.max(state.items.length, 1)
       return
     }
     if (event.key === 'Enter') {
-      if (!state.items.length) return
+      if (!state.items.length) {
+        closeDropdown()
+        return
+      }
       event.preventDefault()
+      event.stopPropagation()
       state.selectItem(state.items[state.activeIndex])
       return
     }
     if (event.key === 'Escape') {
       event.preventDefault()
+      event.stopPropagation()
       closeDropdown()
     }
   }
