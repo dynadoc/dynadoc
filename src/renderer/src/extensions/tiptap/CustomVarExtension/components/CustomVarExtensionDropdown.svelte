@@ -608,9 +608,9 @@
           id={optionId(i)}
           role="option"
           aria-selected={i === activeIndex}
-          class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2 border-transparent"
-          class:bg-primary-10={i === activeIndex}
-          class:border-primary={i === activeIndex}
+          class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2"
+          class:dd-var-option-active={i === activeIndex}
+          class:border-transparent={i !== activeIndex}
           onmousedown={(e) => {
             e.preventDefault()
             selectItem(item)
@@ -658,6 +658,11 @@
 </div>
 
 <style>
+  /* The entry ↑/↓ highlights (aria-selected): tinted, with the accent bar. */
+  .dd-var-option-active {
+    background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    border-left-color: var(--color-primary);
+  }
   .theme-action-btn {
     @apply flex items-center justify-center bg-[var(--color-base-100)] border border-[var(--color-base-100)] rounded-[2px] py-1 text-[10px] font-semibold hover:bg-primary/10 hover:border-primary/40 transition-all;
   }
