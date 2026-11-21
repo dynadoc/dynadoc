@@ -2092,7 +2092,7 @@ if (yXml.length === 0) {
     const coreExtensions = EditorExtensionHelpers.getMainWysiwygExtensions(
       _editorContainer,
       _editorContainerRoot,
-      $_('Type / for commands, @ for variabes, # for dynamic references'),
+      $_('Type / for commands, @ for variables, # for dynamic references'),
       _paginationOptions,
       _paginationImpactedExtensionOptions,
       __wysiwygEditorId,
