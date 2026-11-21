@@ -69,6 +69,10 @@
       payload = data
       syncFromPayload(payload)
     })
+    presentationAPI.onStop?.(() => {
+      payload = null
+      presentation.update((p) => ({ ...p, active: false }))
+    })
     presentationAPI.onUpdate((data) => {
       console.log('resentationAPI.onUpdate', { data })
       if (!data) return

@@ -21,5 +21,9 @@ export interface PresentationPayload {
   }
   // Kept loose to avoid importing editor-only types into main/preload builds.
   editorPaginationOptions?: unknown
+  /** Speaker notes per page (slide decks). */
+  notesList?: string[]
+  /** Open the presentation window fullscreen (slide decks). */
+  fullscreen?: boolean
 }
 

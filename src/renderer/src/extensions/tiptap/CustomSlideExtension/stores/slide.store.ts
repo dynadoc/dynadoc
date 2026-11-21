@@ -79,6 +79,8 @@ export interface SlideDeckApi {
   duplicateSlide(editor: unknown, editorId: string, id: string): Promise<unknown>
   setSlideLayout(slide: unknown, layout: string): Promise<unknown>
   applyDeckTheme(editor: unknown, themeId: string): Promise<unknown>
+  /** Set by utils/slideShow.ts once loaded. */
+  startSlideShow?(editor: unknown, editorId: string, from: 'start' | 'current'): Promise<unknown>
 }
 let _slideDeckApi: SlideDeckApi | null = null
 export const registerSlideDeckApi = (api: SlideDeckApi): void => {

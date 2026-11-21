@@ -4,6 +4,7 @@ import type { Editor } from '@tiptap/core';
 import { defaultPaginationOptions, type PaginationPlusOptions } from '../utils/common.utils';
 import { presentation } from './store/presentation.store';
 import { get } from 'svelte/store';
+import { getSlideDeckApi } from '../CustomSlideExtension/stores/slide.store';
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {
@@ -134,6 +135,15 @@ export const CustomPresentationExtension = Extension.create({
                             currentIndex: 0,
                         }; */
                         console.log("startPresentation", { editor })
+
+                        // A slide deck is shown from its slide data (its Konva
+                        // canvases do not survive the DOM copy below).
+                        const deckApi = getSlideDeckApi()
+                        const deck = deckApi?.getActiveDeck()
+                        if (deckApi?.startSlideShow && deck?.editor === editor) {
+                            void deckApi.startSlideShow(editor, deck.editorId, 'start')
+                            return true
+                        }
 
                         const payload = getPresentationPayload(editor)
                         presentation.update((p) => ({

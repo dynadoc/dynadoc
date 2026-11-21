@@ -78,6 +78,26 @@
           previousSlide()
           break
 
+        case 'PageDown':
+          e.preventDefault()
+          nextSlide()
+          break
+
+        case 'PageUp':
+          e.preventDefault()
+          previousSlide()
+          break
+
+        case 'Home':
+          e.preventDefault()
+          window.presentationAPI.navigate(0)
+          break
+
+        case 'End':
+          e.preventDefault()
+          window.presentationAPI.navigate((payload.pageCount || 1) - 1)
+          break
+
         case 'Escape':
           exit()
           break
@@ -105,7 +125,8 @@
   })
 
   function exit() {
-    // unmount / close window
+    window.presentationAPI?.stop('all')
+    presentation.update((p) => ({ ...p, active: false }))
   }
 </script>
 

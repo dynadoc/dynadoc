@@ -2084,10 +2084,13 @@ function createPresentationWindow(payload: PresentationPayload) {
 
   _presentationWindow.once('ready-to-show', () => {
     _presentationWindow?.show()
+    if (payload.fullscreen) _presentationWindow?.setFullScreen(true)
     _presentationWindow?.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
   })
   _presentationWindow.on('closed', () => {
     _presentationWindow = null
+    // Lets the presenter view in the main window close with the show.
+    _mainWindow?.webContents.send(IPC_PRESENTATION_STOP)
   })
 }
 
@@ -6528,6 +6531,8 @@ Hello from Dynadoc \\LaTeX!
 
   ipcMain.on(IPC_PRESENTATION_UPDATE, (_, payload: PresentationPayload) => {
     if (!_presentationWindow) return
+    // Navigation reads the cached payload; keep it the one on screen.
+    _cachedPayload = payload
     console.log('IPC_PRESENTATION_UPDATE', { payload })
     _presentationWindow?.webContents.send(IPC_PRESENTATION_UPDATE, payload)
     _mainWindow?.webContents.send(IPC_PRESENTATION_UPDATE, payload)

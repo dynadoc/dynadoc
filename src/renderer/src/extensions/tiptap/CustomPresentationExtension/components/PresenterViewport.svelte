@@ -9,7 +9,9 @@
     currentSlide,
     pageHeight,
     pageWidth,
+    nextSlide,
     presentation,
+    previousSlide,
     totalSlides,
     visibleSlideIndexes
   } from '../store/presentation.store'
@@ -49,6 +51,11 @@
   })
 
   onDestroy(() => clearInterval(timerInterval))
+
+  function endShow(): void {
+    window.presentationAPI?.stop('all')
+    presentation.update((p) => ({ ...p, active: false }))
+  }
 
   function formatTime(seconds: number) {
     const h = Math.floor(seconds / 3600)
@@ -183,8 +190,9 @@
 
     <div class="flex gap-2">
       <button class="theme-top-btn" onclick={() => (startTime = Date.now())}>Reset Timer</button>
-      <button class="theme-top-btn text-base-content bg-primary border-transparent hover:bg-[#1473e6]"
-        >{$_('End Show')}</button
+      <button
+        class="theme-top-btn text-base-content bg-primary border-transparent hover:bg-[#1473e6]"
+        onclick={endShow}>{$_('End Show')}</button
       >
     </div>
   </header>
@@ -225,7 +233,7 @@
             >
               <div
                 class="slide-scale"
-                style="transform: translateY(-{actualIndex * payload.pageHeight}px) scale({currentScale}); transform-origin: top;"
+                style="transform: scale({currentScale}) translateY(-{actualIndex * payload.pageHeight}px); transform-origin: top;"
               >
                 {@html payload.html}
               </div>
@@ -235,13 +243,13 @@
       </div>
 
       <div class="mt-4 flex justify-center gap-4">
-        <button class="theme-nav-btn"
+        <button class="theme-nav-btn" onclick={() => previousSlide()}
           ><div class="i-theme-workflow:chevron-left w-6 h-6"></div></button
         >
         <div class="px-6 py-2 bg-base-200 border border-[#3e3e3e] rounded-full text-xs font-bold">
           Slide {$currentSlide + 1} of {$totalSlides || '??'}
         </div>
-        <button class="theme-nav-btn"
+        <button class="theme-nav-btn" onclick={() => nextSlide()}
           ><div class="i-theme-workflow:chevron-right w-6 h-6"></div></button
         >
       </div>
@@ -263,7 +271,7 @@
           >
             <div
               class="bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] slide-scale"
-              style="transform: translateY(-{nextActualIndex * payload.pageHeight}px) scale({nextScale}); transform-origin: top;"
+              style="transform: scale({nextScale}) translateY(-{nextActualIndex * payload.pageHeight}px); transform-origin: top;"
             >
               {@html payload.html}
             </div>
@@ -286,7 +294,16 @@
         <div
           class="p-4 flex-grow overflow-y-auto custom-scrollbar text-sm leading-relaxed text-[#aaa]"
         >
-          {#if payload.notes}
+          {#if payload.notesList}
+            <!-- Slide decks: plain-text notes of the slide on screen. -->
+            {#if payload.notesList[actualIndex]}
+              <div class="whitespace-pre-wrap text-base text-base-content">
+                {payload.notesList[actualIndex]}
+              </div>
+            {:else}
+              <span class="italic opacity-30">{$_('No notes for this slide.')}</span>
+            {/if}
+          {:else if payload.notes}
             {@html payload.notes}
           {:else}
             <span class="italic opacity-30">{$_('No notes for this slide.')}</span>

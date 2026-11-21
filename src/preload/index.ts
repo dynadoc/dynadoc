@@ -854,6 +854,11 @@ const presentationAPI = {
 
   stop: (scope: 'presenter' | 'all' = 'presenter') => {
     ipcRenderer.send(IPC_PRESENTATION_STOP, scope)
+  },
+
+  /** The presentation window closed (Esc, End Show, or its close button). */
+  onStop: (cb: () => void) => {
+    ipcRenderer.on(IPC_PRESENTATION_STOP, () => cb())
   }
 }
 

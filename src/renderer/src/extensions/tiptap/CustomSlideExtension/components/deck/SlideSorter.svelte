@@ -23,6 +23,7 @@
     type SlideInsertKind
   } from '../../utils/slideDeckCommands'
   import { SLIDE_LAYOUTS, SLIDE_THEMES, type SlideLayoutId } from '../../utils/slideDesign'
+  import { startSlideShow } from '../../utils/slideShow'
 
   interface Props {
     editor: Editor
@@ -235,6 +236,25 @@
         class="hidden-input"
         onchange={onImagePicked}
       />
+    </div>
+    <div class="tool-group">
+      <button
+        class="tool"
+        data-action="present-start"
+        title={$_('Present from the first slide')}
+        onclick={() => startSlideShow(editor, editorId, 'start')}
+      >
+        <i class="ph-light ph-play"></i>
+        <span>{$_('Present')}</span>
+      </button>
+      <button
+        class="tool"
+        data-action="present-current"
+        title={$_('Present from the current slide')}
+        onclick={() => startSlideShow(editor, editorId, 'current')}
+      >
+        <i class="ph-light ph-presentation"></i>
+      </button>
     </div>
     <div class="tool-group">
       <div class="menu-anchor">
