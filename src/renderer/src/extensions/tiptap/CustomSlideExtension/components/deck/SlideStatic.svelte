@@ -42,15 +42,25 @@
     })
   }
 
+  // Set by onDestroy: a load still in flight then gives its canvas back
+  // instead of subscribing to it.
+  let _destroyed = false
+
   onMount(async () => {
-    _canvas = await createSlide(slideId, src)
-    await _canvas.load?.()
+    const canvas = await createSlide(slideId, src)
+    await canvas.load?.()
+    if (_destroyed) {
+      canvas.release?.()
+      return
+    }
+    _canvas = canvas
     _canvas.ydoc.on('update', redraw)
     _stopVariables = editorId ? onVariableChange(redraw) : null
     redraw()
   })
 
   onDestroy(() => {
+    _destroyed = true
     if (_raf) cancelAnimationFrame(_raf)
     _stopVariables?.()
     _canvas?.ydoc.off('update', redraw)
