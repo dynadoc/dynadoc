@@ -170,15 +170,25 @@ function placeholderShape(id: string, spec: PlaceholderSpec, z: number): Shape {
   }
 }
 
+// Walks the Yjs nodes instead of stripping tags from their XML string: a
+// placeholder has content when it holds visible text or a variable.
+function nodeHasContent(node: unknown): boolean {
+  if (node instanceof Y.XmlText) {
+    return node
+      .toDelta()
+      .some((op: { insert?: unknown }) =>
+        typeof op.insert === 'string' ? op.insert.trim() !== '' : op.insert != null
+      )
+  }
+  if (node instanceof Y.XmlElement) {
+    return node.nodeName === 'variable' || node.toArray().some(nodeHasContent)
+  }
+  return false
+}
+
 function isFragmentEmpty(fragment?: Y.XmlFragment | null): boolean {
   if (!fragment) return true
-  const text = fragment
-    .toArray()
-    .map((node) =>
-      node instanceof Y.XmlElement || node instanceof Y.XmlText ? node.toString() : ''
-    )
-    .join('')
-  return !text.replace(/<[^>]*>/g, '').trim() && !text.includes('<variable')
+  return !fragment.toArray().some(nodeHasContent)
 }
 
 /**
