@@ -28,7 +28,7 @@
   import ContextMenu from '../../../../components/common/contextMenu/ContextMenu.svelte'
   import CustomVarExtensionEditWidget from './CustomVarExtensionEditWidget.svelte'
   import { formatSpreadsheetRefName } from '../utils/utils'
-  import { plainTextValue } from '../utils/sheetVariables.utils'
+  import { displayVariableValue, plainTextValue } from '../utils/sheetVariables.utils'
 
   let { rawValue, value, type, name, __maxPageHeight = 0, __maxPageWidth = 0 } = $props()
   // useNodeViewWrapper?: boolean
@@ -134,10 +134,11 @@
           __prompt={(rawValue as VariableValue).prompt}
         />
       {:else}
-        {value}
+        {displayVariableValue(value)}
       {/if}
     {:else}
-      {value}
+      <!-- A spreadsheet reference still loading shows "…", not an error. -->
+      {displayVariableValue(value)}
     {/if}
   </ContextMenu>
   <!-- {#if hovered}<span>]</span>{/if} -->

@@ -65,7 +65,9 @@ const {
   isCellVarName,
   CELL_VAR_TRIGGER,
   findVarTrigger,
-  plainTextValue
+  plainTextValue,
+  displayVariableValue,
+  SHEET_REF_LOADING
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -247,6 +249,13 @@ check('single cell keeps its value', reduceRefValues('A1', [4]), 4)
 check('range sums', reduceRefValues('A1:B2', [1, 2, 3, 4]), 10)
 check('range ignores non-numbers', reduceRefValues('A1:A3', [1, NaN, 2]), 3)
 check('empty range', reduceRefValues('A1:A3', []), null)
+
+// A reference whose sheet is still loading shows "…"; errors stay errors.
+check(
+  'a loading reference is neutral, an error is an error',
+  [SHEET_REF_LOADING, '#REF_ERROR!', 60, '01234'].map(displayVariableValue),
+  ['…', '#REF_ERROR!', 60, '01234']
+)
 
 // --- which global variables a document sees -------------------------------
 check(

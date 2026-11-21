@@ -26,6 +26,7 @@ import {
   isGlobalVisibility,
   plainTextValue,
   reduceRefValues,
+  SHEET_REF_LOADING,
   selectVisibleGlobals,
   toPlainNumber
 } from '../utils/sheetVariables.utils'
@@ -1546,6 +1547,30 @@ export function cleanupTableCellVariablesForSheet(
   }
 }
 
+// Documents whose list of sheets was read at least once, and the reads in
+// flight. Until the first read is over, a reference to a sheet that is not in
+// the list yet is loading, not broken (the list comes from vars.json, which a
+// reload reads again).
+const _spreadsheetRegistryLoaded = new Set<string>()
+const _spreadsheetRegistryLoads = new Map<string, Promise<void>>()
+
+function whenSpreadsheetRegistryLoaded(resolved: DocumentEditorModel): Promise<void> {
+  const documentId = getDocumentId(resolved)
+  let load = _spreadsheetRegistryLoads.get(documentId)
+  if (!load) {
+    load = loadSpreadsheetRegistry(resolved).finally(() => {
+      _spreadsheetRegistryLoaded.add(documentId)
+      _spreadsheetRegistryLoads.delete(documentId)
+    })
+    _spreadsheetRegistryLoads.set(documentId, load)
+  }
+  return load
+}
+
+function isSpreadsheetRegistryLoaded(documentId: string): boolean {
+  return _spreadsheetRegistries.has(documentId) || _spreadsheetRegistryLoaded.has(documentId)
+}
+
 function getSpreadsheetPointer(
   id: string,
   editor?: DocumentEditorModel | string
@@ -1554,11 +1579,37 @@ function getSpreadsheetPointer(
   if (!resolved || !id) return null
   const documentId = getDocumentId(resolved)
   if (!_spreadsheetRegistries.has(documentId)) {
-    loadSpreadsheetRegistry(resolved)
+    void whenSpreadsheetRegistryLoaded(resolved)
   }
   const registry = _spreadsheetRegistries.get(documentId)
   return registry?.get(id) || null
 }
+
+// Resolves once the open sheet at `path` is live, or with false after
+// `timeoutMs` (a sheet that is not open, or not embedded in an open document).
+function waitForLiveSheet(path: string, timeoutMs: number): Promise<boolean> {
+  if (getLiveSheetEntry(path)?.methods) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let done = false
+    let unsubscribe: (() => void) | null = null
+    const finish = (live: boolean): void => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      // subscribe() calls back before it returns the unsubscriber.
+      queueMicrotask(() => unsubscribe?.())
+      resolve(live)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    unsubscribe = sheetRegistry.subscribe((map) => {
+      if (map?.[path]?.methods) finish(true)
+    })
+  })
+}
+
+// How long a reference waits for an embedded sheet that is still loading
+// before it is reported as an error.
+const LIVE_SHEET_WAIT_MS = 10000
 
 function getSpreadsheetPointerByDocumentId(
   documentId: string,
@@ -1822,7 +1873,7 @@ async function requestSpreadsheetValue(
 ) {
   const cacheKey = `${documentId}::${ref}`
   setSpreadsheetCache(cacheKey, {
-    value: '#LOADING',
+    value: SHEET_REF_LOADING,
     status: 'loading',
     path: pointer.path,
     documentId,
@@ -1847,7 +1898,18 @@ async function requestSpreadsheetValue(
           path: pointer.path,
           cellRef: targetRef
         })
-        value = result?.value ?? '#REF_ERROR!'
+        value = result?.value
+        // Nothing on disk (yet, or no file access on web) and the sheet is not
+        // open yet: an embedded sheet may still be loading. It answers once it
+        // is open; until then the reference stays "loading", not an error.
+        if (
+          (value === null || value === undefined) &&
+          !getLiveSheetEntry(pointer.path)?.methods &&
+          (await waitForLiveSheet(pointer.path, LIVE_SHEET_WAIT_MS))
+        ) {
+          return requestSpreadsheetValue(ref, documentId, pointer, expression, sheetName)
+        }
+        value = value ?? '#REF_ERROR!'
       }
     }
 
@@ -2411,7 +2473,21 @@ export function getVariable(
   const sheetRef = parseSpreadsheetRef(nameOrId)
   if (sheetRef) {
     const pointer = getSpreadsheetPointer(sheetRef.sheetId, resolvedEditor)
-    if (!pointer) return '#REF_ERROR!'
+    if (!pointer) {
+      if (isSpreadsheetRegistryLoaded(documentId)) return '#REF_ERROR!'
+      // After a reload the document's sheets are read again from vars.json:
+      // the reference is loading, and is asked again once they are known.
+      void whenSpreadsheetRegistryLoaded(resolvedEditor).then(() =>
+        listeners.forEach((fn) =>
+          (fn as (name: string, value: unknown, type: string) => void)(
+            nameOrId,
+            null,
+            VariableManipulatorUtils.VAR_UPDATE_TYPE.value
+          )
+        )
+      )
+      return SHEET_REF_LOADING
+    }
     const resolvedSheetName = sheetRef.sheetName || pointer.name || null
     const cacheKey = `${documentId}::${nameOrId}`
     const cached = getSpreadsheetCache(cacheKey)
@@ -2424,9 +2500,9 @@ export function getVariable(
         sheetRef.expression,
         resolvedSheetName
       )
-      return '#LOADING'
+      return SHEET_REF_LOADING
     }
-    return cached.value ?? '#LOADING'
+    return cached.value ?? SHEET_REF_LOADING
   }
 
   const variableMap = _variableMaps.get(documentId)

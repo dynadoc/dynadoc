@@ -224,3 +224,15 @@ export function plainTextValue(
   if (raw.value.trim().startsWith('=') || /\{[^}]+\}/.test(raw.value)) return null
   return raw.value
 }
+
+/**
+ * What a spreadsheet reference answers while its sheet (or the list of the
+ * document's sheets) is still loading: a chip shows it as "…", not as an
+ * error.
+ */
+export const SHEET_REF_LOADING = '#LOADING'
+
+/** A chip's text for a value: "…" while a spreadsheet reference loads. */
+export function displayVariableValue(value: unknown): unknown {
+  return value === SHEET_REF_LOADING ? '…' : value
+}
