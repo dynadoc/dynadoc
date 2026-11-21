@@ -2078,16 +2078,19 @@ function createPresentationWindow(payload: PresentationPayload) {
     return
   }
 
-  _presentationWindow = new BrowserWindow(getWindowOptions(payload.pageWidth, payload.pageHeight))
+  const win = new BrowserWindow(getWindowOptions(payload.pageWidth, payload.pageHeight))
+  _presentationWindow = win
 
-  loadWindow(_presentationWindow, 'presentation')
+  loadWindow(win, 'presentation')
 
-  _presentationWindow.once('ready-to-show', () => {
-    _presentationWindow?.show()
-    if (payload.fullscreen) _presentationWindow?.setFullScreen(true)
-    _presentationWindow?.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
+  win.once('ready-to-show', () => {
+    win.show()
+    if (payload.fullscreen) win.setFullScreen(true)
+    win.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
   })
-  _presentationWindow.on('closed', () => {
+  win.on('closed', () => {
+    // Only this window's own show ends here: a newer one may already be open.
+    if (_presentationWindow !== win) return
     _presentationWindow = null
     // Lets the presenter view in the main window close with the show.
     _mainWindow?.webContents.send(IPC_PRESENTATION_STOP)
