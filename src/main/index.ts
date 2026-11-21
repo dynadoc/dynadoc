@@ -2089,8 +2089,9 @@ function createPresentationWindow(payload: PresentationPayload) {
     win.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
   })
   win.on('closed', () => {
-    // Only this window's own show ends here: a newer one may already be open.
-    if (_presentationWindow !== win) return
+    // A newer show may already be open: leave it alone. (Stopping the show
+    // clears the reference before this event arrives, so null still ends it.)
+    if (_presentationWindow && _presentationWindow !== win) return
     _presentationWindow = null
     // Lets the presenter view in the main window close with the show.
     _mainWindow?.webContents.send(IPC_PRESENTATION_STOP)
