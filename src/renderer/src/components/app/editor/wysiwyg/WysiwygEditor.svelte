@@ -325,6 +325,29 @@
   const _isSlideDeck = $derived(
     !_isReadOnly && isSlideDeckInfo($_documentEditorStore?.document?.info)
   )
+  // A presentation's page (one slide wide) is zoomed down to the width there
+  // is, so the slide is never cut off. CSS zoom, unlike a transform, also
+  // shrinks the layout, so no horizontal scrolling is left.
+  let _deckZoom = $state(1)
+  $effect(() => {
+    const shell = _editorContainerRoot as HTMLElement | null
+    const pageWidth = Number(_editorPaginationOptions?.pageWidth) || 1280
+    if (!_isSlideDeck || !shell) {
+      _deckZoom = 1
+      return
+    }
+    let last = 1
+    const fit = (): void => {
+      // the shell's horizontal padding (px-6) and the page's own frame
+      const available = shell.clientWidth - 96
+      const next = Math.max(0.3, Math.min(1, available / pageWidth))
+      if (Math.abs(next - last) > 0.005) _deckZoom = last = next
+    }
+    const observer = new ResizeObserver(fit)
+    observer.observe(shell)
+    fit()
+    return () => observer.disconnect()
+  })
   // export let handleWysiwygChange = (event, content: string = null): void => {}
   // export let handleWysiwygKeydown = (event): void => {}
   // export let handleWysiwygInput = (event): void => {}
@@ -2883,7 +2906,7 @@ if (yXml.length === 0) {
       __zoomControlContainer={document.getElementById('status-bar-right')}
       __zoomKey={__filePathToOpenFromDocument || __wysiwygEditorId}
     >
-      <div class="editor-stage">
+      <div class="editor-stage" style:zoom={_isSlideDeck && _deckZoom < 1 ? _deckZoom : null}>
         <div bind:this={_editorContainer} class="editor-container relative">
           {#if $_$_findBar.open && _editor}
             <FindBar editor={_editor} />
@@ -3040,6 +3063,11 @@ if (yXml.length === 0) {
     bottom: 0;
     left: 0;
     display: flex;
+  }
+  /* A deck's comments are per slide (notes bar): the page's comment gutter,
+     which sits beyond the page's right edge, would only make it scroll. */
+  .slide-deck-layout :global(.ms-gutter-system) {
+    display: none;
   }
   :global(.editor-shell) {
     @apply relative flex items-start justify-center;
