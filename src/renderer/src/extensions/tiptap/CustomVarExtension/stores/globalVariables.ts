@@ -23,6 +23,12 @@ let _loading: Promise<GlobalVars> | null = null
 let _channel: BroadcastChannel | null = null
 let _saveTimer: ReturnType<typeof setTimeout> | null = null
 const _pending = new Map<string, StoredVariable | null>()
+let _writing: Promise<void> | null = null
+// When each id last changed here or over the channel. The file can lag behind
+// those (another window's save may still be on its timer), so a re-read does
+// not override them for a while; deletions included, which act as tombstones.
+const _recent = new Map<string, number>()
+const RECENT_MS = 5000
 const _handlers = new Set<(changes: GlobalVariableChange[]) => void>()
 
 async function getFilePath(): Promise<string | null> {
@@ -46,11 +52,21 @@ async function readFile(): Promise<GlobalVars> {
 
 // Writes only this window's pending changes on top of what is on disk, so two
 // windows saving close together do not drop each other's variables.
-async function flush(): Promise<void> {
+function flush(): Promise<void> {
   _saveTimer = null
-  if (!_pending.size) return
+  if (!_pending.size) return Promise.resolve()
   const changes = new Map(_pending)
   _pending.clear()
+  const previous = _writing || Promise.resolve()
+  _writing = previous.then(() => write(changes))
+  const current = _writing
+  void current.then(() => {
+    if (_writing === current) _writing = null
+  })
+  return current
+}
+
+async function write(changes: Map<string, StoredVariable | null>): Promise<void> {
   try {
     const filePath = await getFilePath()
     if (!filePath) return
@@ -77,15 +93,24 @@ function emit(changes: GlobalVariableChange[]): void {
   })
 }
 
+const isRecent = (id: string): boolean => Date.now() - (_recent.get(id) || 0) < RECENT_MS
+
+// Takes what is on disk, except for ids changed recently in this window or
+// over the channel: the file may not have caught up with those yet.
 function applyRemote(next: GlobalVars): void {
   const changes: GlobalVariableChange[] = []
   for (const [id, value] of Object.entries(next)) {
-    if (JSON.stringify(_vars[id]) !== JSON.stringify(value)) changes.push({ id, value })
+    if (isRecent(id)) continue
+    if (JSON.stringify(_vars[id]) !== JSON.stringify(value)) {
+      _vars[id] = value
+      changes.push({ id, value })
+    }
   }
   for (const id of Object.keys(_vars)) {
-    if (!(id in next)) changes.push({ id, value: null })
+    if (id in next || isRecent(id)) continue
+    delete _vars[id]
+    changes.push({ id, value: null })
   }
-  _vars = { ...next }
   emit(changes)
 }
 
@@ -98,6 +123,7 @@ function ensureSync(): void {
       const applied: GlobalVariableChange[] = []
       for (const change of changes) {
         if (!change?.id) continue
+        _recent.set(change.id, Date.now())
         if (change.value === null) {
           if (!(change.id in _vars)) continue
           delete _vars[change.id]
@@ -110,7 +136,8 @@ function ensureSync(): void {
     }
   }
   window.addEventListener('focus', () => {
-    if (_pending.size) return
+    // This window's own save first, or the re-read sees the file without it.
+    if (_pending.size || _saveTimer || _writing) return
     void readFile().then(applyRemote)
   })
 }
@@ -133,6 +160,7 @@ export function getGlobalVariables(): GlobalVars {
 }
 
 function commit(id: string, value: StoredVariable | null): void {
+  _recent.set(id, Date.now())
   if (value === null) delete _vars[id]
   else _vars[id] = value
   _pending.set(id, value)
