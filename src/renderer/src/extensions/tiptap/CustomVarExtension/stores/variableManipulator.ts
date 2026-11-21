@@ -30,6 +30,11 @@ import {
   selectVisibleGlobals,
   toPlainNumber
 } from '../utils/sheetVariables.utils'
+import {
+  createLiveSheetWaiter,
+  createPendingRefBroadcast,
+  createRequestTokens
+} from '../utils/sheetRefLoading.utils'
 // import Utils from '../../../../../utils/Utils/utils/Utils'
 
 // const  fs = (window as any)?.node?.fs || null
@@ -1587,25 +1592,26 @@ function getSpreadsheetPointer(
 
 // Resolves once the open sheet at `path` is live, or with false after
 // `timeoutMs` (a sheet that is not open, or not embedded in an open document).
-function waitForLiveSheet(path: string, timeoutMs: number): Promise<boolean> {
-  if (getLiveSheetEntry(path)?.methods) return Promise.resolve(true)
-  return new Promise((resolve) => {
-    let done = false
-    let unsubscribe: (() => void) | null = null
-    const finish = (live: boolean): void => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      // subscribe() calls back before it returns the unsubscriber.
-      queueMicrotask(() => unsubscribe?.())
-      resolve(live)
-    }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    unsubscribe = sheetRegistry.subscribe((map) => {
-      if (map?.[path]?.methods) finish(true)
-    })
-  })
-}
+const waitForLiveSheet = createLiveSheetWaiter({
+  subscribe: sheetRegistry.subscribe,
+  isLive: (map, path) => !!map?.[path]?.methods
+})
+
+// The latest request per cached reference: an older one, still waiting for its
+// sheet, must not overwrite what a newer one found.
+const _spreadsheetRequests = createRequestTokens()
+
+// Chips that asked for a reference while the document's sheets were loading:
+// each is asked again once, when the sheets are known.
+const askSheetRefAgain = createPendingRefBroadcast((name) =>
+  listeners.forEach((fn) =>
+    (fn as (name: string, value: unknown, type: string) => void)(
+      name,
+      null,
+      VariableManipulatorUtils.VAR_UPDATE_TYPE.value
+    )
+  )
+)
 
 // How long a reference waits for an embedded sheet that is still loading
 // before it is reported as an error.
@@ -1872,6 +1878,9 @@ async function requestSpreadsheetValue(
   sheetName?: string | null
 ) {
   const cacheKey = `${documentId}::${ref}`
+  const token = _spreadsheetRequests.start(cacheKey)
+  // Replaced by a newer request (the sheet changed meanwhile): its answer wins.
+  const superseded = (): boolean => !_spreadsheetRequests.isCurrent(cacheKey, token)
   setSpreadsheetCache(cacheKey, {
     value: SHEET_REF_LOADING,
     status: 'loading',
@@ -1907,12 +1916,14 @@ async function requestSpreadsheetValue(
           !getLiveSheetEntry(pointer.path)?.methods &&
           (await waitForLiveSheet(pointer.path, LIVE_SHEET_WAIT_MS))
         ) {
+          if (superseded()) return
           return requestSpreadsheetValue(ref, documentId, pointer, expression, sheetName)
         }
         value = value ?? '#REF_ERROR!'
       }
     }
 
+    if (superseded()) return
     setSpreadsheetCache(cacheKey, {
       value,
       status: 'ready',
@@ -1925,6 +1936,7 @@ async function requestSpreadsheetValue(
     })
     listeners.forEach((fn) => fn(ref, value, VariableManipulatorUtils.VAR_UPDATE_TYPE.value))
   } catch (err) {
+    if (superseded()) return
     setSpreadsheetCache(cacheKey, {
       value: '#REF_ERROR!',
       status: 'error',
@@ -2477,15 +2489,7 @@ export function getVariable(
       if (isSpreadsheetRegistryLoaded(documentId)) return '#REF_ERROR!'
       // After a reload the document's sheets are read again from vars.json:
       // the reference is loading, and is asked again once they are known.
-      void whenSpreadsheetRegistryLoaded(resolvedEditor).then(() =>
-        listeners.forEach((fn) =>
-          (fn as (name: string, value: unknown, type: string) => void)(
-            nameOrId,
-            null,
-            VariableManipulatorUtils.VAR_UPDATE_TYPE.value
-          )
-        )
-      )
+      askSheetRefAgain(documentId, nameOrId, () => whenSpreadsheetRegistryLoaded(resolvedEditor))
       return SHEET_REF_LOADING
     }
     const resolvedSheetName = sheetRef.sheetName || pointer.name || null
