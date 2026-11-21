@@ -31,7 +31,10 @@
     onAddVariable = null,
     handlePickFile = () => {},
     handlePickFolder = () => {},
-    handleEditRichText = () => {}
+    handleEditRichText = () => {},
+    // Phones: the list comes first, so it stays in view above the on-screen
+    // keyboard; the form to create a variable follows it.
+    suggestionsFirst = false
   } = $props()
 
   let container = $state<HTMLElement>()
@@ -345,7 +348,7 @@
   style:top="{position?.y ?? 0}px"
   style:visibility={position?.x ? 'visible' : 'hidden'}
 >
-  <div class="flex items-center gap-0.5 p-1 bg-base-200 border-b border-base-100">
+  <div class="shrink-0 flex items-center gap-0.5 p-1 bg-base-200 border-b border-base-100">
     {#each Object.entries(TYPE_CONFIG) as [type, cfg]}
       <button
         onclick={() => (selectedType = type)}
@@ -358,7 +361,7 @@
     {/each}
   </div>
 
-  <div class="p-2 flex flex-col gap-2 bg-base-100">
+  <div class="shrink-0 p-2 flex flex-col gap-2 bg-base-100">
     <input
       type="text"
       bind:value={newVarName}
@@ -564,7 +567,7 @@
     {/if}
   </div>
 
-  <div class="max-h-40 overflow-y-auto py-1">
+  <div class="shrink-0 max-h-40 overflow-y-auto py-1" style:order={suggestionsFirst ? -1 : null}>
     <div class="px-3 py-1 text-[9px] font-bold opacity-30 uppercase tracking-widest">
       {$_('Suggestions')}
     </div>
@@ -593,7 +596,7 @@
   </div>
 
   {#if recentHistory.length > 0}
-    <div class="border-t border-base-100 bg-base-200/80 pb-1">
+    <div class="shrink-0 border-t border-base-100 bg-base-200/80 pb-1">
       <div
         class="px-3 py-2 text-[9px] font-bold opacity-30 uppercase tracking-widest flex justify-between"
       >

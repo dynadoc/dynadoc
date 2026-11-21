@@ -24,6 +24,7 @@ type DropdownState = {
   position: { x: number; y: number } | null
   selectItem: (item: DropdownItem) => void
   onAddVariable: (variable: { name: string }) => void
+  suggestionsFirst: boolean
 }
 
 type AllowedElement = HTMLInputElement | HTMLTextAreaElement | HTMLElement
@@ -185,6 +186,11 @@ function getVisibleBoundary() {
   return { x: vv.offsetLeft, y: vv.offsetTop, width: vv.width, height: vv.height }
 }
 
+// A phone or a narrow window: the list goes first in the dropdown.
+const isCompactScreen = (): boolean =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 640)
+
 const isInputField = (el: AllowedElement): el is HTMLInputElement | HTMLTextAreaElement =>
   el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
 
@@ -208,7 +214,8 @@ export function initGlobalVarDropdown() {
     query: '',
     position: null,
     selectItem: () => undefined,
-    onAddVariable: () => undefined
+    onAddVariable: () => undefined,
+    suggestionsFirst: false
   })
 
   const updatePosition = async () => {
@@ -316,6 +323,7 @@ export function initGlobalVarDropdown() {
     state.query = query
     state.selectItem = insertItem
     state.onAddVariable = handleAddVariable
+    state.suggestionsFirst = isCompactScreen()
 
     if (!component) {
       component = mount(CustomVarExtensionDropdown, {
