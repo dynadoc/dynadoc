@@ -23,6 +23,7 @@ import {
   getVariableId
 } from './stores/variableManipulator'
 import CustomVarExtensionVariableChipWidget from './components/CustomVarExtensionVariableChipWidget.svelte'
+import { plainTextValue } from './utils/sheetVariables.utils'
 import { mount, unmount } from 'svelte'
 import Utils from '../../../utils/Utils'
 import CustomVarExtensionDropdown from './components/CustomVarExtensionDropdown.svelte'
@@ -864,15 +865,22 @@ export const CustomVarExtension = Node.create({
     const suggestionCommand = ({ editor, range, props }) => {
       // console.log("suggestionCommand ", { props })
       if (!props) return
+      // The saved value is what the chip shows until variables load (after a
+      // reload): plain text as typed and formatted, not the engine's number
+      // ('01234' is 1234 there).
+      const text = plainTextValue(props.rawValue)
+      const value =
+        text !== null
+          ? VariableManipulatorUtils.formatValue(text, props.rawValue?.format)
+          : typeof props.value == 'object'
+            ? props.value.value
+            : props.value
       editor
         .chain()
         .focus()
         .insertContentAt(range, {
           type: this.name,
-          attrs: {
-            name: props.name,
-            value: typeof props.value == 'object' ? props.value.value : props.value
-          }
+          attrs: { name: props.name, value }
         })
         .run()
     }
