@@ -5,7 +5,7 @@ import { get } from 'svelte/store'
 import { nodeApi } from '../../../../utils/shims/node'
 // import { _$_activeDocumentVars, computedVars } from './vars.store'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
-import { sheetRegistry } from '../../../../stores/sheetBridge.store'
+import { setSheetVariablesApi, sheetRegistry } from '../../../../stores/sheetBridge.store'
 import { Node, mergeAttributes, InputRule, Editor } from '@tiptap/core'
 import SSF from 'ssf'
 // import { persistStore } from '../../../../../utils/storePersistenceePersistence'
@@ -15,6 +15,18 @@ import type { DocumentEditorModel } from '../../../../models/Document'
 import EditorHelpers from '../../../../utils/EditorHelpers'
 import { CustomVarExtensionProps } from '../utils/common.utils'
 import { v4 as uuidv4 } from 'uuid'
+import {
+  deleteGlobalVariable,
+  getGlobalVariables,
+  loadGlobalVariables,
+  onGlobalVariablesChange,
+  setGlobalVariable
+} from './globalVariables'
+import {
+  isGlobalVisibility,
+  reduceRefValues,
+  selectVisibleGlobals
+} from '../utils/sheetVariables.utils'
 // import Utils from '../../../../../utils/Utils/utils/Utils'
 
 // const  fs = (window as any)?.node?.fs || null
@@ -625,6 +637,13 @@ export type VariableValue = {
   translations?: any // for translations. Can be like {en:'valueInEnglish',fr:'valueInFrench',...}
   source?: 'user' | 'ai' | string // how the variable was created
   generatedAt?: string // for AI-generated vars
+  sheetSource?: SheetCellSource // the value follows this spreadsheet cell
+}
+
+export type SheetCellSource = {
+  path: string // spreadsheet file (the sheet's rootPath)
+  sheet?: string // sheet name
+  cell: string // A1-style cell
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -817,7 +836,8 @@ const normalizeVariableValue = (
       autoUpdate: data.autoUpdate,
       translations: data.translations,
       source: data.source ?? existing?.source,
-      generatedAt: data.generatedAt ?? existing?.generatedAt
+      generatedAt: data.generatedAt ?? existing?.generatedAt,
+      sheetSource: data.sheetSource ?? existing?.sheetSource
     }
   }
   return {
@@ -1732,11 +1752,8 @@ async function getSpreadsheetNumericValue(
     const scalar = Number(resolvedValue)
     return Number.isFinite(scalar) ? scalar : null
   }
-  if (CELL_REF_REGEX.test(cellRef)) {
-    return Number.isFinite(values[0]) ? values[0] : null
-  }
-  // Range -> default to SUM for arithmetic contexts
-  return values.reduce((sum, item) => sum + item, 0)
+  // A single cell gives its value; a range sums (CELL_REF_REGEX matches both).
+  return reduceRefValues(cellRef, values)
 }
 
 function parseSheetQualifiedRef(value: string): { sheet: string | null; ref: string } {
@@ -1895,6 +1912,7 @@ async function requestSpreadsheetValue(
 function ensureSpreadsheetWatcher() {
   const handleSpreadsheetChange = (filePath?: string) => {
     if (!filePath) return
+    void refreshSheetSourcedVariables(filePath)
     const keys = _spreadsheetRefsByPath.get(filePath)
     if (!keys || keys.size === 0) return
 
@@ -2062,6 +2080,7 @@ export async function loadAndDefineVariables(
   if (!activeEditor || !vars) return
   await loadSpreadsheetRegistry(activeEditor)
   ensureSpreadsheetWatcher()
+  await loadGlobalVariables()
 
   // _variableMap.clear()
   // _variableMaps.clear()
@@ -2070,8 +2089,9 @@ export async function loadAndDefineVariables(
     return
   }
   syncingDocuments.add(documentId)
+  const defining = forceDefine || !_variableMaps?.has(documentId)
   try {
-    if (forceDefine || !_variableMaps?.has(documentId)) {
+    if (defining) {
       const migratedVars: Record<string, VariableValue> = {}
       let didMigrate = false
       const nameToId = new Map<string, string>()
@@ -2094,6 +2114,22 @@ export async function loadAndDefineVariables(
           nameToId.set(name, normalizedId)
           nameToId.set(normalizeName(name), normalizedId)
         }
+      }
+
+      // Desktop/Cloud variables saved in vars.json before they had a store of
+      // their own move there; then every global variable this document can
+      // see joins its map.
+      for (const [id, value] of Object.entries(migratedVars)) {
+        if (isGlobalVisibility(value?.visibility) && !getGlobalVariables()[id]) {
+          setGlobalVariable(id, value)
+        }
+      }
+      const visibleGlobals = selectVisibleGlobals(
+        migratedVars,
+        getGlobalVariables() as Record<string, VariableValue>
+      )
+      for (const [id, value] of Object.entries(visibleGlobals)) {
+        defineVariable(id, value, false, activeEditor)
       }
 
       let didMigrateFormulas = false
@@ -2145,9 +2181,15 @@ export async function loadAndDefineVariables(
         }
       }
     }
+    // An empty document is loaded too (areVariablesReady).
+    if (!_variableMaps.has(documentId)) _variableMaps.set(documentId, new Map())
   } finally {
     syncingDocuments.delete(documentId)
   }
+  // Notifications were held back while loading; chips and sheets mounted
+  // before the variables were there pick their values up now.
+  if (defining) notifyValueChange(activeEditor)
+  void refreshSheetSourcedVariables()
 
   // return
   /* for (const [name, val] of Object.entries(vars)) {
@@ -2254,6 +2296,13 @@ export function defineVariable(
   notifyValueChange(resolvedEditor, affectedIds.length ? affectedIds : variableId)
 
   if (persist) {
+    if (isGlobalVisibility(normalizedValue.visibility)) {
+      setGlobalVariable(variableId, normalizedValue)
+      spreadGlobalVariable(variableId, normalizedValue, documentId)
+    } else if (isGlobalVisibility((existingCell?.rawValue as VariableValue)?.visibility)) {
+      deleteGlobalVariable(variableId)
+      spreadGlobalVariable(variableId, null, documentId)
+    }
     const varStorePath = resolvedEditor?.document?.getVarsFilePath()
     if (varStorePath) {
       saveVarsToFile(varStorePath, serializeVariables(variableMap))
@@ -2478,6 +2527,13 @@ export function isVariableSyncInProgress(documentEditor?: DocumentEditorModel | 
   return syncingDocuments.has(documentId)
 }
 
+/** True once a document's variables are loaded and not being reloaded. */
+export function areVariablesReady(documentEditor?: DocumentEditorModel | string): boolean {
+  const resolvedEditor = resolveDocumentEditor(documentEditor)
+  const documentId = getDocumentId(resolvedEditor)
+  return !!documentId && _variableMaps.has(documentId) && !syncingDocuments.has(documentId)
+}
+
 function notifyValueChange(
   documentEditor: DocumentEditorModel | string,
   variableIds?: string | string[]
@@ -2525,6 +2581,181 @@ function notifyNameChange(
 export function onVariableChange(fn) {
   listeners.add(fn)
   return () => listeners.delete(fn)
+}
+
+// --- Desktop/Cloud variables -------------------------------------------------
+
+// Each open document holds its own copy of the global variables it can see,
+// so formulas, chips and lookups treat them like its own variables.
+function spreadGlobalVariable(
+  id: string,
+  value: VariableValue | null,
+  skipDocumentId?: string
+): void {
+  const seen = new Set<string>()
+  for (const editor of _$_documentEditorsList.getList()) {
+    const documentId = getDocumentId(editor)
+    if (!documentId || documentId === skipDocumentId || seen.has(documentId)) continue
+    seen.add(documentId)
+    const variableMap = _variableMaps.get(documentId)
+    if (!variableMap) continue
+    const current = variableMap.get(id)?.rawValue as VariableValue | undefined
+    if (value === null) {
+      if (!current || !isGlobalVisibility(current.visibility)) continue
+      getEngine(documentId).sync.removeVariable(id)
+      variableMap.delete(id)
+      continue
+    }
+    if (!selectVisibleGlobals(serializeVariables(variableMap), { [id]: value })[id]) continue
+    defineVariable(id, value, false, editor)
+  }
+}
+
+// Changes from other windows, or found re-reading the store file.
+onGlobalVariablesChange((changes) => {
+  for (const { id, value } of changes) {
+    spreadGlobalVariable(id, value as VariableValue | null)
+    if (value === null) {
+      listeners.forEach((fn) => fn(id, undefined, VariableManipulatorUtils.VAR_UPDATE_TYPE.delete))
+    }
+  }
+})
+
+/**
+ * A variable's value for a spreadsheet cell's `@name`. Spreadsheet pointers
+ * (whole sheets) are not values and are reported as not found.
+ */
+export function resolveVariableForCell(
+  name: string,
+  documentEditor: DocumentEditorModel | string
+): { found: boolean; value?: unknown } {
+  const resolvedEditor = resolveDocumentEditor(documentEditor)
+  if (!resolvedEditor || !name) return { found: false }
+  const variableMap = _variableMaps.get(getDocumentId(resolvedEditor))
+  const variableId = resolveVariableId(name, resolvedEditor)
+  const raw = variableId ? (variableMap?.get(variableId)?.rawValue as VariableValue) : null
+  if (!raw || raw.type === VariableManipulatorUtils.VAR_TYPE.spreadsheet) return { found: false }
+  let value: unknown = getVariable(variableId, resolvedEditor)
+  if (value && typeof value === 'object') {
+    // A raw VariableValue (non-text types) or a HyperFormula error.
+    value = (value as { value?: unknown }).value ?? ''
+  }
+  return { found: true, value }
+}
+
+/** Defines `name` as a variable whose value follows a spreadsheet cell. */
+export function defineSheetCellVariable(
+  name: string,
+  options: { source: SheetCellSource; visibility?: string; value?: unknown },
+  documentEditor: DocumentEditorModel | string
+): string | null {
+  const id = defineVariable(
+    name,
+    {
+      type: VariableManipulatorUtils.VAR_TYPE.text,
+      name,
+      value: options.value ?? '',
+      visibility: options.visibility,
+      sheetSource: options.source,
+      source: 'spreadsheet'
+    } as VariableValue,
+    true,
+    documentEditor
+  )
+  void refreshSheetSourcedVariables(options.source.path)
+  return id
+}
+
+// The document editor a spreadsheet belongs to, from its parent document.
+function findEditorForDocument(parentDoc: unknown): DocumentEditorModel | null {
+  const list = _$_documentEditorsList.getList() || []
+  const uuid = (parentDoc as { uuid?: string } | null)?.uuid
+  return (
+    list.find((editor) => parentDoc && editor?.document === parentDoc) ||
+    list.find((editor) => uuid && editor?.document?.uuid === uuid) ||
+    resolveDocumentEditor()
+  )
+}
+
+setSheetVariablesApi({
+  load: async (parentDoc) => {
+    const editor = findEditorForDocument(parentDoc)
+    if (editor) await loadAndDefineVariables(editor)
+  },
+  isReady: (parentDoc) => areVariablesReady(findEditorForDocument(parentDoc)),
+  resolve: (name, parentDoc) => {
+    const editor = findEditorForDocument(parentDoc)
+    return editor ? resolveVariableForCell(name, editor) : { found: false }
+  },
+  onChange: (fn) => onVariableChange(fn),
+  defineFromCell: (name, options, parentDoc) => {
+    const editor = findEditorForDocument(parentDoc)
+    return editor ? defineSheetCellVariable(name, options, editor) : null
+  }
+})
+
+const _watchedSheetSourcePaths = new Set<string>()
+
+async function readSheetCellValue(source: SheetCellSource): Promise<unknown> {
+  const live = await getLiveCellValue(source.path, source.cell, source.sheet)
+  let value = live
+  if (live === null || live === undefined) {
+    const cellRef = source.sheet ? `${source.sheet}!${source.cell}` : source.cell
+    const result = await window.api?.spreadsheetGetCell?.({ path: source.path, cellRef })
+    value = result?.value
+  }
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+    return Number(value)
+  }
+  return value ?? ''
+}
+
+/**
+ * Re-reads the cells that sheet-backed variables follow (all of them, or the
+ * ones from `path`) and updates the variables whose value changed. The live
+ * sheet is read when it is open in this window, the file on disk otherwise.
+ */
+export async function refreshSheetSourcedVariables(path?: string): Promise<void> {
+  type Target = { id: string; raw: VariableValue; editor: DocumentEditorModel | null }
+  const targets = new Map<string, Target>()
+  const editorsByDocument = new Map<string, DocumentEditorModel>()
+  for (const editor of _$_documentEditorsList.getList()) {
+    const documentId = getDocumentId(editor)
+    if (documentId && _variableMaps.has(documentId)) editorsByDocument.set(documentId, editor)
+  }
+  for (const [documentId, editor] of editorsByDocument) {
+    for (const [id, cell] of _variableMaps.get(documentId) || []) {
+      const raw = cell.rawValue as VariableValue
+      if (!raw?.sheetSource?.path || targets.has(id)) continue
+      targets.set(id, { id, raw, editor })
+    }
+  }
+  for (const [id, raw] of Object.entries(getGlobalVariables() as Record<string, VariableValue>)) {
+    if (raw?.sheetSource?.path && !targets.has(id)) targets.set(id, { id, raw, editor: null })
+  }
+
+  for (const { id, raw, editor } of targets.values()) {
+    const source = raw.sheetSource as SheetCellSource
+    if (path && source.path !== path) continue
+    if (!_watchedSheetSourcePaths.has(source.path)) {
+      _watchedSheetSourcePaths.add(source.path)
+      try {
+        window.api?.spreadsheetWatch?.({ path: source.path })
+      } catch {
+        // ignore
+      }
+    }
+    let value: unknown
+    try {
+      value = await readSheetCellValue(source)
+    } catch {
+      continue
+    }
+    if (String(value) === String(raw.value ?? '')) continue
+    const next = { ...raw, value }
+    if (editor) defineVariable(id, next, true, editor)
+    else setGlobalVariable(id, next)
+  }
 }
 
 export function validateFormulaInput(
@@ -2657,6 +2888,10 @@ export function deleteVariable(nameOrId: string, documentEditor: DocumentEditorM
 
   engine.sync.removeVariable(variableId)
   variableMap.delete(variableId)
+  if (isGlobalVisibility((cell.rawValue as VariableValue)?.visibility)) {
+    deleteGlobalVariable(variableId)
+    spreadGlobalVariable(variableId, null, documentId)
+  }
 
   const escaped = escapeRegex(displayName)
   const braceRegex = new RegExp(`\\{${escaped}\\}`, 'g')
@@ -2834,7 +3069,11 @@ export function serializeVariables(variableMap: Map<string, VariableMap>) {
 
   const vars: Record<string, any> = {}
   for (const [id, cell] of variableMap) {
-    vars[id] = cell.rawValue
+    // Desktop/Cloud variables live in the global store. `undefined` also drops
+    // a copy saved before (saveVarsToFile merges, JSON.stringify omits it).
+    vars[id] = isGlobalVisibility((cell.rawValue as VariableValue)?.visibility)
+      ? undefined
+      : cell.rawValue
   }
   return vars
 }

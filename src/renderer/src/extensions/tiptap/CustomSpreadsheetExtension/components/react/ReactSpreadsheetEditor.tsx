@@ -7,6 +7,7 @@ import * as Y from "yjs";
 import { createSheetYjs } from "../../collab/collab";
 import { nodeApi } from '../../../../../utils/shims/node'
 import { awaitDriveReady } from '../../../../../utils/driveReady'
+import { useSheetVariables } from './useSheetVariables'
 // import '../../../../../components/common/web-component/vscode-elements/dist/bundled.js'
 
 
@@ -353,6 +354,16 @@ export default function ReactSpreadsheetEditor({
     return () => window.removeEventListener("dynadoc-sheet-sync", handler as any);
   }, [readOnly, rootPath]);
 
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const sheetVariables = useSheetVariables({
+    workbookRef,
+    containerRef,
+    ready,
+    rootPath,
+    parentDoc,
+    readOnly
+  })
+
   /* -------------------------------------------
    * Wait until snapshot ready
    * -----------------------------------------*/
@@ -369,6 +380,7 @@ export default function ReactSpreadsheetEditor({
    * -----------------------------------------*/
   return (
     <div
+      ref={containerRef}
       className={`w-full h-full fortune-theme-${theme || 'dark'} ${readOnly ? "sheet-readonly" : ""}`}
       onPointerDownCapture={(event) => {
         if (readOnly) {
@@ -402,6 +414,7 @@ export default function ReactSpreadsheetEditor({
         data={initialData}
         showToolbar={false}
         showFormulaBar={true}
+        hooks={sheetVariables.hooks}
         onOp={ops => {
         if (disableCollab || readOnly) return
         if (!ydocRef.current || !yOpsRef.current) return
@@ -417,6 +430,7 @@ export default function ReactSpreadsheetEditor({
           scheduleSyncEmit()
         }}
       />
+      {sheetVariables.overlay}
     </div>
   )
 }
