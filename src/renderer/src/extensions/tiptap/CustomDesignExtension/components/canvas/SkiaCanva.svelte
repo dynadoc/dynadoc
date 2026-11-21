@@ -3,6 +3,11 @@
   import { _ } from 'svelte-i18n'
   import { onMount, onDestroy } from 'svelte'
   import CanvasKitInit, { type CanvasKit } from 'canvaskit-wasm'
+  // The wasm must come from the same canvaskit-wasm install as the JS glue
+  // above: the glue's import table changes between releases, and a mismatched
+  // binary aborts with a LinkError at instantiate (issue #66). Importing it
+  // with ?url lets Vite serve and emit the package's own copy on every target.
+  import canvasKitWasmUrl from 'canvaskit-wasm/bin/canvaskit.wasm?url'
 
   import * as Y from 'yjs'
   import ImageEditorUI from '../DesignStudioUI.svelte'
@@ -867,7 +872,7 @@
     // const CanvasKitInit = (await import('canvaskit-wasm')).default
 
     _CanvasKit = await CanvasKitInit({
-      locateFile: (f) => `/canvaskit/${f}`
+      locateFile: () => canvasKitWasmUrl
     })
     setupCanvasSize(__canvaWidth || 500, __canvaHeight || 500)
     _surface = _CanvasKit.MakeCanvasSurface(_canvasEl)
