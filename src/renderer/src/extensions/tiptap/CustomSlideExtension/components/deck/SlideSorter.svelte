@@ -24,6 +24,7 @@
   } from '../../utils/slideDeckCommands'
   import { SLIDE_LAYOUTS, SLIDE_THEMES, type SlideLayoutId } from '../../utils/slideDesign'
   import { startSlideShow } from '../../utils/slideShow'
+  import { exportDeckToPptx } from '../../utils/pptxExport'
 
   interface Props {
     editor: Editor
@@ -254,6 +255,14 @@
         onclick={() => startSlideShow(editor, editorId, 'current')}
       >
         <i class="ph-light ph-presentation"></i>
+      </button>
+      <button
+        class="tool"
+        data-action="export-pptx"
+        title={$_('Export to PowerPoint (.pptx)')}
+        onclick={() => exportDeckToPptx(editor, editorId)}
+      >
+        <i class="ph-light ph-export"></i>
       </button>
     </div>
     <div class="tool-group">

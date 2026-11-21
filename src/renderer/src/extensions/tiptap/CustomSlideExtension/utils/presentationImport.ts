@@ -60,6 +60,8 @@ export type DynadocElement = {
   stroke?: string | null
   strokeWidth?: number | null
   animation?: Record<string, any> | null
+  /** Placeholder role (title, subtitle, body) when known. */
+  role?: string
 }
 
 const toNumber = (value: any, fallback: number) => {
@@ -239,11 +241,29 @@ const resolveAssetPath = (basePath: string | undefined, fileRef: string | undefi
   return nodeApi.path.join(basePath, fileRef)
 }
 
+// Images parsed straight from a .pptx arrive as data: URIs.
+const writeDataUriMedia = async (
+  dataUri: string,
+  resolveAsset: (fileName: string, assetType: string) => Promise<string>
+): Promise<string> => {
+  const match = dataUri.match(/^data:([^;,]+)?(;base64)?,(.*)$/s)
+  if (!match) return ''
+  const ext = `.${(match[1] || 'image/png').split('/')[1].replace('jpeg', 'jpg').replace(/\+.*$/, '')}`
+  const bytes = match[2]
+    ? Uint8Array.from(atob(match[3]), (c) => c.charCodeAt(0))
+    : new TextEncoder().encode(decodeURIComponent(match[3]))
+  const fileName = `Slide Media ${Date.now()}-${Math.floor(Math.random() * 1000)}${ext}`
+  const targetPath = await resolveAsset(fileName, resolveMediaAssetType(ext))
+  await writeFileEnsuringDirAsync(targetPath, bytes)
+  return targetPath
+}
+
 const copyMediaToSlides = async (
   sourcePath: string,
   resolveAsset: (fileName: string, assetType: string) => Promise<string>
 ) => {
   if (!sourcePath) return ''
+  if (sourcePath.startsWith('data:')) return writeDataUriMedia(sourcePath, resolveAsset)
   if (!(await nodeApi.fsPromises.exists(sourcePath))) return sourcePath
   const ext = nodeApi.path.extname(sourcePath) || '.png'
   const assetType = resolveMediaAssetType(ext)
@@ -327,7 +347,9 @@ const createSlideSnapshotFromPresentation = async (
     const name = element.name || (isImage ? 'Image' : shapeType === ShapeType.Text ? 'Text' : 'Shape')
     const resolvedSrc = isImage
       ? await copyMediaToSlides(
-          resolveAssetPath(presentation.assetsBasePath, element.src),
+          element.src?.startsWith('data:')
+            ? element.src
+            : resolveAssetPath(presentation.assetsBasePath, element.src),
           resolveAsset
         )
       : element.src
@@ -349,7 +371,8 @@ const createSlideSnapshotFromPresentation = async (
       stroke: element.stroke ?? undefined,
       strokeWidth: typeof element.strokeWidth === 'number' ? element.strokeWidth : undefined,
       animation: element.animation ?? undefined,
-      src: resolvedSrc ?? undefined
+      src: resolvedSrc ?? undefined,
+      ...(element.role ? { role: element.role } : {})
     }
 
     shapes.set(id, shape)
@@ -440,6 +463,27 @@ export async function convertPresentationJsonToSlidesHtml(
 ) {
   const raw = await nodeApi.fsPromises.readFile(presentationPath, 'utf-8')
   const presentation: DynadocPresentation = JSON.parse(raw)
+  return convertPresentationToSlidesHtml(
+    presentation,
+    tempDir,
+    mainFilePath,
+    resolveAssetPath,
+    slideAssetType
+  )
+}
+
+/** Writes a presentation's slide files and returns the deck's HTML file. */
+export async function convertPresentationToSlidesHtml(
+  presentation: DynadocPresentation,
+  tempDir: string,
+  mainFilePath: string,
+  resolveAssetPath: (
+    assetType: string,
+    mainFilePath?: string,
+    fileName?: string
+  ) => Promise<{ filePath: string } | null>,
+  slideAssetType: string
+): Promise<string> {
   const slides = presentation.slides ?? []
   const pageWidth = toNumber(presentation.widthPx, 1920)
   const pageHeight = toNumber(presentation.heightPx, 1080)
@@ -473,7 +517,7 @@ export async function convertPresentationJsonToSlidesHtml(
   const html = slidePaths
     .map((src, index) => {
       const slideId = (slides[index] as any)?.id || uuidv4()
-      return `<${CustomSlideExtensionProps.tagName} ${CustomSlideExtensionProps.parentFilePath}="${mainFilePath}" ${CustomSlideExtensionProps.tagAttributeSrc}="${src}" id="${slideId}"></${CustomSlideExtensionProps.tagName}>`
+      return `<${CustomSlideExtensionProps.tagName} ${CustomSlideExtensionProps.parentFilePath}="${mainFilePath}" ${CustomSlideExtensionProps.tagAttributeSrc}="${src}" id="${slideId}" slideWidth="${pageWidth}" slideHeight="${pageHeight}"></${CustomSlideExtensionProps.tagName}>`
     })
     .join('\n')
 
@@ -498,6 +542,9 @@ export async function convertPresentationJsonToSlidesHtml(
     pageWidth,
     pageHeight,
     pageKind: 'slide',
+    // Kept by DocumentInfo when the info is saved again (pageKind is not):
+    // it is what opens the document as a deck, with its sorter.
+    contentType: 'slide',
     sourceType: Utils.OFFICE_EXTENSIONS_FORMAT.powerpoint,
     pageUnit: 'px',
     slideCount: slides.length,

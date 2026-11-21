@@ -81,6 +81,8 @@ export interface SlideDeckApi {
   applyDeckTheme(editor: unknown, themeId: string): Promise<unknown>
   /** Set by utils/slideShow.ts once loaded. */
   startSlideShow?(editor: unknown, editorId: string, from: 'start' | 'current'): Promise<unknown>
+  /** Set by utils/pptxExport.ts once loaded. */
+  exportPptx?(editor: unknown, editorId: string, outputPath?: string): Promise<string | null>
 }
 let _slideDeckApi: SlideDeckApi | null = null
 export const registerSlideDeckApi = (api: SlideDeckApi): void => {

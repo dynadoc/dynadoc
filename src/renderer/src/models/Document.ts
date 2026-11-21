@@ -3495,7 +3495,9 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
               documentPath,
               tempDir,
               // tempDir,
-              tempDocumentFilePath,
+              // The imported document is tempDir itself (see isOfficeDoc
+              // below): its index.html, index.*.json and assets/ go there.
+              nodeApi.path.join(tempDir, Utils.MAIN_DOCUMENT_FILE_NAME),
               DocumentModel.getAssetFilePathFromDocument,
               DocumentModel.AssetType.SLIDE
             )
