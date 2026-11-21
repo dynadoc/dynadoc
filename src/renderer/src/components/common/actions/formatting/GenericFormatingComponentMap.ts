@@ -2750,20 +2750,20 @@ export const GenericFormattingComponentMap: Record<string, GenericFormattingComp
       __selectDataProps: {
         __items: [
           {
-            __label: _('Title Slide'),
+            __label: _('Title'),
             __onClick: () => GenericFormatingEditorCommands.setSlideLayout('title')
           },
           {
-            __label: _('Subtitle'),
-            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('subtitle')
+            __label: _('Title and content'),
+            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('title-content')
           },
           {
-            __label: _('Title and Content'),
-            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('body')
+            __label: _('Two columns'),
+            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('two-column')
           },
           {
-            __label: _('Section Header'),
-            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('section')
+            __label: _('Blank'),
+            __onClick: () => GenericFormatingEditorCommands.setSlideLayout('blank')
           }
         ]
       }

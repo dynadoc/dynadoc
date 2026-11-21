@@ -42,8 +42,9 @@
     "test:smoke:preload": "node tests/smoke/preload-bridge.test.mjs",
     "test:smoke:fs-policy": "node tests/smoke/fs-path-policy.test.mjs",
     "test:smoke:asset-protocol": "node tests/smoke/asset-protocol.test.mjs",
+    "test:smoke:slides": "node tests/smoke/slides.test.mjs",
     "test:security:crypto": "node tests/security/chunked-crypto.test.mjs",
-    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:security:crypto",
+    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:slides && npm run test:security:crypto",
     "check:file-urls": "node scripts/find-file-url-sites.mjs",
     "ci:check": "npm run check:cycles && npm run typecheck",
     "prepare": "husky"

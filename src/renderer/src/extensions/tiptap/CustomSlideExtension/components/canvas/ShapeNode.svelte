@@ -175,7 +175,7 @@
   }
 
   function showTransformer() {
-    if (__locked || !_group || !_layer) return
+    if (__locked || !_group || !__layer) return
     if (!_transformer) {
       _transformer = new Konva.Transformer({
         enabledAnchors: [
@@ -194,16 +194,16 @@
           return newBox
         }
       })
-      _layer.add(_transformer)
+      __layer.add(_transformer)
     }
     _transformer.nodes([_group])
-    _layer.batchDraw()
+    __layer.batchDraw()
   }
 
   function hideTransformer() {
     if (_transformer) {
       _transformer.nodes([])
-      _layer?.batchDraw()
+      __layer?.batchDraw()
     }
   }
 
@@ -325,6 +325,6 @@
     _transformer?.destroy()
     _transformer = null
     _group?.destroy()
-    _nodeMap?.delete(__shape.id)
+    __nodeMap?.delete(__shape.id)
   })
 </script>

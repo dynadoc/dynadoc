@@ -60,3 +60,28 @@
 //     },
 // }
 
+import { writable } from 'svelte/store'
+
+/** Id of the slide the deck UI works on (thumbnail selection, toolbar, notes). */
+export const _$_currentSlideId = writable<string | null>(null)
+
+// The deck commands (utils/slideDeckCommands.ts) register here when a
+// presentation is open, so the ribbon reaches them without importing them
+// (which would close an import cycle through the editor stores).
+export interface SlideDeckApi {
+  getActiveDeck(): {
+    editor: unknown
+    editorId: string
+    index: number
+    current: { id: string }
+  } | null
+  addSlide(editor: unknown, editorId: string, layout: string, afterIndex?: number): Promise<unknown>
+  duplicateSlide(editor: unknown, editorId: string, id: string): Promise<unknown>
+  setSlideLayout(slide: unknown, layout: string): Promise<unknown>
+  applyDeckTheme(editor: unknown, themeId: string): Promise<unknown>
+}
+let _slideDeckApi: SlideDeckApi | null = null
+export const registerSlideDeckApi = (api: SlideDeckApi): void => {
+  _slideDeckApi = api
+}
+export const getSlideDeckApi = (): SlideDeckApi | null => _slideDeckApi

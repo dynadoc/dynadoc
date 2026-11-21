@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { v4 as uuidv4 } from 'uuid'
 import { DocumentModel } from '../models/Document'
-import { writeFileEnsuringDir } from './documentFileUtils'
+import { writeFileEnsuringDir, writeFileEnsuringDirAsync } from './documentFileUtils'
 import { buildCollabDocId, resolveShareContext } from './collabUtils'
 import { fetchCollabToken } from '../services/collab/tokenService'
 
@@ -22,6 +22,8 @@ import { get } from 'svelte/store'
 const t = (key: string) => get(base_)(key)
 
 const COMPACT_AFTER = 50
+// Origin of the updates replayed from the file: they are on disk already.
+const PERSISTED_ORIGIN = Symbol('canvas-persisted')
 
 let presentationUpdateHandler: (() => void) | null = null
 
@@ -221,9 +223,12 @@ export async function createCanvas(
     let persisted = { snapshot: null, updates: [] as string[] }
     let provider: HocuspocusProvider | null = null
     let loaded = false
+    let loading: Promise<void> | null = null
 
-    const loadPersisted = async () => {
-        if (loaded) return
+    // Every caller waits for the same load: a second caller returning early
+    // saw an empty doc and could seed default content over the real one.
+    const loadPersisted = (): Promise<void> => (loading ??= loadPersistedOnce())
+    const loadPersistedOnce = async (): Promise<void> => {
         loaded = true
 
         try {
@@ -231,6 +236,7 @@ export async function createCanvas(
             if (exists) {
                 const raw = await readTextFile(canvasPath!)
                 persisted = JSON.parse(raw || '{"snapshot":null,"updates":[]}')
+                if (!Array.isArray(persisted.updates)) persisted.updates = []
             } else if (canvasPath) {
                 // Don't eagerly overwrite on web until we have a real existence answer.
                 // fileExists() already uses async APIs first when available.
@@ -247,7 +253,7 @@ export async function createCanvas(
         console.log('onSlideNewlyCreated snapshot', { persisted }, persisted.snapshot)
 
         if (persisted.snapshot) {
-            Y.applyUpdate(ydoc, deserializeUpdate(persisted.snapshot))
+            Y.applyUpdate(ydoc, deserializeUpdate(persisted.snapshot), PERSISTED_ORIGIN)
         }
 
         if (persisted.updates.length) {
@@ -257,7 +263,7 @@ export async function createCanvas(
         const applyChunk = (start: number) => {
             const chunk = persisted.updates.slice(start, start + loadOptions.updateChunkSize)
             for (const u of chunk) {
-                Y.applyUpdate(ydoc, deserializeUpdate(u))
+                Y.applyUpdate(ydoc, deserializeUpdate(u), PERSISTED_ORIGIN)
             }
             const next = start + loadOptions.updateChunkSize
             if (next >= persisted.updates.length) return
@@ -270,7 +276,7 @@ export async function createCanvas(
             for (let i = 0; i < persisted.updates.length; i += loadOptions.updateChunkSize) {
                 const chunk = persisted.updates.slice(i, i + loadOptions.updateChunkSize)
                 for (const u of chunk) {
-                    Y.applyUpdate(ydoc, deserializeUpdate(u))
+                    Y.applyUpdate(ydoc, deserializeUpdate(u), PERSISTED_ORIGIN)
                 }
                 if (i + loadOptions.updateChunkSize < persisted.updates.length) {
                     await delay(loadOptions.yieldMs)
@@ -324,7 +330,23 @@ export async function createCanvas(
     // ------------------------------------
     // 4️⃣ Persistence (NO DROPPED UPDATES)
     // ------------------------------------
-    ydoc.on('update', update => {
+    // One write at a time, coalesced: overlapping writes of the whole file
+    // used to interleave and leave it unparseable, which lost the slide.
+    let writeChain: Promise<void> = Promise.resolve()
+    let writeQueued = false
+    const persist = (): void => {
+        if (!canvasPath || writeQueued) return
+        writeQueued = true
+        writeChain = writeChain
+            .then(() => {
+                writeQueued = false
+                return writeFileEnsuringDirAsync(canvasPath!, JSON.stringify(persisted), 'utf-8')
+            })
+            .catch((err) => console.warn('Failed to save canvas data', err))
+    }
+
+    ydoc.on('update', (update, origin) => {
+        if (origin === PERSISTED_ORIGIN) return
         persisted.updates.push(serializeUpdate(update))
 
         // Compact periodically
@@ -333,13 +355,7 @@ export async function createCanvas(
             persisted.updates = []
         }
 
-        if (canvasPath) {
-            writeFileEnsuringDir(
-                canvasPath,
-                JSON.stringify(persisted),
-                'utf-8'
-            )
-        }
+        persist()
         // console.log("emitPresentationUpdate persisted", { persisted })
 
         // Sync presentation slideshow

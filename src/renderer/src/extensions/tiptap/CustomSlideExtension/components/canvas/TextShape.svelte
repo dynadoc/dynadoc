@@ -624,6 +624,7 @@
     console.log("Entering edit mode..."); // For debugging
 
     showTransformer()
+    __onSelect?.(__shape.id)
     _isEditing = true
     _group.draggable(false)
     _editorEl.style.pointerEvents = 'auto'
@@ -649,7 +650,8 @@
     // _$_wysiwygEditorsList.unsetActive(__shape.id)
     _isEditing = false
     _group.draggable(false)
-    _editorEl.style.pointerEvents = 'auto'
+    // Not editing: only the text itself takes the pointer (see .text below)
+    _editorEl.style.pointerEvents = 'none'
     _editor.setEditable(false)
   }
 
@@ -784,10 +786,18 @@
     // smartSnapping(__stage, __layer)
 
     const extensions = [
+      // A text box has no trailing empty paragraph, and shows its
+      // placeholder ("Click to add title") while not being edited.
       ...EditorExtensionHelpers.getMainWysiwygExtensions(
         _editorEl,
         null,
         __shape.content?.placeholder
+      ).map((extension) =>
+        extension?.name === 'starterKit'
+          ? extension.configure({ trailingNode: false })
+          : extension?.name === 'placeholder'
+            ? extension.configure({ showOnlyWhenEditable: false })
+            : extension
       ),
       CustomAnimationExtension
     ]
@@ -843,8 +853,11 @@
     })
 
     _editor.setEditable(false)
-    _editorEl.style.pointerEvents = 'auto'
+    _editorEl.style.pointerEvents = 'none'
     syncEditorPosition(true)
+    // Ribbon commands (bold, colour, size...) reach a selected text box
+    // through this registration; onDestroy unregisters it.
+    _$_wysiwygEditorsList.register(__shape.id, _editor, '', _editorEl, null, null, false)
 
     wireBlockInteractions()
 
@@ -869,7 +882,14 @@
     __layer?.batchDraw()
 
     // 3️⃣ Optional: unregister editor
-    _$_wysiwygEditorsList.unregister?.(__shape.id)
+    // Deferred: this runs while ProseMirror tears the slide's node view down,
+    // and a synchronous store update there re-enters the editor view.
+    const shapeId = __shape.id
+    const editor = _editor
+    queueMicrotask(() => {
+      _$_wysiwygEditorsList.unregister?.(shapeId)
+      editor?.destroy()
+    })
   })
 </script>
 
@@ -883,12 +903,60 @@
     height: {__shape.h}px;
   "
 > -->
-<div bind:this={_editorEl} class="text"></div>
+<div bind:this={_editorEl} class="text" data-role={__shape?.role ?? 'body'}></div>
 
 <style>
   .text {
     position: absolute;
     pointer-events: auto;
     transform-origin: top left;
+    /* Theme and placeholder sizes; slideContent.ts draws the same for thumbnails and the show. */
+    font-family: var(--slide-body-font, inherit);
+    color: var(--slide-text-color, inherit);
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .text[data-role='title'] {
+    font-family: var(--slide-title-font, inherit);
+    font-size: 44px;
+  }
+  .text[data-role='subtitle'] {
+    font-size: 26px;
+  }
+  /* Outside editing the box lets clicks on its empty area through to the
+     canvas, so shapes under a large text box can still be picked. */
+  .text :global(.ProseMirror > *) {
+    pointer-events: auto;
+  }
+  .text :global(.ProseMirror) {
+    outline: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .text :global(h1),
+  .text :global(h2),
+  .text :global(h3),
+  .text :global(p) {
+    margin: 0 0 0.3em;
+    line-height: 1.2;
+    font-size: inherit;
+    color: inherit;
+    font-family: inherit;
+  }
+  .text :global(h1),
+  .text :global(h2),
+  .text :global(h3) {
+    font-weight: 700;
+  }
+  .text :global(ul) {
+    margin: 0;
+    padding-left: 1.2em;
+    list-style: disc;
+  }
+  .text :global(ol) {
+    margin: 0;
+    padding-left: 1.2em;
+    list-style: decimal;
   }
 </style>

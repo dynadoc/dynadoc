@@ -2,6 +2,8 @@
   import { get } from 'svelte/store'
   import { _ as base_ } from 'svelte-i18n'
   import { GenericFormatingEditorCommands, GenericFormattingComponentMap } from '../../../../common/actions/formatting'
+  import { _$_activeDocKind } from '../../../../../stores/docKind.store'
+  import { SLIDE_THEMES } from '../../../../../extensions/tiptap/CustomSlideExtension/utils/slideDesign'
 
   let { compact = false } = $props()
 
@@ -41,11 +43,25 @@
     }
   ]
 
+  // A presentation shows its slide themes (background, fonts, accent) instead.
+  const slideThemes = SLIDE_THEMES.map((theme) => ({
+    id: theme.id,
+    label: theme.name,
+    swatches: [theme.accent, theme.accent, theme.background]
+  }))
+  const isDeck = $derived($_$_activeDocKind === 'slides')
+  const shownThemes = $derived(isDeck ? slideThemes : themes)
+
   const previewTheme = (id?: string) => {
+    if (isDeck) return
     GenericFormatingEditorCommands.previewDocumentTheme(id)
   }
 
   const applyTheme = (id: string) => {
+    if (isDeck) {
+      GenericFormatingEditorCommands.setSlideTheme(id)
+      return
+    }
     GenericFormatingEditorCommands.setDocumentTheme(id)
   }
 
@@ -91,7 +107,7 @@
   <div class="editor-ribbon">
     <div class="editor-section editor-themes">
       <div class="editor-theme-strip">
-        {#each themes as theme (theme.id)}
+        {#each shownThemes as theme (theme.id)}
           <button
             class="editor-theme-card"
             onmouseenter={() => previewTheme(theme.id)}

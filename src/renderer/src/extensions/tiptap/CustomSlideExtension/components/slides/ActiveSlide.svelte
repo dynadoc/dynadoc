@@ -16,6 +16,8 @@
   import { authStore } from '../../../../../stores/auth.store'
   import { resolveLocalCollabPresence } from '../../../../../utils/collabPresence'
   import { buildCollabDocId, resolveShareContext } from '../../../../../utils/collabUtils'
+  import { v4 as uuidv4 } from 'uuid'
+  import { seedSlideDoc } from '../../utils/slideDesign'
 
   let {
     __slideId,
@@ -315,9 +317,12 @@
     if (_defaultCreated) return
     if (!_slide?.isLoaded || !_commands) return
     if (_slide.shapes?.size > 0) return
+    // A slide given a layout (even Blank) is not a new, empty file.
+    if (_slide.meta?.get('layout')) return
     if (_slide.newlyCreated || _slide.shapes?.size === 0) {
       _defaultCreated = true
-      _commands.createDefaultCanvasContent(stageW, stageH)
+      // A brand-new deck opens on a title slide.
+      seedSlideDoc(_slide.ydoc, 'title', null, uuidv4, stageW, stageH)
     }
   }
 </script>

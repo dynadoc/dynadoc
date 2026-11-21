@@ -13,6 +13,7 @@
   import { ShapeType, type Shape } from '../../../../../utils/canvas.types'
   import EditorExtensionHelpers from '../../../../../utils/EditorExtensionHelpers'
   import { GenericFormatingEditorCommands } from '../../../../../components/common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
+  import { getSlideTheme, resolveSlideBackground } from '../../utils/slideDesign'
 
   // export let __slideId
   // export let __slidePath
@@ -83,6 +84,7 @@
   const _slideWidth = $derived(__slideWidth || __maxPageWidth || DEFAULT_SLIDE_WIDTH)
   const _slideHeight = $derived(__slideHeight || DEFAULT_SLIDE_HEIGHT)
   let _metaBackground: string | null = $state(null)
+  let _theme = $state(getSlideTheme(null))
   let _masterElements: Shape[] = $state([])
   const _slideBackground = $derived(__slideBackground || _metaBackground || DEFAULT_SLIDE_BG)
   const _layout = $derived(__layout || 'inline')
@@ -181,11 +183,8 @@
     const master = __meta.get('master')
     _masterElements = mapMasterElements(master?.elements ?? [])
 
-    _metaBackground =
-      master?.background ||
-      __meta.get('background') ||
-      _metaBackground ||
-      DEFAULT_SLIDE_BG
+    _theme = getSlideTheme(__meta.get('theme'))
+    _metaBackground = resolveSlideBackground(__meta) || DEFAULT_SLIDE_BG
   }
 
   const splitGradientParts = (input: string) => {
@@ -609,7 +608,9 @@
   class="slide-absolute node-view-{CustomSlideExtensionProps.name}-content node-view-content {_layoutIsOverlay
     ? 'absolute'
     : ''} w-[{_slideWidth}px] h-[{_slideHeight}px] top-[{_positionTop}px] left-[{_positionLeft}px]"
-  style={`background: ${typeof _slideBackground === 'string' ? _slideBackground : DEFAULT_SLIDE_BG};`}
+  style={`background: ${typeof _slideBackground === 'string' ? _slideBackground : DEFAULT_SLIDE_BG};
+  --slide-title-font: '${_theme.titleFont}'; --slide-body-font: '${_theme.bodyFont}';
+  --slide-text-color: ${_theme.textColor};`}
 >
   <!-- {__maxPageWidth},
   {__maxPageHeight},

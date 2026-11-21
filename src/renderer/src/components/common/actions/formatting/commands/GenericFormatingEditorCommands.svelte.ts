@@ -9,6 +9,10 @@ import { listMarkerSelectionKey } from '../../../../../extensions/tiptap/CustomL
 import { _$_documentEditorsList, _$_wysiwygEditorsList } from '../../../../../stores/editor.store'
 import { _$_canvasCommands } from '../../../../../stores/canvas.store'
 import { CustomSlideExtensionProps } from '../../../../../extensions/tiptap/CustomSlideExtension/utils/common.utils'
+import {
+  getSlideDeckApi,
+  type SlideDeckApi
+} from '../../../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
 import { CustomDesignExtensionProps } from '../../../../../extensions/tiptap/CustomDesignExtension/utils/common.utils'
 import { CustomSpreadsheetExtensionProps } from '../../../../../extensions/tiptap/CustomSpreadsheetExtension/utils/common.utils'
 import type { ChartType } from '../../../../../extensions/tiptap/CustomChartExtension/utils/chartDataBridge'
@@ -1871,6 +1875,23 @@ function findNextEntry(entries: ReviewNodeEntry[], fromPos: number) {
 function findPreviousEntry(entries: ReviewNodeEntry[], fromPos: number) {
   const prev = [...entries].reverse().find((entry) => entry.pos < fromPos)
   return prev ?? entries[entries.length - 1]
+}
+
+/**
+ * Runs `fn` with the slide-deck commands when the active editor is a
+ * presentation; false otherwise.
+ */
+async function runOnSlideDeck(
+  fn: (
+    deck: SlideDeckApi,
+    active: NonNullable<ReturnType<SlideDeckApi['getActiveDeck']>>
+  ) => unknown
+): Promise<boolean> {
+  const deck = getSlideDeckApi()
+  const active = deck?.getActiveDeck()
+  if (!active) return false
+  await fn(deck, active)
+  return true
 }
 
 function getActiveSlideNodeviewId(): string | null {
@@ -4380,7 +4401,14 @@ const EditorFormattingCommands = {
     })
     return true
   },
-  setSlideLayout: (layout: string) => {
+  setSlideLayout: async (layout: string) => {
+    // Presentations: the deck layouts (Title, Title + content, Two columns, Blank).
+    if (
+      ['title', 'title-content', 'two-column', 'blank'].includes(layout) &&
+      (await runOnSlideDeck((deck, active) => deck.setSlideLayout(active.current, layout)))
+    ) {
+      return true
+    }
     switch (layout) {
       case 'title':
         return GenericFormatingEditorCommands.slidePresetTitle()
@@ -5133,7 +5161,16 @@ const EditorFormattingCommands = {
   },
   insertFormField: () => executeEditorCommand('insertFormField'),
   insertMonacoCodeBlock: () => executeEditorCommand('insertMonacoCodeBlock', {}),
-  insertSlide: (attrs?) => executeEditorCommand('insertSlide', attrs),
+  insertSlide: async (attrs?) =>
+    (await runOnSlideDeck((deck, active) =>
+      deck.addSlide(active.editor, active.editorId, 'title-content', active.index)
+    )) || executeEditorCommand('insertSlide', attrs),
+  duplicateSlide: () =>
+    runOnSlideDeck((deck, active) =>
+      deck.duplicateSlide(active.editor, active.editorId, active.current.id)
+    ),
+  setSlideTheme: (themeId: string) =>
+    runOnSlideDeck((deck, active) => deck.applyDeckTheme(active.editor, themeId)),
   insertLatexProject: () => executeEditorCommand('insertLatexProject'),
   insertMermaid: () => executeEditorCommand('insertMermaid'),
   insertMermaidFromFile: async () => {

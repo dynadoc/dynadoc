@@ -6,7 +6,7 @@ import { SvelteNodeViewRenderer } from 'svelte-tiptap'
 import { CustomSlideExtensionProps } from './utils/common.utils'
 import EditorHelpers from '../../../utils/EditorHelpers'
 import { createSlide } from './collab/collab'
-import { createCanvasCommands } from '../../../commands/canvasCommands'
+import { seedSlideDoc } from './utils/slideDesign'
 import { ensureNodeViewSrc } from '../utils/utils'
 // import { getSlideFilePath } from './utils/utils'
 import { DocumentModel } from '../../../models/Document'
@@ -237,10 +237,7 @@ export const CustomSlideExtension = Node.create({
                                 const canvas = await createSlide(id, src)
                                 await canvas.load?.()
                                 if (canvas?.shapes?.size === 0) {
-                                    const cmds = createCanvasCommands(canvas.shapes, canvas.texts, canvas.meta)
-                                    const w = newAttrs?.slideWidth || this.options.maxPageWidth || 1280
-                                    const h = newAttrs?.slideHeight || this.options.maxPageHeight || 720
-                                    cmds.createDefaultCanvasContent(w, h)
+                                    seedSlideDoc(canvas.ydoc, 'title-content', null, uuidv4)
                                 }
                                 canvas.release?.()
                             } catch (err) {
