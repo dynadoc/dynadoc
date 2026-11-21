@@ -67,7 +67,8 @@ const {
   findVarTrigger,
   plainTextValue,
   displayVariableValue,
-  SHEET_REF_LOADING
+  SHEET_REF_LOADING,
+  queryReplaceRange
 } = await import(`file://${compiled}`)
 
 const vars = { client: 'ACME SARL', taux: 0.2, tax: 5, taxe: 7, qty: '3', quote: 'say "hi"' }
@@ -241,6 +242,29 @@ check(
   [findVarTrigger('to @my.var-1', false), findVarTrigger('a@b', false)],
   [{ query: 'my.var-1', atIndex: 3 }, null]
 )
+
+// What a picked variable replaces: the `@query` as last typed, wherever the
+// caret went since. `=@cli` with the caret clicked back to 0 must not give
+// `=@client@cli`, nor `@clienti` with the caret moved to `@cl|i`.
+{
+  const pick = (text, triggerIndex, queryEnd, name) => {
+    const { start, end } = queryReplaceRange(triggerIndex, queryEnd, text.length)
+    return text.slice(0, start) + `@${name}` + text.slice(end)
+  }
+  check(
+    'the typed query is replaced, not the text up to the caret',
+    [pick('=@cli', 1, 5, 'client'), pick('Dear @cli, hi', 5, 9, 'client')],
+    ['=@client', 'Dear @client, hi']
+  )
+  check(
+    'a range past the end of the text is clamped',
+    [queryReplaceRange(1, 9, 4), queryReplaceRange(6, 8, 4)],
+    [
+      { start: 1, end: 4 },
+      { start: 4, end: 4 }
+    ]
+  )
+}
 
 // --- spreadsheet refs: a range sums --------------------------------------
 check('single cell', isSingleCellRef('C2'), true)

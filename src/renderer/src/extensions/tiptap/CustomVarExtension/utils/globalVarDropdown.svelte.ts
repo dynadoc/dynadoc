@@ -6,7 +6,7 @@ import { listVariables } from '../stores/variableManipulator'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { buildVarDropdownItems } from './variableDropdown.utils'
 import { formatVariableInsertText } from './variableInsert.utils'
-import { findVarTrigger, isCellVarName } from './sheetVariables.utils'
+import { findVarTrigger, isCellVarName, queryReplaceRange } from './sheetVariables.utils'
 
 type DropdownItem = {
   name: string
@@ -25,6 +25,7 @@ type DropdownState = {
   selectItem: (item: DropdownItem) => void
   onAddVariable: (variable: { name: string }) => void
   suggestionsFirst: boolean
+  listboxId: string
 }
 
 type AllowedElement = HTMLInputElement | HTMLTextAreaElement | HTMLElement
@@ -191,6 +192,8 @@ const isCompactScreen = (): boolean =>
   typeof window !== 'undefined' &&
   (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 640)
 
+const LISTBOX_ID = 'dd-var-listbox-sheet'
+
 const isInputField = (el: AllowedElement): el is HTMLInputElement | HTMLTextAreaElement =>
   el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
 
@@ -215,8 +218,26 @@ export function initGlobalVarDropdown() {
     position: null,
     selectItem: () => undefined,
     onAddVariable: () => undefined,
-    suggestionsFirst: false
+    suggestionsFirst: false,
+    listboxId: LISTBOX_ID
   })
+
+  // The field announces the list and its highlighted entry (the caret stays
+  // in the field, so the list is followed through aria-activedescendant).
+  const ARIA_ATTRS = ['aria-controls', 'aria-expanded', 'aria-activedescendant']
+  const syncAria = () => {
+    if (!activeElement) return
+    activeElement.setAttribute('aria-controls', LISTBOX_ID)
+    activeElement.setAttribute('aria-expanded', 'true')
+    if (state.items.length) {
+      activeElement.setAttribute(
+        'aria-activedescendant',
+        `${LISTBOX_ID}-option-${state.activeIndex}`
+      )
+    } else {
+      activeElement.removeAttribute('aria-activedescendant')
+    }
+  }
 
   const updatePosition = async () => {
     if (!isOpen || !activeElement || !container) return
@@ -249,8 +270,9 @@ export function initGlobalVarDropdown() {
           padding: 8,
           apply({ availableWidth, availableHeight, elements }) {
             Object.assign(elements.floating.style, {
-              maxWidth: `${Math.max(200, availableWidth)}px`,
-              maxHeight: `${Math.max(160, availableHeight)}px`,
+              // Never more than what is visible, however little: it scrolls.
+              maxWidth: `${Math.max(0, availableWidth)}px`,
+              maxHeight: `${Math.max(0, availableHeight)}px`,
               overflowY: 'auto'
             })
           }
@@ -262,6 +284,7 @@ export function initGlobalVarDropdown() {
   }
 
   const closeDropdown = () => {
+    ARIA_ATTRS.forEach((name) => activeElement?.removeAttribute(name))
     if (component) unmount(component)
     component = null
     container?.remove()
@@ -281,16 +304,17 @@ export function initGlobalVarDropdown() {
     const el = activeElement
     if (!el) return
     const insertText = formatVariableInsertText(item, getInsertionTemplate(el))
-    // The caret may have left the field for the dropdown's own fields: the
-    // field gets it back, and the end of the query is the one last typed.
-    const hadFocus = fieldHasFocus(el)
-    if (!hadFocus) el.focus({ preventScroll: true })
+    // The caret may have left the field (for the dropdown's own fields) or
+    // moved in it (a click at the start of the cell): the field gets it back,
+    // and what is replaced is the `@query` as last typed, not up to the caret.
+    if (!fieldHasFocus(el)) el.focus({ preventScroll: true })
     if (isInputField(el)) {
-      const end = hadFocus ? (el.selectionStart ?? queryEnd) : queryEnd
-      replaceInputRange(el, triggerIndex, Math.max(end, triggerIndex), insertText)
+      const { start, end } = queryReplaceRange(triggerIndex, queryEnd, el.value.length)
+      replaceInputRange(el, start, end, insertText)
     } else {
-      const end = hadFocus ? getContentEditableTextBeforeCaret(el).caret : queryEnd
-      replaceContentEditableRange(el, triggerIndex, Math.max(end, triggerIndex), insertText)
+      const length = getTextNodes(el).reduce((sum, node) => sum + (node.nodeValue?.length || 0), 0)
+      const { start, end } = queryReplaceRange(triggerIndex, queryEnd, length)
+      replaceContentEditableRange(el, start, end, insertText)
     }
     closeDropdown()
   }
@@ -309,6 +333,7 @@ export function initGlobalVarDropdown() {
     }
     state.items = buildItems(state.query, template)
     state.activeIndex = 0
+    syncAria()
     el.focus({ preventScroll: true })
   }
 
@@ -332,6 +357,7 @@ export function initGlobalVarDropdown() {
       })
     }
     isOpen = true
+    syncAria()
     void updatePosition()
   }
 
@@ -343,6 +369,7 @@ export function initGlobalVarDropdown() {
     state.items = items
     state.activeIndex = Math.min(state.activeIndex, Math.max(items.length - 1, 0))
     state.query = query
+    syncAria()
     void updatePosition()
   }
 
@@ -357,6 +384,8 @@ export function initGlobalVarDropdown() {
       return
     }
 
+    // Another field: the first one's dropdown (and its aria state) goes.
+    if (isOpen && activeElement && activeElement !== el) closeDropdown()
     activeElement = el
     const before = isInputField(el)
       ? getInputTextBeforeCaret(el)
@@ -398,6 +427,7 @@ export function initGlobalVarDropdown() {
       event.preventDefault()
       event.stopPropagation()
       state.activeIndex = (state.activeIndex + 1) % Math.max(state.items.length, 1)
+      syncAria()
       return
     }
     if (event.key === 'ArrowUp') {
@@ -405,6 +435,7 @@ export function initGlobalVarDropdown() {
       event.stopPropagation()
       state.activeIndex =
         (state.activeIndex - 1 + Math.max(state.items.length, 1)) % Math.max(state.items.length, 1)
+      syncAria()
       return
     }
     if (event.key === 'Enter' || event.key === 'Tab') {

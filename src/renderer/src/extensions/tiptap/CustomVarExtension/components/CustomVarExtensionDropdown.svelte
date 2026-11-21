@@ -1,3 +1,7 @@
+<script module lang="ts">
+  let nextListboxId = 0
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte'
   import { _ } from 'svelte-i18n'
@@ -34,8 +38,12 @@
     handleEditRichText = () => {},
     // Phones: the list comes first, so it stays in view above the on-screen
     // keyboard; the form to create a variable follows it.
-    suggestionsFirst = false
+    suggestionsFirst = false,
+    // The list's id, for a field that points at it (aria-controls).
+    listboxId = `dd-var-listbox-${++nextListboxId}`
   } = $props()
+
+  const optionId = (index: number): string => `${listboxId}-option-${index}`
 
   let container = $state<HTMLElement>()
   let newVarName = $state('')
@@ -568,31 +576,50 @@
   </div>
 
   <div class="shrink-0 max-h-40 overflow-y-auto py-1" style:order={suggestionsFirst ? -1 : null}>
-    <div class="px-3 py-1 text-[9px] font-bold opacity-30 uppercase tracking-widest">
+    <div
+      id="{listboxId}-label"
+      class="px-3 py-1 text-[9px] font-bold opacity-30 uppercase tracking-widest"
+    >
       {$_('Suggestions')}
     </div>
     {#if items.length === 0}
       <div class="px-3 py-2 text-[10px] opacity-50">{$_('No matches')}</div>
     {/if}
-    {#each items as item, i}
-      <button
-        class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2 border-transparent"
-        class:bg-primary-10={i === activeIndex}
-        class:border-primary={i === activeIndex}
-        onmousedown={(e) => {
-          e.preventDefault()
-          selectItem(item)
-        }}
-      >
-        <i class="ph-light {TYPE_CONFIG[item.type]?.icon || 'ph-variable'} opacity-40"></i>
-        <span class="truncate flex-grow">{formatRefName(item.name, item.type)}</span>
-        {#if isAiItem(item)}
-          <span
-            class="ml-1 px-1.5 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em] bg-purple-500/20 text-purple-300 border border-purple-500/30"
-          >{$_('AI')}</span>
-        {/if}
-      </button>
-    {/each}
+    <div
+      id={listboxId}
+      role="listbox"
+      aria-labelledby="{listboxId}-label"
+      aria-activedescendant={items.length ? optionId(activeIndex) : undefined}
+    >
+      {#each items as item, i}
+        <!-- Picked on mousedown, so the field keeps its caret; on click too when
+             the click comes from the keyboard (Enter or Space on the option). -->
+        <button
+          type="button"
+          id={optionId(i)}
+          role="option"
+          aria-selected={i === activeIndex}
+          class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2 border-transparent"
+          class:bg-primary-10={i === activeIndex}
+          class:border-primary={i === activeIndex}
+          onmousedown={(e) => {
+            e.preventDefault()
+            selectItem(item)
+          }}
+          onclick={(e) => {
+            if (e.detail === 0) selectItem(item)
+          }}
+        >
+          <i class="ph-light {TYPE_CONFIG[item.type]?.icon || 'ph-variable'} opacity-40"></i>
+          <span class="truncate flex-grow">{formatRefName(item.name, item.type)}</span>
+          {#if isAiItem(item)}
+            <span
+              class="ml-1 px-1.5 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em] bg-purple-500/20 text-purple-300 border border-purple-500/30"
+            >{$_('AI')}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if recentHistory.length > 0}

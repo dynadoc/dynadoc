@@ -79,6 +79,21 @@ export function findVarTrigger(
   return { query, atIndex: textBefore.length - query.length - 1 }
 }
 
+/**
+ * The text a picked variable replaces: the `@query` as last typed, from its
+ * `@` to its end, whatever the caret did since (clicked back to the start of
+ * the cell, or into the middle of the name). Clamped to the field's text.
+ */
+export function queryReplaceRange(
+  triggerIndex: number,
+  queryEnd: number,
+  textLength: number
+): { start: number; end: number } {
+  const start = Math.max(0, Math.min(triggerIndex, textLength))
+  const end = Math.max(start, Math.min(queryEnd, textLength))
+  return { start, end }
+}
+
 /** A name that can be written as `@name` in a cell. */
 export function isCellVarName(name: unknown): boolean {
   return typeof name === 'string' && /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name)
