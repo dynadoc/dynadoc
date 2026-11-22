@@ -1,5 +1,6 @@
 import type { Variable } from '../stores/variableManipulator'
 import { getVariableDisplayValue } from './variableDisplay.utils'
+import { rankVariableMatches } from './variableMenu.utils'
 
 export type VarDropdownItem = {
   id?: string
@@ -14,10 +15,9 @@ export type VarDropdownItem = {
 }
 
 export function buildVarDropdownItems(vars: Variable[], query: string): VarDropdownItem[] {
-  const needle = (query || '').toLowerCase()
   // Spreadsheet pointers name a whole sheet file, not a value: inserting one
-  // showed its path. Cell refs are inserted from the Spreadsheet Reference box.
-  return (vars || [])
+  // showed its path. Cell refs are inserted from the spreadsheet cell view.
+  const items = (vars || [])
     .filter((v) => v.rawValue?.type !== 'spreadsheet')
     .map((v) => ({
       id: v.name,
@@ -30,15 +30,6 @@ export function buildVarDropdownItems(vars: Variable[], query: string): VarDropd
       displayValue: getVariableDisplayValue(v, { plainText: true }),
       source: v.rawValue?.source || 'user'
     }))
-    .filter((v) => {
-      if (!needle) return true
-      if (v.name?.toLowerCase().includes(needle)) return true
-      return v.aliases?.some((alias) => alias?.toLowerCase().includes(needle))
-    })
-    .sort((a, b) => {
-      const aRank = a.source === 'ai' ? 1 : 0
-      const bRank = b.source === 'ai' ? 1 : 0
-      if (aRank !== bRank) return aRank - bRank
-      return (a.displayName || a.name).localeCompare(b.displayName || b.name)
-    })
+  // What was typed starts the name (or an alias, or a word of the name).
+  return rankVariableMatches(items, query)
 }
