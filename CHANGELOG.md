@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/dynadoc/dynadoc/compare/v1.3.0...v1.3.1) (2026-11-22)
+
+
+### Fixes
+
+* **variables:** keep the sheet variable dropdown open while typing ([#88](https://github.com/dynadoc/dynadoc/issues/88)) ([60bb4ef](https://github.com/dynadoc/dynadoc/commit/60bb4efd45d3c27b9796c663797f99a19134c6b4))
+
 ## [1.3.0](https://github.com/dynadoc/dynadoc/compare/v1.2.0...v1.3.0) (2026-11-21)
 
 
