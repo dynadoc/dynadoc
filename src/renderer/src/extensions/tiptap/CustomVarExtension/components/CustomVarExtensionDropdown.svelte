@@ -29,6 +29,7 @@
   import {
     canCreateVariable,
     isCompactViewport,
+    isolateText,
     keyboardInset,
     moveActiveRow,
     scopeVisibility,
@@ -562,7 +563,9 @@
       {/if}
     </div>
     {#if mode === 'list'}
-      <div class="var-menu__filter">{$_('Filter: @{query}', { values: { query } })}</div>
+      <div class="var-menu__filter">
+        <bdi>{$_('Filter: @{query}', { values: { query: isolateText(query) } })}</bdi>
+      </div>
     {/if}
   {/if}
 
@@ -590,10 +593,10 @@
             onclick={pickOnKeyboardClick(i)}
           >
             <i class="var-menu__icon ph-light {TYPE_ICONS[item.type] || 'ph-brackets-curly'}"></i>
-            <span class="var-menu__name"
-              >@{parts.before}<mark>{parts.match}</mark>{parts.after}</span
+            <span class="var-menu__name" dir="ltr"
+              >@<bdi>{parts.before}<mark>{parts.match}</mark>{parts.after}</bdi></span
             >
-            <span class="var-menu__value">{itemValue(item)}</span>
+            <span class="var-menu__value"><bdi>{itemValue(item)}</bdi></span>
             {#if isAiItem(item)}
               <span class="var-menu__badge var-menu__badge--ai">{$_('AI')}</span>
             {/if}
@@ -617,9 +620,11 @@
 
       {#if !items.length}
         <div class="var-menu__empty">
-          {query
-            ? $_('No variable starts with "{query}"', { values: { query } })
-            : $_('No variables yet')}
+          <bdi>
+            {query
+              ? $_('No variable starts with "{query}"', { values: { query: isolateText(query) } })
+              : $_('No variables yet')}
+          </bdi>
         </div>
       {/if}
 
@@ -639,11 +644,11 @@
             onclick={pickOnKeyboardClick(createIndex)}
           >
             <i class="var-menu__icon var-menu__icon--create ph-bold ph-plus"></i>
-            <span>
+            <bdi>
               {typedName
-                ? $_('Create "@{name}"', { values: { name: typedName } })
+                ? $_('Create "@{name}"', { values: { name: isolateText(typedName) } })
                 : $_('New variable…')}
-            </span>
+            </bdi>
           </button>
         </div>
       {/if}
@@ -660,7 +665,7 @@
             onclick={pickOnKeyboardClick(sheetRefIndex)}
           >
             <i class="var-menu__icon var-menu__icon--sheet ph-light ph-function"></i>
-            <span>{$_('From a spreadsheet cell…')}</span>
+            <bdi>{$_('From a spreadsheet cell…')}</bdi>
           </button>
         </div>
       {/if}
@@ -685,7 +690,9 @@
             }}
           >
             <i class="var-menu__icon ph-light {TYPE_ICONS[hist.type] || 'ph-brackets-curly'}"></i>
-            <span class="var-menu__name">@{formatSpreadsheetRefName(hist.name) || hist.name}</span>
+            <span class="var-menu__name" dir="ltr"
+              >@<bdi>{formatSpreadsheetRefName(hist.name) || hist.name}</bdi></span
+            >
           </button>
         {/each}
       </div>
@@ -699,8 +706,8 @@
       }}
     >
       <div class="var-menu__form-title">
-        {editingOriginalName ? $_('Edit variable') : $_('New variable')}
-        {#if newVarName}<b>@{normalizeVariableName(newVarName)}</b>{/if}
+        <bdi>{editingOriginalName ? $_('Edit variable') : $_('New variable')}</bdi>
+        {#if newVarName}<b dir="ltr">@<bdi>{normalizeVariableName(newVarName)}</bdi></b>{/if}
       </div>
 
       <div class="var-menu__types" role="group" aria-label={$_('Type')}>
@@ -726,6 +733,7 @@
             id="{listboxId}-name"
             class="var-menu__input"
             type="text"
+            dir="auto"
             autocomplete="off"
             placeholder={$_('Variable name...')}
             bind:value={newVarName}
@@ -771,6 +779,7 @@
               id="{listboxId}-value"
               class="var-menu__input"
               type="text"
+              dir="auto"
               autocomplete="off"
               placeholder={selectedType === VAR_TYPE.ai ? $_('AI prompt...') : $_('Value...')}
               bind:value={newVarValue}
@@ -996,7 +1005,7 @@
     background: transparent;
     color: inherit;
     font: inherit;
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
   .var-menu__row--create {
@@ -1015,7 +1024,7 @@
     flex: none;
     width: 28px;
     height: 28px;
-    margin-right: 4px;
+    margin-inline-end: 4px;
     border: none;
     border-radius: 6px;
     background: transparent;
@@ -1052,10 +1061,19 @@
     background: color-mix(in srgb, #f59e0b 22%, transparent);
   }
 
+  /* `@name` reads left to right in any window; the name is isolated, so an
+     Arabic name keeps its own order. */
   .var-menu__name {
     flex: none;
     max-width: 50%;
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The value is isolated too: a long one loses its own end, not its start. */
+  .var-menu__value > bdi {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1066,14 +1084,14 @@
     text-decoration: underline;
     text-underline-offset: 2px;
   }
+  /* At the end of the row, whatever the direction of the value itself. */
   .var-menu__value {
     flex: 1;
     min-width: 0;
-    text-align: right;
+    display: flex;
+    justify-content: flex-end;
+    text-align: end;
     opacity: 0.7;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .var-menu__badge {
     flex: none;
@@ -1218,7 +1236,7 @@
     justify-content: flex-end;
   }
   .var-menu__link {
-    margin-right: auto;
+    margin-inline-end: auto;
     border: none;
     background: none;
     padding: 0;

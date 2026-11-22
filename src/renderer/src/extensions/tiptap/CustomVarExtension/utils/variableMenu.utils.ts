@@ -148,3 +148,71 @@ export function keyboardInset(
   if (!visual || !Number.isFinite(layoutHeight)) return 0
   return Math.max(0, Math.round(layoutHeight - visual.offsetTop - visual.height))
 }
+
+export type TextDirection = 'ltr' | 'rtl'
+
+/** A computed `direction` (or a `dir` attribute) as 'ltr' or 'rtl'. */
+export function textDirection(value: unknown): TextDirection {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase() === 'rtl'
+    ? 'rtl'
+    : 'ltr'
+}
+
+type CaretCoords = { left: number; right?: number; top: number; bottom: number }
+
+export type AnchorRect = {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  width: number
+  height: number
+  x: number
+  y: number
+}
+
+/**
+ * The box the menu hangs from: the typed `@query`, between the coordinates of
+ * its two ends. In right-to-left text the end of the query is left of its
+ * start, so the box is taken from the smaller and larger of both, never with
+ * a negative width.
+ */
+export function anchorRectFromCoords(start: CaretCoords, end: CaretCoords): AnchorRect {
+  const xs = [start.left, start.right ?? start.left, end.left, end.right ?? end.left].filter(
+    Number.isFinite
+  )
+  const left = xs.length ? Math.min(...xs) : 0
+  const right = xs.length ? Math.max(...xs) : 0
+  const top = Math.min(start.top, end.top)
+  const bottom = Math.max(start.bottom, end.bottom)
+  return { top, bottom, left, right, width: right - left, height: bottom - top, x: left, y: top }
+}
+
+type Placement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
+
+/**
+ * Where the menu goes under the `@`: lined up with the side the text starts
+ * from (the left in left-to-right text, the right in right-to-left text), so
+ * it hangs away from what is already written. Placements are logical to the
+ * menu's own direction (floating-ui reads it from the menu), which may differ
+ * from the text's: an Arabic paragraph in an English window.
+ */
+export function menuPlacement(
+  textDir: TextDirection,
+  menuDir: TextDirection
+): { placement: Placement; fallbackPlacements: Placement[] } {
+  if (textDir === menuDir) {
+    return { placement: 'bottom-start', fallbackPlacements: ['top-start', 'bottom-end', 'top-end'] }
+  }
+  return { placement: 'bottom-end', fallbackPlacements: ['top-end', 'bottom-start', 'top-start'] }
+}
+
+/**
+ * `text` as a bidi isolate (FSI…PDI): a name put into a translated sentence
+ * keeps its own order, and does not decide the sentence's direction.
+ */
+export function isolateText(text: unknown): string {
+  return `⁨${String(text ?? '')}⁩`
+}

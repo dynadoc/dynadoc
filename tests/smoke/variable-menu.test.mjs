@@ -6,7 +6,8 @@
  * them, cuts out the part to highlight, offers to create `@query` only when no
  * variable has that name, moves the highlight with ↑/↓ and says when the menu
  * is a bottom sheet (narrow window or touch screen) and how far above the
- * on-screen keyboard it sits.
+ * on-screen keyboard it sits. In right-to-left text it hangs from the `@`
+ * toward the side the text runs to, never over what is already written.
  */
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type --
@@ -67,7 +68,11 @@ const {
   moveActiveRow,
   isCompactViewport,
   keyboardInset,
-  COMPACT_MAX_WIDTH
+  COMPACT_MAX_WIDTH,
+  textDirection,
+  anchorRectFromCoords,
+  menuPlacement,
+  isolateText
 } = await import(`file://${compiled}`)
 
 const vars = [
@@ -156,6 +161,66 @@ check('no keyboard, no inset', keyboardInset(844, { height: 844, offsetTop: 0 })
 check('the keyboard lifts the sheet', keyboardInset(844, { height: 508, offsetTop: 0 }), 336)
 check('a scrolled visual viewport counts', keyboardInset(844, { height: 508, offsetTop: 40 }), 296)
 check('no visual viewport, no inset', keyboardInset(844, null), 0)
+
+// ── right-to-left ────────────────────────────────────────────────────────────
+check('rtl is rtl', textDirection('rtl'), 'rtl')
+check('RTL with spaces is rtl', textDirection(' RTL '), 'rtl')
+check(
+  'ltr, auto or nothing is ltr',
+  [textDirection('ltr'), textDirection('auto'), textDirection(undefined)],
+  ['ltr', 'ltr', 'ltr']
+)
+const caret = (x, top = 100, bottom = 118) => ({ left: x, right: x, top, bottom })
+check('ltr query: from its start to its end', anchorRectFromCoords(caret(200), caret(230)), {
+  top: 100,
+  bottom: 118,
+  left: 200,
+  right: 230,
+  width: 30,
+  height: 18,
+  x: 200,
+  y: 100
+})
+check(
+  'rtl query: the end is left of the start, the width stays positive',
+  anchorRectFromCoords(caret(530), caret(500)),
+  {
+    top: 100,
+    bottom: 118,
+    left: 500,
+    right: 530,
+    width: 30,
+    height: 18,
+    x: 500,
+    y: 100
+  }
+)
+check(
+  'without right, left is used',
+  anchorRectFromCoords({ left: 40, top: 0, bottom: 10 }, { left: 10, top: 0, bottom: 10 }).width,
+  30
+)
+check(
+  'ltr text in an ltr window: under the start',
+  menuPlacement('ltr', 'ltr').placement,
+  'bottom-start'
+)
+check(
+  'rtl text in an rtl window: under the start',
+  menuPlacement('rtl', 'rtl').placement,
+  'bottom-start'
+)
+check('rtl text in an ltr window: lined up on the right', menuPlacement('rtl', 'ltr'), {
+  placement: 'bottom-end',
+  fallbackPlacements: ['top-end', 'bottom-start', 'top-start']
+})
+check(
+  'ltr text in an rtl window: lined up on the left',
+  menuPlacement('ltr', 'rtl').placement,
+  'bottom-end'
+)
+check('a name is isolated', isolateText('cl'), '⁨cl⁩')
+check('nothing isolates to an empty isolate', isolateText(undefined), '⁨⁩')
 
 rmSync(outDir, { recursive: true, force: true })
 if (failures) {

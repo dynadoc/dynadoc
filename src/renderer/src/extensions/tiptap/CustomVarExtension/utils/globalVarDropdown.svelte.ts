@@ -12,7 +12,12 @@ import {
   isCellVarName,
   queryReplaceRange
 } from './sheetVariables.utils'
-import { isCompactViewport } from './variableMenu.utils'
+import {
+  isCompactViewport,
+  menuPlacement,
+  textDirection,
+  type TextDirection
+} from './variableMenu.utils'
 
 type DropdownItem = {
   name: string
@@ -168,23 +173,27 @@ function replaceContentEditableRange(
   }
 }
 
-function getCaretRect(el: AllowedElement) {
+// The caret, or the start of the field when there is none to read: its left
+// edge in left-to-right text, its right edge in right-to-left text (a cell of
+// a right-to-left page).
+function getCaretRect(el: AllowedElement, dir: TextDirection) {
   const box = el.getBoundingClientRect()
+  const fieldStart = { x: dir === 'rtl' ? box.right : box.left, y: box.bottom }
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    return { x: box.left, y: box.bottom }
+    return fieldStart
   }
   const selection = window.getSelection()
   if (!selection || selection.rangeCount === 0) return null
   const range = selection.getRangeAt(0)
   // Only while the caret is in the field: once the dropdown's own fields have
   // focus, the selection is theirs and the field's box is the anchor.
-  if (!el.contains(range.startContainer)) return { x: box.left, y: box.bottom }
+  if (!el.contains(range.startContainer)) return fieldStart
   const rect = range.getBoundingClientRect()
   // A collapsed range in an empty line has an empty rect.
   if (!rect || (!rect.width && !rect.height && !rect.x && !rect.y)) {
-    return { x: box.left, y: box.bottom }
+    return fieldStart
   }
-  return { x: rect.left, y: rect.bottom }
+  return { x: dir === 'rtl' ? rect.right : rect.left, y: rect.bottom }
 }
 
 // What is visible of the window: on a phone, the part above the on-screen
@@ -247,15 +256,16 @@ export function initGlobalVarDropdown() {
 
   const updatePosition = async () => {
     if (!isOpen || !activeElement || !container) return
+    const floating = (container.firstElementChild as HTMLElement | null) || container
     // The bottom sheet sits above the keyboard on its own.
     if (isCompactScreen()) {
-      const floating = container.firstElementChild as HTMLElement | null
-      floating?.style.removeProperty('max-width')
-      floating?.style.removeProperty('max-height')
+      floating.style.removeProperty('max-width')
+      floating.style.removeProperty('max-height')
       state.position = { x: 0, y: 0 }
       return
     }
-    const caretRect = getCaretRect(activeElement)
+    const textDir = textDirection(getComputedStyle(activeElement).direction)
+    const caretRect = getCaretRect(activeElement, textDir)
     if (!caretRect) return
     const virtualEl = {
       getBoundingClientRect: () => ({
@@ -270,8 +280,13 @@ export function initGlobalVarDropdown() {
       })
     }
     const rootBoundary = getVisibleBoundary()
-    const { x, y } = await computePosition(virtualEl, container.firstElementChild || container, {
-      placement: 'bottom-start',
+    // Lined up with the side the field's text starts from (see menuPlacement).
+    const { placement } = menuPlacement(
+      textDir,
+      textDirection(getComputedStyle(floating).direction)
+    )
+    const { x, y } = await computePosition(virtualEl, floating, {
+      placement,
       strategy: 'fixed',
       middleware: [
         offset(8),

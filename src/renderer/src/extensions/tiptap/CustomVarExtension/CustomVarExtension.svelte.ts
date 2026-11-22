@@ -32,6 +32,12 @@ import type { DocumentEditorModel } from '../../../models/Document'
 import { CustomVarExtensionProps } from './utils/common.utils'
 import { buildVariablePayload } from './utils/variableForm.utils'
 import { buildVarDropdownItems } from './utils/variableDropdown.utils'
+import {
+  anchorRectFromCoords,
+  menuPlacement,
+  textDirection,
+  type TextDirection
+} from './utils/variableMenu.utils'
 import { get as getStore } from 'svelte/store'
 import { _$_documentEditorsList } from '../../../stores/editor.store'
 
@@ -79,36 +85,42 @@ function posToDOMRect(view: any, from: number, to: number) {
     return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }
   }
 }
+// The direction of the text the `@` was typed in: its paragraph's, which may
+// differ from the editor's or the window's.
+function textDirectionAt(view: any, pos: number): TextDirection {
+  try {
+    const { node } = view.domAtPos(pos)
+    const el = node instanceof Element ? node : node?.parentElement
+    return textDirection(getComputedStyle(el || view.dom).direction)
+  } catch {
+    return textDirection(view?.dom?.closest?.('[dir]')?.getAttribute('dir'))
+  }
+}
+
 async function getMenuPosition(editor, container, range) {
   if (!container || !range) return { x: 0, y: 0 }
 
   // Use the suggestion range (the '@' char) for the coordinates
   // This is more stable than editor.state.selection
   const virtualEl = {
-    getBoundingClientRect: () => {
-      const start = editor.view.coordsAtPos(range.from)
-      const end = editor.view.coordsAtPos(range.to)
-      return {
-        top: start.top,
-        bottom: end.bottom,
-        left: start.left,
-        right: end.right,
-        width: end.right - start.left,
-        height: end.bottom - start.top,
-        x: start.left,
-        y: start.top
-      }
-    }
+    getBoundingClientRect: () =>
+      anchorRectFromCoords(editor.view.coordsAtPos(range.from), editor.view.coordsAtPos(range.to))
   }
+  // Lined up with the side the text starts from: in right-to-left text the
+  // menu hangs from the `@` to the left, not over the words before it.
+  const { placement, fallbackPlacements } = menuPlacement(
+    textDirectionAt(editor.view, range.from),
+    textDirection(getComputedStyle(container).direction)
+  )
 
   const { x, y } = await computePosition(virtualEl, container, {
-    placement: 'bottom-start',
+    placement,
     strategy: 'fixed', // Better for Electron and modals
     middleware: [
       offset(10), // Gap between cursor and menu
       flip({
         padding: 10,
-        fallbackPlacements: ['top-start', 'bottom-end', 'top-end']
+        fallbackPlacements
       }),
       shift({ padding: 15 })
     ]
