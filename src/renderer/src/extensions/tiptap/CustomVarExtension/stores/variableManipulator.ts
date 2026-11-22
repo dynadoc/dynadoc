@@ -7,7 +7,7 @@ import { nodeApi } from '../../../../utils/shims/node'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { setSheetVariablesApi, sheetRegistry } from '../../../../stores/sheetBridge.store'
 import { Node, mergeAttributes, InputRule, Editor } from '@tiptap/core'
-import SSF from 'ssf'
+import { formatVariableValue } from '../utils/variableFormat.utils'
 // import { persistStore } from '../../../../../utils/storePersistenceePersistence'
 import Utils from '../../../../utils/Utils'
 import { runAI } from '../../CustomAIExtension/utils/utils'
@@ -24,10 +24,17 @@ import {
 } from './globalVariables'
 import {
   isGlobalVisibility,
+  plainTextValue,
   reduceRefValues,
+  SHEET_REF_LOADING,
   selectVisibleGlobals,
   toPlainNumber
 } from '../utils/sheetVariables.utils'
+import {
+  createLiveSheetWaiter,
+  createPendingRefBroadcast,
+  createRequestTokens
+} from '../utils/sheetRefLoading.utils'
 // import Utils from '../../../../../utils/Utils/utils/Utils'
 
 // const  fs = (window as any)?.node?.fs || null
@@ -526,42 +533,7 @@ export class VariableManipulatorUtils {
     } */
 
   static formatValue(value: any, format: string | number, autoUpdate?: boolean): any {
-    if (!format || value === null || value === undefined || value === '') {
-      return value
-    }
-    if (typeof value === 'string' && value.trim().startsWith('#')) {
-      return value
-    }
-
-    let processingValue = value
-
-    // 1. Try to treat it as a number first (Excel's native way)
-    const parsedNum = Number(value)
-    const isNumeric = !isNaN(parsedNum) && isFinite(parsedNum) && typeof value !== 'boolean'
-
-    if (isNumeric) {
-      processingValue = parsedNum
-    } else {
-      // 2. If it's a string, check if it's a valid Date
-      // Handle Auto-update trigger
-      if (autoUpdate) {
-        processingValue = new Date() // Use current system time
-      } else {
-        const parsedDate = new Date(value)
-        if (parsedDate instanceof Date && !isNaN(parsedDate.getTime())) {
-          processingValue = parsedDate
-        }
-      }
-    }
-
-    try {
-      // SSF.format(format, processingValue)
-      // will now correctly handle Numbers OR Date Objects
-      return SSF.format(format, processingValue)
-    } catch (e) {
-      console.error('formatValue error', e)
-      return String(value)
-    }
+    return formatVariableValue(value, format, autoUpdate)
   }
 
   /**
@@ -1580,6 +1552,30 @@ export function cleanupTableCellVariablesForSheet(
   }
 }
 
+// Documents whose list of sheets was read at least once, and the reads in
+// flight. Until the first read is over, a reference to a sheet that is not in
+// the list yet is loading, not broken (the list comes from vars.json, which a
+// reload reads again).
+const _spreadsheetRegistryLoaded = new Set<string>()
+const _spreadsheetRegistryLoads = new Map<string, Promise<void>>()
+
+function whenSpreadsheetRegistryLoaded(resolved: DocumentEditorModel): Promise<void> {
+  const documentId = getDocumentId(resolved)
+  let load = _spreadsheetRegistryLoads.get(documentId)
+  if (!load) {
+    load = loadSpreadsheetRegistry(resolved).finally(() => {
+      _spreadsheetRegistryLoaded.add(documentId)
+      _spreadsheetRegistryLoads.delete(documentId)
+    })
+    _spreadsheetRegistryLoads.set(documentId, load)
+  }
+  return load
+}
+
+function isSpreadsheetRegistryLoaded(documentId: string): boolean {
+  return _spreadsheetRegistries.has(documentId) || _spreadsheetRegistryLoaded.has(documentId)
+}
+
 function getSpreadsheetPointer(
   id: string,
   editor?: DocumentEditorModel | string
@@ -1588,11 +1584,38 @@ function getSpreadsheetPointer(
   if (!resolved || !id) return null
   const documentId = getDocumentId(resolved)
   if (!_spreadsheetRegistries.has(documentId)) {
-    loadSpreadsheetRegistry(resolved)
+    void whenSpreadsheetRegistryLoaded(resolved)
   }
   const registry = _spreadsheetRegistries.get(documentId)
   return registry?.get(id) || null
 }
+
+// Resolves once the open sheet at `path` is live, or with false after
+// `timeoutMs` (a sheet that is not open, or not embedded in an open document).
+const waitForLiveSheet = createLiveSheetWaiter({
+  subscribe: sheetRegistry.subscribe,
+  isLive: (map, path) => !!map?.[path]?.methods
+})
+
+// The latest request per cached reference: an older one, still waiting for its
+// sheet, must not overwrite what a newer one found.
+const _spreadsheetRequests = createRequestTokens()
+
+// Chips that asked for a reference while the document's sheets were loading:
+// each is asked again once, when the sheets are known.
+const askSheetRefAgain = createPendingRefBroadcast((name) =>
+  listeners.forEach((fn) =>
+    (fn as (name: string, value: unknown, type: string) => void)(
+      name,
+      null,
+      VariableManipulatorUtils.VAR_UPDATE_TYPE.value
+    )
+  )
+)
+
+// How long a reference waits for an embedded sheet that is still loading
+// before it is reported as an error.
+const LIVE_SHEET_WAIT_MS = 10000
 
 function getSpreadsheetPointerByDocumentId(
   documentId: string,
@@ -1855,8 +1878,11 @@ async function requestSpreadsheetValue(
   sheetName?: string | null
 ) {
   const cacheKey = `${documentId}::${ref}`
+  const token = _spreadsheetRequests.start(cacheKey)
+  // Replaced by a newer request (the sheet changed meanwhile): its answer wins.
+  const superseded = (): boolean => !_spreadsheetRequests.isCurrent(cacheKey, token)
   setSpreadsheetCache(cacheKey, {
-    value: '#LOADING',
+    value: SHEET_REF_LOADING,
     status: 'loading',
     path: pointer.path,
     documentId,
@@ -1881,10 +1907,23 @@ async function requestSpreadsheetValue(
           path: pointer.path,
           cellRef: targetRef
         })
-        value = result?.value ?? '#REF_ERROR!'
+        value = result?.value
+        // Nothing on disk (yet, or no file access on web) and the sheet is not
+        // open yet: an embedded sheet may still be loading. It answers once it
+        // is open; until then the reference stays "loading", not an error.
+        if (
+          (value === null || value === undefined) &&
+          !getLiveSheetEntry(pointer.path)?.methods &&
+          (await waitForLiveSheet(pointer.path, LIVE_SHEET_WAIT_MS))
+        ) {
+          if (superseded()) return
+          return requestSpreadsheetValue(ref, documentId, pointer, expression, sheetName)
+        }
+        value = value ?? '#REF_ERROR!'
       }
     }
 
+    if (superseded()) return
     setSpreadsheetCache(cacheKey, {
       value,
       status: 'ready',
@@ -1897,6 +1936,7 @@ async function requestSpreadsheetValue(
     })
     listeners.forEach((fn) => fn(ref, value, VariableManipulatorUtils.VAR_UPDATE_TYPE.value))
   } catch (err) {
+    if (superseded()) return
     setSpreadsheetCache(cacheKey, {
       value: '#REF_ERROR!',
       status: 'error',
@@ -2445,7 +2485,13 @@ export function getVariable(
   const sheetRef = parseSpreadsheetRef(nameOrId)
   if (sheetRef) {
     const pointer = getSpreadsheetPointer(sheetRef.sheetId, resolvedEditor)
-    if (!pointer) return '#REF_ERROR!'
+    if (!pointer) {
+      if (isSpreadsheetRegistryLoaded(documentId)) return '#REF_ERROR!'
+      // After a reload the document's sheets are read again from vars.json:
+      // the reference is loading, and is asked again once they are known.
+      askSheetRefAgain(documentId, nameOrId, () => whenSpreadsheetRegistryLoaded(resolvedEditor))
+      return SHEET_REF_LOADING
+    }
     const resolvedSheetName = sheetRef.sheetName || pointer.name || null
     const cacheKey = `${documentId}::${nameOrId}`
     const cached = getSpreadsheetCache(cacheKey)
@@ -2458,9 +2504,9 @@ export function getVariable(
         sheetRef.expression,
         resolvedSheetName
       )
-      return '#LOADING'
+      return SHEET_REF_LOADING
     }
-    return cached.value ?? '#LOADING'
+    return cached.value ?? SHEET_REF_LOADING
   }
 
   const variableMap = _variableMaps.get(documentId)
@@ -2640,14 +2686,8 @@ export function resolveVariableForCell(
   const raw = variableId ? (variableMap?.get(variableId)?.rawValue as VariableValue) : null
   if (!raw || raw.type === VariableManipulatorUtils.VAR_TYPE.spreadsheet) return { found: false }
   // Plain text keeps its text: the engine reads '01234' as the number 1234.
-  if (
-    raw.type === VariableManipulatorUtils.VAR_TYPE.text &&
-    typeof raw.value === 'string' &&
-    !raw.value.trim().startsWith('=') &&
-    !/\{[^}]+\}/.test(raw.value)
-  ) {
-    return { found: true, value: raw.value }
-  }
+  const text = plainTextValue(raw)
+  if (text !== null) return { found: true, value: text }
   let value: unknown = getVariable(variableId, resolvedEditor)
   if (value && typeof value === 'object') {
     // A raw VariableValue (non-text types) or a HyperFormula error.

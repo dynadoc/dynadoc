@@ -1,4 +1,9 @@
+<script module lang="ts">
+  let nextListboxId = 0
+</script>
+
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { _ } from 'svelte-i18n'
   import toast from 'svelte-hot-french-toast'
   import { _$_documentEditorsList } from '../../../../stores/editor.store'
@@ -30,8 +35,18 @@
     onAddVariable = null,
     handlePickFile = () => {},
     handlePickFolder = () => {},
-    handleEditRichText = () => {}
+    handleEditRichText = () => {},
+    // Phones: the list comes first, so it stays in view above the on-screen
+    // keyboard; the form to create a variable follows it.
+    suggestionsFirst = false,
+    // A name the field can take, checked before anything is created: the
+    // message, or null. A spreadsheet cell only reads `@letters_digits`.
+    validateName = null,
+    // The list's id, for a field that points at it (aria-controls).
+    listboxId = `dd-var-listbox-${++nextListboxId}`
   } = $props()
+
+  const optionId = (index: number): string => `${listboxId}-option-${index}`
 
   let container = $state<HTMLElement>()
   let newVarName = $state('')
@@ -144,10 +159,23 @@
     }
   })
 
+  // The name field follows the typed `@query` until the user edits it, so a
+  // variable created from here is named after what was typed in full.
+  let nameEdited = $state(false)
+  let lastQuery = ''
   $effect(() => {
-    if (!newVarName && query) {
-      newVarName = query
-    }
+    const next = query || ''
+    if (next === lastQuery) return
+    lastQuery = next
+    untrack(() => {
+      if (nameEdited && newVarName) return
+      nameEdited = false
+      if (newVarName === next) return
+      newVarName = next
+      // A match found for the previous query is not the one being typed now.
+      editingOriginalName = null
+      if (!valueDirty) newVarValue = ''
+    })
   })
 
   $effect(() => {
@@ -208,6 +236,12 @@
       return
     }
 
+    const invalid = validateName?.(name)
+    if (invalid) {
+      nameError = invalid
+      return
+    }
+
     const taken = isNameTaken(name, _vars)
     if (taken && (!editingOriginalName || isRename)) {
       nameError = `Variable "${name}" already exists. Choose another name.`
@@ -260,6 +294,7 @@
     onAddVariable?.({ name, type: selectedType, value: input })
     addToHistory({ name, type: selectedType })
     newVarName = ''
+    nameEdited = false
     newVarValue = ''
     newVarFormat = VariableManipulatorUtils.EXCEL_FORMATS.GENERAL
     newVarAutoUpdate = false
@@ -330,7 +365,7 @@
   style:top="{position?.y ?? 0}px"
   style:visibility={position?.x ? 'visible' : 'hidden'}
 >
-  <div class="flex items-center gap-0.5 p-1 bg-base-200 border-b border-base-100">
+  <div class="shrink-0 flex items-center gap-0.5 p-1 bg-base-200 border-b border-base-100">
     {#each Object.entries(TYPE_CONFIG) as [type, cfg]}
       <button
         onclick={() => (selectedType = type)}
@@ -343,7 +378,7 @@
     {/each}
   </div>
 
-  <div class="p-2 flex flex-col gap-2 bg-base-100">
+  <div class="shrink-0 p-2 flex flex-col gap-2 bg-base-100">
     <input
       type="text"
       bind:value={newVarName}
@@ -352,6 +387,7 @@
       oninput={() => {
         if (nameError) nameError = ''
         editingOriginalName = null
+        nameEdited = true
       }}
     />
     {#if nameError}
@@ -548,36 +584,55 @@
     {/if}
   </div>
 
-  <div class="max-h-40 overflow-y-auto py-1">
-    <div class="px-3 py-1 text-[9px] font-bold opacity-30 uppercase tracking-widest">
+  <div class="shrink-0 max-h-40 overflow-y-auto py-1" style:order={suggestionsFirst ? -1 : null}>
+    <div
+      id="{listboxId}-label"
+      class="px-3 py-1 text-[9px] font-bold opacity-30 uppercase tracking-widest"
+    >
       {$_('Suggestions')}
     </div>
     {#if items.length === 0}
       <div class="px-3 py-2 text-[10px] opacity-50">{$_('No matches')}</div>
     {/if}
-    {#each items as item, i}
-      <button
-        class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2 border-transparent"
-        class:bg-primary-10={i === activeIndex}
-        class:border-primary={i === activeIndex}
-        onmousedown={(e) => {
-          e.preventDefault()
-          selectItem(item)
-        }}
-      >
-        <i class="ph-light {TYPE_CONFIG[item.type]?.icon || 'ph-variable'} opacity-40"></i>
-        <span class="truncate flex-grow">{formatRefName(item.name, item.type)}</span>
-        {#if isAiItem(item)}
-          <span
-            class="ml-1 px-1.5 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em] bg-purple-500/20 text-purple-300 border border-purple-500/30"
-          >{$_('AI')}</span>
-        {/if}
-      </button>
-    {/each}
+    <div
+      id={listboxId}
+      role="listbox"
+      aria-labelledby="{listboxId}-label"
+      aria-activedescendant={items.length ? optionId(activeIndex) : undefined}
+    >
+      {#each items as item, i}
+        <!-- Picked on mousedown, so the field keeps its caret; on click too when
+             the click comes from the keyboard (Enter or Space on the option). -->
+        <button
+          type="button"
+          id={optionId(i)}
+          role="option"
+          aria-selected={i === activeIndex}
+          class="w-full text-left px-3 py-1.5 flex items-center gap-2 transition-colors border-l-2"
+          class:dd-var-option-active={i === activeIndex}
+          class:border-transparent={i !== activeIndex}
+          onmousedown={(e) => {
+            e.preventDefault()
+            selectItem(item)
+          }}
+          onclick={(e) => {
+            if (e.detail === 0) selectItem(item)
+          }}
+        >
+          <i class="ph-light {TYPE_CONFIG[item.type]?.icon || 'ph-variable'} opacity-40"></i>
+          <span class="truncate flex-grow">{formatRefName(item.name, item.type)}</span>
+          {#if isAiItem(item)}
+            <span
+              class="ml-1 px-1.5 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em] bg-purple-500/20 text-purple-300 border border-purple-500/30"
+            >{$_('AI')}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if recentHistory.length > 0}
-    <div class="border-t border-base-100 bg-base-200/80 pb-1">
+    <div class="shrink-0 border-t border-base-100 bg-base-200/80 pb-1">
       <div
         class="px-3 py-2 text-[9px] font-bold opacity-30 uppercase tracking-widest flex justify-between"
       >
@@ -603,6 +658,11 @@
 </div>
 
 <style>
+  /* The entry ↑/↓ highlights (aria-selected): tinted, with the accent bar. */
+  .dd-var-option-active {
+    background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    border-left-color: var(--color-primary);
+  }
   .theme-action-btn {
     @apply flex items-center justify-center bg-[var(--color-base-100)] border border-[var(--color-base-100)] rounded-[2px] py-1 text-[10px] font-semibold hover:bg-primary/10 hover:border-primary/40 transition-all;
   }
