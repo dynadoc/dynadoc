@@ -22,7 +22,7 @@ const DEFAULT_STATE: AIGenerationState = {
   preferVariables: true
 }
 
-const { subscribe, update, set } = writable<AIGenerationState>(DEFAULT_STATE)
+const { subscribe, update } = writable<AIGenerationState>(DEFAULT_STATE)
 
 let longRunTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -60,8 +60,10 @@ export const aiGenerationStore = {
     update((state) => {
       const nextCount = Math.max(0, state.activeCount - 1)
       const shouldReset = nextCount === 0
+      // The @ Variables choice is the user's, not part of a generation:
+      // ending one must not switch it back on.
       return shouldReset
-        ? { ...DEFAULT_STATE }
+        ? { ...DEFAULT_STATE, preferVariables: state.preferVariables }
         : { ...state, activeCount: nextCount, phase: 'running' }
     })
     if (longRunTimer) {
@@ -87,6 +89,6 @@ export const aiGenerationStore = {
       clearTimeout(longRunTimer)
       longRunTimer = null
     }
-    set(DEFAULT_STATE)
+    update((state) => ({ ...DEFAULT_STATE, preferVariables: state.preferVariables }))
   }
 }
