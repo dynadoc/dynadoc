@@ -60,9 +60,65 @@ const CELL_VAR_TOKEN = /(^|[^\p{L}\p{N}_.@])@([\p{L}_][\p{L}\p{N}_]*)/gu
 /** `@` and a partial name at the end of `textBefore`, by the same grammar. */
 export const CELL_VAR_TRIGGER = /(^|[^\p{L}\p{N}_.@])@((?:[\p{L}_][\p{L}\p{N}_]*)?)$/u
 
+// `@` and a partial name anywhere else (web fields, browser inputs): names
+// there may also hold `.` and `-`.
+const VAR_TRIGGER = /(^|[^\p{L}\p{N}_.@])@([\p{L}\p{N}_.-]*)$/u
+
+/**
+ * The `@query` the caret sits right after, if any: the query typed so far and
+ * the index of its `@` in `textBefore` (the text before the caret). `cellToken`
+ * picks the cell grammar, where a name holds letters, digits and `_` only.
+ */
+export function findVarTrigger(
+  textBefore: string,
+  cellToken: boolean
+): { query: string; atIndex: number } | null {
+  const match = String(textBefore ?? '').match(cellToken ? CELL_VAR_TRIGGER : VAR_TRIGGER)
+  if (!match) return null
+  const query = match[2] || ''
+  return { query, atIndex: textBefore.length - query.length - 1 }
+}
+
+/**
+ * The text a picked variable replaces: the `@query` as last typed, from its
+ * `@` to its end, whatever the caret did since (clicked back to the start of
+ * the cell, or into the middle of the name). Clamped to the field's text.
+ */
+export function queryReplaceRange(
+  triggerIndex: number,
+  queryEnd: number,
+  textLength: number
+): { start: number; end: number } {
+  const start = Math.max(0, Math.min(triggerIndex, textLength))
+  const end = Math.max(start, Math.min(queryEnd, textLength))
+  return { start, end }
+}
+
 /** A name that can be written as `@name` in a cell. */
 export function isCellVarName(name: unknown): boolean {
   return typeof name === 'string' && /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name)
+}
+
+/** `name` made into one a cell can read: `mon client` → `mon_client`. */
+export function toCellVarName(name: string): string {
+  const cleaned = String(name ?? '')
+    .trim()
+    .replace(/[^\p{L}\p{N}_]+/gu, '_')
+    .replace(/^_+|_+$/g, '')
+  if (!cleaned) return ''
+  return /^\p{N}/u.test(cleaned) ? `_${cleaned}` : cleaned
+}
+
+/**
+ * Why `name` cannot be created from a spreadsheet cell, or null when it can.
+ * Checked before anything is created: a name the cell cannot read would be
+ * saved and then never inserted.
+ */
+export function cellVarNameError(name: string): string | null {
+  if (isCellVarName(name)) return null
+  const suggestion = toCellVarName(name)
+  const hint = 'Use letters, digits and _ in a cell (no spaces), not starting with a digit.'
+  return suggestion ? `${hint} Try "${suggestion}".` : hint
 }
 
 export const CELL_VAR_ERROR = '#VAR?'
@@ -190,4 +246,30 @@ export function evaluateCellVarInput(
     return { kind: 'value', value: number !== null ? number : (value ?? '') }
   }
   return { kind: 'value', value: replace((value) => String(value ?? '')) }
+}
+
+/**
+ * The text of a text variable that holds plain text (not a formula, no
+ * `{name}` reference), as typed; null for anything else. The formula engine
+ * reads such text as a number when it can ('01234' as 1234), so what is shown
+ * of it comes from here: the cell and the chip both keep '01234'.
+ */
+export function plainTextValue(
+  raw: { type?: unknown; value?: unknown } | null | undefined
+): string | null {
+  if (!raw || raw.type !== 'text' || typeof raw.value !== 'string') return null
+  if (raw.value.trim().startsWith('=') || /\{[^}]+\}/.test(raw.value)) return null
+  return raw.value
+}
+
+/**
+ * What a spreadsheet reference answers while its sheet (or the list of the
+ * document's sheets) is still loading: a chip shows it as "…", not as an
+ * error.
+ */
+export const SHEET_REF_LOADING = '#LOADING'
+
+/** A chip's text for a value: "…" while a spreadsheet reference loads. */
+export function displayVariableValue(value: unknown): unknown {
+  return value === SHEET_REF_LOADING ? '…' : value
 }

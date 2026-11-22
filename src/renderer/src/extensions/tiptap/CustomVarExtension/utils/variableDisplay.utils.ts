@@ -53,11 +53,11 @@ export function getVariableDisplayValue(
     )
     }
   } else if (type === VariableManipulatorUtils.VAR_TYPE.datetime) {
-    value = VariableManipulatorUtils.formatValue(
+    value = VariableManipulatorUtils.formatDateTimeValue(
       raw.value ?? variable.value,
       raw.format,
       raw.autoUpdate
-    )
+    ) as string
   } else {
     value = variable.value ?? raw.value ?? ''
   }
