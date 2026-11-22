@@ -109,7 +109,7 @@
           (rawValue as VariableValue).format
         )}
       {:else if (rawValue as VariableValue).type === VariableManipulatorUtils.VAR_TYPE.datetime}
-        {VariableManipulatorUtils.formatValue(
+        {VariableManipulatorUtils.formatDateTimeValue(
           (value as VariableValue).value,
           (rawValue as VariableValue).format,
           (rawValue as VariableValue).autoUpdate
