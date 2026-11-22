@@ -12,6 +12,7 @@ import {
   isCellVarName,
   queryReplaceRange
 } from './sheetVariables.utils'
+import { isCompactViewport } from './variableMenu.utils'
 
 type DropdownItem = {
   name: string
@@ -24,12 +25,13 @@ type DropdownItem = {
 
 type DropdownState = {
   items: DropdownItem[]
-  activeIndex: number
   query: string
   position: { x: number; y: number } | null
   selectItem: (item: DropdownItem) => void
   onAddVariable: (variable: { name: string }) => void
-  suggestionsFirst: boolean
+  onClose: () => void
+  refocusField: () => void
+  onActiveChange: (optionId: string | null) => void
   listboxId: string
   validateName: ((name: string) => string | null) | null
 }
@@ -193,10 +195,10 @@ function getVisibleBoundary() {
   return { x: vv.offsetLeft, y: vv.offsetTop, width: vv.width, height: vv.height }
 }
 
-// A phone or a narrow window: the list goes first in the dropdown.
+// A phone or a narrow window: the menu is a bottom sheet it places itself.
 const isCompactScreen = (): boolean =>
   typeof window !== 'undefined' &&
-  (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 640)
+  isCompactViewport(window.innerWidth, window.matchMedia?.('(pointer: coarse)').matches ?? false)
 
 const LISTBOX_ID = 'dd-var-listbox-sheet'
 
@@ -219,35 +221,40 @@ export function initGlobalVarDropdown() {
   // left it hidden, its position never reaching the component).
   const state: DropdownState = $state({
     items: [],
-    activeIndex: 0,
     query: '',
     position: null,
     selectItem: () => undefined,
     onAddVariable: () => undefined,
-    suggestionsFirst: false,
+    onClose: () => undefined,
+    refocusField: () => undefined,
+    onActiveChange: () => undefined,
     listboxId: LISTBOX_ID,
     validateName: null
   })
 
-  // The field announces the list and its highlighted entry (the caret stays
-  // in the field, so the list is followed through aria-activedescendant).
+  // The field announces the list and its highlighted row (the caret stays in
+  // the field, so the list is followed through aria-activedescendant). The
+  // menu says which row that is: it moves the highlight itself.
   const ARIA_ATTRS = ['aria-controls', 'aria-expanded', 'aria-activedescendant']
+  let activeOptionId: string | null = null
   const syncAria = () => {
     if (!activeElement) return
     activeElement.setAttribute('aria-controls', LISTBOX_ID)
     activeElement.setAttribute('aria-expanded', 'true')
-    if (state.items.length) {
-      activeElement.setAttribute(
-        'aria-activedescendant',
-        `${LISTBOX_ID}-option-${state.activeIndex}`
-      )
-    } else {
-      activeElement.removeAttribute('aria-activedescendant')
-    }
+    if (activeOptionId) activeElement.setAttribute('aria-activedescendant', activeOptionId)
+    else activeElement.removeAttribute('aria-activedescendant')
   }
 
   const updatePosition = async () => {
     if (!isOpen || !activeElement || !container) return
+    // The bottom sheet sits above the keyboard on its own.
+    if (isCompactScreen()) {
+      const floating = container.firstElementChild as HTMLElement | null
+      floating?.style.removeProperty('max-width')
+      floating?.style.removeProperty('max-height')
+      state.position = { x: 0, y: 0 }
+      return
+    }
     const caretRect = getCaretRect(activeElement)
     if (!caretRect) return
     const virtualEl = {
@@ -298,6 +305,7 @@ export function initGlobalVarDropdown() {
     container = null
     isOpen = false
     activeElement = null
+    activeOptionId = null
     pointerInDropdown = false
   }
 
@@ -339,9 +347,14 @@ export function initGlobalVarDropdown() {
       return
     }
     state.items = buildItems(state.query, template)
-    state.activeIndex = 0
-    syncAria()
     el.focus({ preventScroll: true })
+  }
+
+  const refocusField = () => activeElement?.focus({ preventScroll: true })
+
+  const handleActiveChange = (optionId: string | null) => {
+    activeOptionId = optionId
+    syncAria()
   }
 
   const openDropdown = (items: DropdownItem[], query: string) => {
@@ -351,11 +364,16 @@ export function initGlobalVarDropdown() {
     }
 
     state.items = items
-    state.activeIndex = 0
     state.query = query
     state.selectItem = insertItem
     state.onAddVariable = handleAddVariable
-    state.suggestionsFirst = isCompactScreen()
+    state.onClose = () => {
+      const el = activeElement
+      closeDropdown()
+      el?.focus({ preventScroll: true })
+    }
+    state.refocusField = refocusField
+    state.onActiveChange = handleActiveChange
     // A cell reads only `@letters_digits`: say so before creating anything.
     state.validateName =
       activeElement && insertsCellToken(getInsertionTemplate(activeElement))
@@ -379,7 +397,6 @@ export function initGlobalVarDropdown() {
       return
     }
     state.items = items
-    state.activeIndex = Math.min(state.activeIndex, Math.max(items.length - 1, 0))
     state.query = query
     syncAria()
     void updatePosition()
@@ -417,11 +434,19 @@ export function initGlobalVarDropdown() {
     updateDropdown(items, trigger.query)
   }
 
+  // The menu moves its highlight, picks or creates (handleKey); what it does
+  // not use stays the field's. Escape closes; Enter or Tab with nothing to
+  // pick closes too and still reaches the field (it commits the cell).
   const handleKeyDown = (event: KeyboardEvent) => {
     if (!isOpen) return
     const target = event.target as Node | null
     if (target && container?.contains(target)) {
-      // Escape in the dropdown's own fields: back to the field, closed.
+      if (component?.handleKey?.(event.key)) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+      // Escape in the menu's own fields: back to the field, closed.
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -435,29 +460,13 @@ export function initGlobalVarDropdown() {
     const el = isAllowedElement(event.target)
     if (!el || el !== activeElement) return
 
-    if (event.key === 'ArrowDown') {
+    if (component?.handleKey?.(event.key)) {
       event.preventDefault()
       event.stopPropagation()
-      state.activeIndex = (state.activeIndex + 1) % Math.max(state.items.length, 1)
-      syncAria()
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      event.stopPropagation()
-      state.activeIndex =
-        (state.activeIndex - 1 + Math.max(state.items.length, 1)) % Math.max(state.items.length, 1)
-      syncAria()
       return
     }
     if (event.key === 'Enter' || event.key === 'Tab') {
-      if (!state.items.length) {
-        closeDropdown()
-        return
-      }
-      event.preventDefault()
-      event.stopPropagation()
-      state.selectItem(state.items[state.activeIndex])
+      closeDropdown()
       return
     }
     if (event.key === 'Escape') {

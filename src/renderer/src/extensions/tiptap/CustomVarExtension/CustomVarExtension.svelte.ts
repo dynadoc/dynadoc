@@ -1,4 +1,4 @@
-import { Node, mergeAttributes, InputRule, Editor, nodeInputRule } from '@tiptap/core'
+import { Node, mergeAttributes, InputRule, Editor, nodeInputRule, type Range } from '@tiptap/core'
 import Suggestion, { exitSuggestion } from '@tiptap/suggestion'
 import { computePosition, shift, flip, offset, size } from '@floating-ui/dom'
 import { PluginKey, Plugin, Transaction } from 'prosemirror-state'
@@ -886,7 +886,6 @@ export const CustomVarExtension = Node.create({
     }
 
     // return [
-    let userTriggered = false
     const suggestionPluginKey = new PluginKey('variable-suggestion')
 
     const suggestionPlugin = Suggestion({
@@ -914,40 +913,54 @@ export const CustomVarExtension = Node.create({
 
       render: () => {
         let component: any
-        let svelteProps = $state({
-          items: [],
-          activeIndex: 0,
+        const editor = this.editor
+        const editorId = this.options.editorId
+        let range: Range | null = null
+        const close = () => exitSuggestion(editor.view, suggestionPluginKey)
+        const svelteProps = $state({
+          items: [] as any[],
           query: '',
-          position: null,
-          selectItem: (item) => {}
+          position: null as { x: number; y: number } | null,
+          selectItem: (item: any) => {
+            if (range) suggestionCommand({ editor, range, props: item })
+          },
+          // A variable created from the menu goes in as a picked one would.
+          onAddVariable: (variable: { name: string }) => {
+            const created = buildVarDropdownItems(listVariables([], editorId), '').find(
+              (item) => item.name === variable?.name
+            )
+            if (created && range) suggestionCommand({ editor, range, props: created })
+            else editor.commands.focus()
+          },
+          onClose: close,
+          refocusField: () => editor.commands.focus()
         })
         let container: HTMLElement
-        let items: any[] = []
-        let activeIndex = 0
         let cleanupOutsideHandlers: (() => void) | null = null
-        const editor = this.editor
+
+        const place = async () => {
+          if (!container || !range) return
+          svelteProps.position = await getMenuPosition(editor, container.firstElementChild, range)
+        }
 
         return {
-          onStart: async (props) => {
-            userTriggered = true
-            items = props.items
-            activeIndex = 0
+          onStart: (props) => {
+            range = props.range
+            svelteProps.items = props.items
+            svelteProps.query = props.query
 
             container = document.createElement('span')
-            // container = document.createElement('div')
             document.body.appendChild(container)
             const handlePointerDown = (event: Event) => {
               const target = event.target as Node | null
               if (!target) return
               if (container?.contains(target)) return
               if (editor?.view?.dom?.contains(target)) return
-              exitSuggestion(editor.view, suggestionPluginKey)
+              close()
             }
-            const handleWindowBlur = () => exitSuggestion(editor.view, suggestionPluginKey)
+            const handleWindowBlur = () => close()
             const handleVisibility = () => {
-              if (document.visibilityState !== 'visible') {
-                exitSuggestion(editor.view, suggestionPluginKey)
-              }
+              if (document.visibilityState !== 'visible') close()
             }
             document.addEventListener('pointerdown', handlePointerDown, true)
             window.addEventListener('blur', handleWindowBlur)
@@ -958,83 +971,35 @@ export const CustomVarExtension = Node.create({
               document.removeEventListener('visibilitychange', handleVisibility)
             }
 
-            // Create reactive props object
-            /* const svelteProps = $state({
-                            items,
-                            activeIndex,
-                            query: props.query,
-                            position: await getMenuPosition(editor, container),
-                            selectItem: (item) => {
-                                suggestionCommand({ editor, range: props.range, props: item })
-                            }
-                        }) */
-            // update reactive props
-            svelteProps.items = items
-            svelteProps.activeIndex = activeIndex
-            svelteProps.query = props.query
-            // svelteProps.position = await getMenuPosition(editor, container)
-            // svelteProps.position = await getMenuPosition(editor, container)
-            svelteProps.selectItem = (item) => {
-              suggestionCommand({ editor, range: props.range, props: item })
-            }
-
             component = mount(CustomVarExtensionDropdown, {
               target: container,
               props: svelteProps
             })
-            // WAIT for Svelte to paint, then calculate position
-            requestAnimationFrame(async () => {
-              const pos = await getMenuPosition(editor, container.firstElementChild, props.range)
-              svelteProps.position = pos
-            })
+            // Placed once Svelte has painted it.
+            requestAnimationFrame(() => void place())
           },
 
-          onUpdate: async (props) => {
-            console.log('onUpdate')
-            items = props.items
-            activeIndex = Math.min(activeIndex, items.length - 1)
-            // update reactive props
-            svelteProps.items = items
-            svelteProps.activeIndex = activeIndex
+          onUpdate: (props) => {
+            range = props.range
+            svelteProps.items = props.items
             svelteProps.query = props.query
-            // svelteProps.position = await getMenuPosition(editor, container)
-            svelteProps.selectItem = (item) => {
-              suggestionCommand({ editor, range: props.range, props: item })
-            }
-            // )
-            // Recalculate on every keystroke/update
-            const pos = await getMenuPosition(editor, container.firstElementChild, props.range)
-            svelteProps.position = pos
+            void place()
           },
 
+          // The menu moves its highlight, picks or creates; Escape is the
+          // suggestion plugin's (it closes).
           onKeyDown: (props) => {
-            if (props.event.key === 'ArrowDown') {
-              activeIndex = (activeIndex + 1) % items.length
-              // component.$set({ activeIndex })
-              svelteProps.activeIndex = activeIndex
-              return true
-            }
-            if (props.event.key === 'ArrowUp') {
-              activeIndex = (activeIndex - 1 + items.length) % items.length
-              // component.$set({ activeIndex })
-              svelteProps.activeIndex = activeIndex
-              return true
-            }
-            if (props.event.key === 'Enter') {
-              const item = items[activeIndex]
-              suggestionCommand({ editor, range: props.range, props: item })
-              return true
-            }
-            return false
+            if (props.event.key === 'Escape') return false
+            return Boolean(component?.handleKey?.(props.event.key))
           },
 
           onExit: () => {
-            // component?.$destroy()
             if (component) unmount(component)
+            component = null
+            range = null
             container?.remove()
             cleanupOutsideHandlers?.()
             cleanupOutsideHandlers = null
-            userTriggered = false
           }
         }
       }
