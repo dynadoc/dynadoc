@@ -55,6 +55,15 @@
     badge?: string
   }
 
+  // The Design tool bar replaces the activity items while a Design canvas is
+  // the active node view. Derived here rather than toggled from the canvas
+  // with querySelector: the canvas ran that once, so a bar mounted later (a
+  // collapsed sidebar opened by the click on the canvas) kept its tools hidden.
+  const _activeDocumentNodeview = _$_wysiwygEditorsList.getActiveNodeviewOfActiveDocumentStore()
+  const _designToolsActive = $derived(
+    $_activeDocumentNodeview?.type === CustomDesignExtensionProps.name
+  )
+
   const activeDocumentEditorStore = _$_documentEditorsList.getActive()
   let activeEditor = $derived($activeDocumentEditorStore)
   let activeWysiwyg: WysiwygEditorEntry | undefined
@@ -261,11 +270,15 @@
     <i class="ph-bold ph-x"></i>
   </button>
   <!-- {#if Object.values(Utils.IMAGE_EXTENSIONS).includes(activeEditor?.document?.extension) || activeNodeview?.type == CustomDesignExtensionProps.name} -->
-  <div id="image-editor-toolbar-bar-pane" class="hidden">
+  <div
+    id="image-editor-toolbar-bar-pane"
+    class="hidden"
+    style:display={_designToolsActive ? 'block' : null}
+  >
     <VerticalToolBar></VerticalToolBar>
   </div>
   <!-- {:else} -->
-  <div id="activity-bar-pane">
+  <div id="activity-bar-pane" style:display={_designToolsActive ? 'none' : null}>
     <div class="flex flex-col items-center justify-between w-full h-full">
       <!-- top items -->
       <div class="activity-group flex flex-col items-center gap-1 mt-2">

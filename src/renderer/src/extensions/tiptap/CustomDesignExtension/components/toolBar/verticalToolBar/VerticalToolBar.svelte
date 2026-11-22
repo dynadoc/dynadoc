@@ -15,10 +15,7 @@
   } from '../../../../../../components/common/actions/formatting'
   import { _$_canvasCommands } from '../../../../../../stores/canvas.store'
   import type { CanvasCommands } from '../../../../../../commands/canvasCommands.types'
-  import {
-    _$_documentEditorsList,
-    _$_wysiwygEditorsList
-  } from '../../../../../../stores/editor.store'
+  import { _$_wysiwygEditorsList } from '../../../../../../stores/editor.store'
   import Layout from '../../../../../../components/common/layout/layout'
   import { _ as base_, isLoading } from 'svelte-i18n'
   import { ShapeType } from '../../../../../../utils/canvas.utils'
@@ -26,32 +23,12 @@
   import { spectrumIcons } from '../../../../../../components/common/icons/Icons'
   const _ = (key: string) => key
 
-  /* const activeDocumentEditorStore = _$_documentEditorsList.getActive()
-  let _activeEditor = $derived($activeDocumentEditorStore)
-
-  let _activeWysiwyg = $derived(
-    _activeEditor ? _$_wysiwygEditorsList.getEntry(_activeEditor.id) : null
-  )
-
-  let _activeNodeview = $derived(
-    _activeWysiwyg ? _$_wysiwygEditorsList.getActiveNodeview(_activeWysiwyg.id) : null
-  ) */
-
-  // --- 2. Derived Editor Logic ---
-  const activeDocumentEditorStore = _$_documentEditorsList.getActive()
-  let _activeEditor = $derived($activeDocumentEditorStore)
-
-  // let _activeWysiwyg = $derived(
-  //   _activeEditor ? _$_wysiwygEditorsList.getEntry(_activeEditor.id) : null
-  // )
-  let _activeWysiwyg = $derived(
-    _activeEditor ? _$_wysiwygEditorsList.getEntryStore(_activeEditor?.id.toString()) : null
-    // _activeEditor ? _$_wysiwygEditorsList.getEntry(_activeEditor.id.toString()) : null
-  )
-
-  let _activeNodeview = $derived(
-    _activeWysiwyg ? _$_wysiwygEditorsList.getActiveNodeviewStore($_activeWysiwyg?.id) : null
-  )
+  // The active node view of the active document. The lookup goes through the
+  // store so it uses the editor identity the WYSIWYG entries are keyed by: the
+  // document editor's `id` is not that key, and resolving by it left the tool
+  // bar without a node view, hence without canvas commands, so every tool
+  // click was a no-op (#99).
+  const _activeNodeview = _$_wysiwygEditorsList.getActiveNodeviewOfActiveDocumentStore()
 
   // Handle Command Subscription
   let _canvasCommands = $state<CanvasCommands | null>(null)
@@ -63,6 +40,7 @@
       })
       return () => unsubscribe()
     }
+    _canvasCommands = null
   })
 
   function setTool(tool: ImageEditingTools) {

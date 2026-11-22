@@ -102,10 +102,6 @@
   // IMPORTANT: If isMirror is true, we MUST force useNodeViewWrapper to false
   const _shouldWrap = $derived(useNodeViewWrapper && !isMirror)
 
-  const activeNodeviewStore = _$_wysiwygEditorsList.getActiveNodeviewStore(_wysiwygEditorIdToUpdate)
-
-  const _showToolBar = $derived($activeNodeviewStore?.id == _designId)
-
   let _collabDocId = $state('')
   $effect(() => {
     if (_parentDoc && _src) {
@@ -115,54 +111,9 @@
     }
   })
 
-  $effect(() => {
-    console.log('Syncing shapes _showToolBar', { _showToolBar })
+  // Which panes show (Design tools or the regular activity bar and sidebar) is
+  // derived by ActivityBar and SecondarySideBar from the active node view.
 
-    if (_showToolBar) {
-      // show('leftSidebar')
-      // show('secondarySidebar')
-    }
-    // 1. Select all 4 elements
-    const imageToolbar = document.querySelector(
-      '#image-editor-toolbar-bar-pane'
-    ) as HTMLElement | null
-    const activityBar = document.querySelector('#activity-bar-pane') as HTMLElement | null
-    const imageSideBar = document.querySelector(
-      '#image-editor-secondary-side-bar-pane'
-    ) as HTMLElement | null
-    const wysiwygSideBar = document.querySelector(
-      '#wysiwyg-secondary-side-bar-pane'
-    ) as HTMLElement | null
-
-    // 2. Defensive check: only proceed if the primary toggle elements exist
-    if (!imageToolbar || !activityBar) return
-
-    const showToolBar = _showToolBar
-
-    console.log('Pane Switcher Logic:', {
-      showToolBar,
-      designId: _designId,
-      activeId: $activeNodeviewStore?.id
-    })
-
-    if (showToolBar) {
-      // Show Image Editor UI
-      imageToolbar.style.display = 'block'
-      if (imageSideBar) imageSideBar.style.display = 'block'
-
-      // Hide Standard WYSIWYG UI
-      activityBar.style.display = 'none'
-      if (wysiwygSideBar) wysiwygSideBar.style.display = 'none'
-    } else {
-      // Hide Image Editor UI
-      imageToolbar.style.display = 'none'
-      if (imageSideBar) imageSideBar.style.display = 'none'
-
-      // Show Standard WYSIWYG UI
-      activityBar.style.display = 'block'
-      if (wysiwygSideBar) wysiwygSideBar.style.display = 'block'
-    }
-  })
   // export let __designId = "id1"
   // export let __designPath = "~/Library/Application Support/ddoc-office/ddoc-office/test/assets/design/Design.json"
   // export let __designHeight: number = null

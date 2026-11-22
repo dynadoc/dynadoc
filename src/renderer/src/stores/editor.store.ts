@@ -100,11 +100,11 @@ import { getStorageDirCached } from '../utils/storageDir'
 import { clearAllShareCaches, clearShareCache, shareCacheIdFromPath } from '../utils/shareCache'
 import { nodeApi } from '../utils/shims/node'
 
-const normalizeEditorId = (value?: string | number | null): string =>
-  value === null || value === undefined ? '' : value.toString()
-
-const resolveEditorIdentity = (editor?: DocumentEditorModel | null): string =>
-  normalizeEditorId(editor?.uuid || editor?.document?.uuid || editor?.id)
+import {
+  findActiveNodeviewForEditor,
+  normalizeEditorId,
+  resolveEditorIdentity
+} from '../utils/editorIdentity'
 
 const matchesEditorIdentity = (
   editor: DocumentEditorModel | null | undefined,
@@ -660,6 +660,19 @@ export const _$_wysiwygEditorsList = {
       // 2. Return the active NodeView within THAT editor
       return editor?.nodeViews?.find((nv) => nv.isActive)
     })
+  },
+
+  /**
+   * The active node view of the active document's WYSIWYG editor.
+   *
+   * Entries are keyed by the editor identity (see utils/editorIdentity), not
+   * by the document editor's `id`: resolving it here keeps every consumer on
+   * the same lookup instead of each one guessing the key.
+   */
+  getActiveNodeviewOfActiveDocumentStore(): Readable<WysiwygEditorNodeviewEntry | undefined> {
+    return derived([_$_documentEditorsList.getActive(), wysiwygStore], ([$activeDoc, $list]) =>
+      findActiveNodeviewForEditor($list, $activeDoc)
+    )
   },
 
   getActiveNodeview(editorId: string): WysiwygEditorNodeviewEntry | undefined {

@@ -56,6 +56,13 @@
   import BrowserWidget from '../../browser/BrowserWidget.svelte'
   import ChartInspectorPane from './components/ChartInspectorPane.svelte'
 
+  // Layers and the other Design panels replace this sidebar while a Design
+  // canvas is the active node view (see ActivityBar for why it is derived).
+  const _activeDocumentNodeview = _$_wysiwygEditorsList.getActiveNodeviewOfActiveDocumentStore()
+  const _designPanelsActive = $derived(
+    $_activeDocumentNodeview?.type === CustomDesignExtensionProps.name
+  )
+
   const activeDocumentEditorStore = _$_documentEditorsList.getActive()
   let activeEditor = $derived($activeDocumentEditorStore)
   let activeWysiwyg: WysiwygEditorEntry, activeNodeview: WysiwygEditorNodeviewEntry
@@ -98,12 +105,20 @@
   class:mobile-sidebar-open={$_$_secondarySidebarVisible}
 >
   <!-- {#if Object.values(Utils.IMAGE_EXTENSIONS).includes(activeEditor?.document?.extension) || activeNodeview?.type == CustomDesignExtensionProps.name} -->
-  <div id="image-editor-secondary-side-bar-pane" class="hidden">
+  <div
+    id="image-editor-secondary-side-bar-pane"
+    class="hidden"
+    style:display={_designPanelsActive ? 'block' : null}
+  >
     <SecondarySideBar></SecondarySideBar>
     <!-- <Layers></Layers> -->
   </div>
   <!-- {:else} -->
-  <div id="wysiwyg-secondary-side-bar-pane" class="h-full min-h-0 flex flex-col">
+  <div
+    id="wysiwyg-secondary-side-bar-pane"
+    class="h-full min-h-0 flex flex-col"
+    style:display={_designPanelsActive ? 'none' : null}
+  >
     <!-- <div class="sidebar-content scrollable-section"> -->
     <!-- <h2 class="text-xl font-bold mb-4">Right second Sidebar</h2> -->
     <!-- {#if $_$_activeSecondarySidebarItem} -->

@@ -376,7 +376,7 @@
     const strokeWidth = (shape.strokeWidth ?? 1) * DPR
     const strokeColor = shape.stroke
       ? parseColor(_CanvasKit, shape.stroke)
-      : _CanvasKit.Color(0.6, 0.6, 0.6, 0.8)
+      : _CanvasKit.Color4f(0.6, 0.6, 0.6, 0.8)
 
     strokePaint.setStrokeWidth(strokeWidth)
     strokePaint.setColor(strokeColor)
@@ -394,7 +394,9 @@
     activePaint.delete();
   } */
 
-    if (shape.id === activeShapeId) {
+    // The selection lives in the shared shape map (a shape drawn or picked from
+    // the Layers panel is selected there), not only in the local drag state.
+    if (shape.selected || shape.id === activeShapeId) {
       const x = shape.x * DPR
       const y = shape.y * DPR
       const w = shape.w * DPR
@@ -404,7 +406,7 @@
       const boxPaint = new _CanvasKit.Paint()
       boxPaint.setStyle(_CanvasKit.PaintStyle.Stroke)
       boxPaint.setStrokeWidth(1 * DPR)
-      boxPaint.setColor(_CanvasKit.Color(0, 0.47, 0.84, 1))
+      boxPaint.setColor(_CanvasKit.Color4f(0, 0.47, 0.84, 1))
       _canvas.drawRect(_CanvasKit.XYWHRect(x, y, w, h), boxPaint)
       boxPaint.delete()
 
@@ -414,12 +416,12 @@
 
       const handlePaint = new _CanvasKit.Paint()
       handlePaint.setStyle(_CanvasKit.PaintStyle.Fill)
-      handlePaint.setColor(_CanvasKit.Color(1, 1, 1, 1)) // White fill
+      handlePaint.setColor(_CanvasKit.Color4f(1, 1, 1, 1)) // White fill
 
       const handleStroke = new _CanvasKit.Paint()
       handleStroke.setStyle(_CanvasKit.PaintStyle.Stroke)
       handleStroke.setStrokeWidth(1 * DPR)
-      handleStroke.setColor(_CanvasKit.Color(0, 0.47, 0.84, 1)) // Blue border
+      handleStroke.setColor(_CanvasKit.Color4f(0, 0.47, 0.84, 1)) // Blue border
 
       // Define positions: [x, y] for each handle
       const positions = [
@@ -464,15 +466,17 @@
         _canvas.drawOval(rect, paint)
         break
 
-      case ShapeType.Triangle:
-        const path = new _CanvasKit.Path()
-        path.moveTo(rect[0] + rect[2] / 2, rect[1]) // Top Center
-        path.lineTo(rect[0] + rect[2], rect[1] + rect[3]) // Bottom Right
-        path.lineTo(rect[0], rect[1] + rect[3]) // Bottom Left
-        path.close()
+      case ShapeType.Triangle: {
+        // Paths are immutable in this CanvasKit (Path has no moveTo, the
+        // draw threw); they are built with PathBuilder. `rect` is LTRB.
+        const [left, top, right, bottom] = rect
+        const builder = new _CanvasKit.PathBuilder()
+        builder.addPolygon([(left + right) / 2, top, right, bottom, left, bottom], true)
+        const path = builder.detachAndDelete()
         _canvas.drawPath(path, paint)
         path.delete()
         break
+      }
 
       case ShapeType.Text:
         // Text logic usually handled by Tiptap overlay,
