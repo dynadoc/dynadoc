@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0](https://github.com/dynadoc/dynadoc/compare/v1.3.1...v1.4.0) (2026-11-22)
+
+
+### Features
+
+* **editor:** replace the floating editor buttons with a mode bar ([#97](https://github.com/dynadoc/dynadoc/issues/97)) ([adc3540](https://github.com/dynadoc/dynadoc/commit/adc3540454ba69ffb9602e48bc5389265f4ee911))
+* **slides:** presentations with slideshow, live variables and .pptx ([#89](https://github.com/dynadoc/dynadoc/issues/89)) ([ea25119](https://github.com/dynadoc/dynadoc/commit/ea2511926274a7f90fce2ae98b6e640b0b17538a))
+* **variables:** redesign the @ menu as an inline autocomplete ([#91](https://github.com/dynadoc/dynadoc/issues/91)) ([3664c77](https://github.com/dynadoc/dynadoc/commit/3664c77372703e566547f68310b8875bb2bddf18))
+
+
+### Fixes
+
+* **variables:** keep text values that look like dates as typed ([#96](https://github.com/dynadoc/dynadoc/issues/96)) ([dea9adc](https://github.com/dynadoc/dynadoc/commit/dea9adcda4c6cb44e4d719e35888349ba801b019))
+* **variables:** stop reading vars.json on every variable lookup ([#95](https://github.com/dynadoc/dynadoc/issues/95)) ([3c00160](https://github.com/dynadoc/dynadoc/commit/3c001601cf7810e4456b11625baadf95cab2a280))
+
 ## [1.3.1](https://github.com/dynadoc/dynadoc/compare/v1.3.0...v1.3.1) (2026-11-22)
 
 
