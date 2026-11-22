@@ -8,6 +8,9 @@
  * - utils/nodeviewContextMenu.ts builds the canvas context menu. Its template
  *   crosses IPC, so it must be plain data: one carrying the click handlers
  *   threw "An object could not be cloned" and no menu opened (#100).
+ * - CustomDesignExtension/utils/canvasSurface.ts picks the drawing surface:
+ *   WebGL, else CanvasKit's software surface, else a reason to show. WebGL
+ *   was the only path, and its exception left the canvas blank (#101).
  *
  * Checked here without starting the app.
  */
@@ -188,10 +191,92 @@ async function load(relPath) {
   check('web: the in-app items are handed over', webSent[0]?.length, 2)
 }
 
+// --- #101: a surface without WebGL, or a reason instead of a blank canvas ---
+{
+  const m = await load(
+    'src/renderer/src/extensions/tiptap/CustomDesignExtension/utils/canvasSurface.ts'
+  )
+  const canvas = { isConnected: true, parentNode: null }
+  const gl = { kind: 'gl' }
+  const sw = { kind: 'sw' }
+  const ck = (webgl, software) => ({
+    MakeWebGLCanvasSurface: () => {
+      if (webgl instanceof Error) throw webgl
+      return webgl
+    },
+    MakeSWCanvasSurface: () => {
+      if (software instanceof Error) throw software
+      return software
+    }
+  })
+
+  check(
+    'WebGL available: WebGL surface',
+    m.createCanvasSurface(ck(gl, sw), canvas, { webgl: true }).mode,
+    'webgl'
+  )
+  const noGl = m.createCanvasSurface(ck(new Error('must not be called'), sw), canvas, {
+    webgl: false
+  })
+  check(
+    'no WebGL: software surface, WebGL not even tried',
+    [noGl.mode, noGl.surface],
+    ['software', sw]
+  )
+  const glThrows = m.createCanvasSurface(
+    ck(new Error('failed to create webgl context: err 0'), sw),
+    canvas,
+    { webgl: true }
+  )
+  check(
+    'WebGL throws (what left the canvas blank): software surface',
+    [glThrows.mode, glThrows.surface, /webgl context/.test(glThrows.error)],
+    ['software', sw, true]
+  )
+  const none = m.createCanvasSurface(ck(null, new Error('no 2d context')), canvas, { webgl: true })
+  check(
+    'neither works: no surface and a reason to show',
+    [none.mode, none.surface, none.error],
+    ['none', null, 'WebGL surface could not be created; software: no 2d context']
+  )
+
+  // CanvasKit's own fallback swaps the element for a clone; the clone is used.
+  const replaced = { isConnected: true }
+  const parent = { querySelector: (sel) => (sel === 'canvas.ck-replaced' ? replaced : null) }
+  const swapped = { isConnected: true, parentNode: parent }
+  const swapping = {
+    MakeWebGLCanvasSurface: () => {
+      swapped.isConnected = false
+      return sw
+    },
+    MakeSWCanvasSurface: () => null
+  }
+  const r = m.createCanvasSurface(swapping, swapped, { webgl: true })
+  check(
+    'replaced canvas: drawn and listened to on the clone',
+    [r.mode, r.canvas === replaced],
+    ['software', true]
+  )
+
+  check(
+    'WebGL probe',
+    [
+      m.isWebGLAvailable(() => ({ getContext: (id) => (id === 'webgl' ? {} : null) })),
+      m.isWebGLAvailable(() => ({ getContext: () => null })),
+      m.isWebGLAvailable(() => {
+        throw new Error('no document')
+      })
+    ],
+    [true, false, false]
+  )
+}
+
 rmSync(outDir, { recursive: true, force: true })
 
 if (failures > 0) {
   console.error(`\n[design-canvas] FAILED: ${failures} check(s) did not hold.`)
   process.exit(1)
 }
-console.log('\n[design-canvas] OK: the Design canvas finds its node view and opens its menu')
+console.log(
+  '\n[design-canvas] OK: the Design canvas finds its node view, opens its menu and always draws or says why'
+)

@@ -25,6 +25,11 @@
   } from '../../utils/utils'
   import type { CanvasCommands } from '../../../../../commands/canvasCommands'
   import { parseColor } from '../../utils/design.utils'
+  import {
+    createCanvasSurface,
+    isWebGLAvailable,
+    type CanvasRenderMode
+  } from '../../utils/canvasSurface'
   /* let {
     __canvaPath,
     __shapes,
@@ -119,6 +124,10 @@
   const DPR = window.devicePixelRatio || 1
 
   let _canvasEl: HTMLCanvasElement
+  // How the canvas renders: WebGL, CanvasKit's software surface, or not at all
+  // (then the canvas shows why instead of staying blank).
+  let _renderMode = $state<CanvasRenderMode | 'pending'>('pending')
+  let _renderError = $state('')
   let _CanvasKit: CanvasKit
   let _surface: any
   let _canvas: any
@@ -884,14 +893,32 @@
 
     // const CanvasKitInit = (await import('canvaskit-wasm')).default
 
-    _CanvasKit = await CanvasKitInit({
-      locateFile: () => canvasKitWasmUrl
-    })
+    try {
+      _CanvasKit = await CanvasKitInit({
+        locateFile: () => canvasKitWasmUrl
+      })
+    } catch (error) {
+      _renderMode = 'none'
+      _renderError = error instanceof Error ? error.message : String(error)
+      console.error('[design] CanvasKit failed to load', error)
+      return
+    }
     setupCanvasSize(__canvaWidth || 500, __canvaHeight || 500)
-    _surface = _CanvasKit.MakeCanvasSurface(_canvasEl)
-    console.log('syncPosition onMount2', { _syncTick })
+    // WebGL where the device has it, a software surface where it has not
+    // (#101); never an exception out of onMount that leaves a blank canvas.
+    const created = createCanvasSurface(_CanvasKit, _canvasEl, { webgl: isWebGLAvailable() })
+    _renderMode = created.mode
+    _renderError = created.error ?? ''
+    _canvasEl = created.canvas
+    if (!created.surface) {
+      console.error('[design] no drawing surface:', created.error)
+      return
+    }
+    if (created.mode === 'software') {
+      console.info('[design] rendering in software:', created.error)
+    }
+    _surface = created.surface
     _canvas = _surface.getCanvas()
-    console.log('syncPosition onMount23', { _syncTick })
 
     // _CanvasKit = await CanvasKitInit({
     //   locateFile: (f) => `/canvaskit/${f}`
@@ -985,6 +1012,21 @@
         height={__canvaHeight}
       ></canvas>
 
+      {#if _renderMode === 'none'}
+        <div class="design-canvas-unavailable" role="alert">
+          <i class="ph-light ph-warning-circle text-[28px]" aria-hidden="true"></i>
+          <p class="font-semibold">{$_('The Design canvas cannot be displayed')}</p>
+          <p>
+            {$_(
+              'This device provides no WebGL and the software renderer could not start. Your design is saved and will show where graphics are available.'
+            )}
+          </p>
+          {#if _renderError}
+            <p class="design-canvas-unavailable-detail">{_renderError}</p>
+          {/if}
+        </div>
+      {/if}
+
       {#each _shapeList as shape (shape.id)}
         {#if shape.type == 'text'}
           <SkiaTextShape
@@ -1017,3 +1059,32 @@
     </div>
   </svelte:fragment>
 </ImageEditorUI>
+
+<style>
+  .design-canvas-unavailable {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-base-content, #374151);
+    background: var(--color-base-100, #f9fafb);
+    border: 1px dashed rgba(0, 0, 0, 0.2);
+  }
+
+  .design-canvas-unavailable p {
+    margin: 0;
+    max-width: 420px;
+  }
+
+  .design-canvas-unavailable-detail {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+</style>
