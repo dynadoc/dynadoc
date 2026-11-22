@@ -16,6 +16,11 @@
   import { authStore } from '../../../../stores/auth.store'
   import { resolveLocalCollabPresence } from '../../../../utils/collabPresence'
   import { buildCollabDocId, resolveShareContext } from '../../../../utils/collabUtils'
+  import {
+    showNodeviewContextMenu,
+    type NodeviewMenuEntry
+  } from '../../../../utils/nodeviewContextMenu'
+  import Platform from '../../../../libs/platform'
 
   interface Props {
     node?: any
@@ -143,60 +148,56 @@
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault()
+    // The document's own text menu would open on top of this one otherwise.
+    event.stopPropagation()
     setActiveNodeview()
-    window.api?.showContextMenu?.([
-      {
-        label: 'In line with text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('inline')
-      },
-      { type: 'separator' },
-      {
-        label: 'Center',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('center')
-      },
-      {
-        label: 'Full width',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('full')
-      },
-      {
-        label: 'Float left',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-left')
-      },
-      {
-        label: 'Float right',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-right')
-      },
-      { type: 'separator' },
-      {
-        label: 'In front of text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('front')
-      },
-      {
-        label: 'Behind text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('behind')
-      },
-      { type: 'separator' },
-      {
-        label: 'Nudge left',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(-10, 0)
-      },
-      {
-        label: 'Nudge right',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(10, 0)
-      },
-      {
-        label: 'Nudge up',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, -10)
-      },
-      {
-        label: 'Nudge down',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, 10)
-      },
-      {
-        label: 'Reset position',
-        click: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
-      }
-    ])
+    const layout = (value: string) => () =>
+      GenericFormatingEditorCommands.setActiveNodeviewLayout?.(value)
+    const nudge = (dx: number, dy: number) => () =>
+      GenericFormatingEditorCommands.nudgeActiveNodeview?.(dx, dy)
+
+    // A right-click on an object selects it first (SkiaCanva), so the
+    // selection is what the object entries act on.
+    const selectedIds = _commands?.getSelectedIds?.() ?? []
+    const objectEntries: NodeviewMenuEntry[] = selectedIds.length
+      ? [
+          {
+            label: $_('Duplicate'),
+            run: () => selectedIds.forEach((id) => _commands?.duplicateShape(id))
+          },
+          { label: $_('Bring forward'), run: () => _commands?.bringForward() },
+          { label: $_('Send backward'), run: () => _commands?.sendBackward() },
+          { label: $_('Delete'), run: () => _commands?.deleteSelected() },
+          { separator: true }
+        ]
+      : []
+
+    // Plain entries: the menu helper turns them into a clone-safe template
+    // for the native menu and keeps the handlers here (#100).
+    showNodeviewContextMenu(
+      [
+        ...objectEntries,
+        { label: $_('In line with text'), run: layout('inline') },
+        { separator: true },
+        { label: $_('Center'), run: layout('center') },
+        { label: $_('Full width'), run: layout('full') },
+        { label: $_('Float left'), run: layout('float-left') },
+        { label: $_('Float right'), run: layout('float-right') },
+        { separator: true },
+        { label: $_('In front of text'), run: layout('front') },
+        { label: $_('Behind text'), run: layout('behind') },
+        { separator: true },
+        { label: $_('Nudge left'), run: nudge(-10, 0) },
+        { label: $_('Nudge right'), run: nudge(10, 0) },
+        { label: $_('Nudge up'), run: nudge(0, -10) },
+        { label: $_('Nudge down'), run: nudge(0, 10) },
+        {
+          label: $_('Reset position'),
+          run: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
+        }
+      ],
+      Platform.isDesktopPlatform
+    )
   }
 
   const _placeholderHeight = $derived(

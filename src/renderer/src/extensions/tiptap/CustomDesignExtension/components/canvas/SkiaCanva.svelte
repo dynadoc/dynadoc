@@ -724,6 +724,15 @@
 
     const pos = getCanvasPos(e, _canvasEl)
 
+    // A secondary button only picks what the context menu acts on: it never
+    // draws, types or starts a drag. An object already in the selection keeps
+    // the whole selection.
+    if (e.button !== 0) {
+      const hit = hitTest(pos.x, pos.y)
+      if (!hit || !__canvaCommands.getSelectedIds().includes(hit.id)) __onSelect?.(hit?.id)
+      return
+    }
+
     // 1. PRIORITIZE TOOL: If drawing a rectangle, don't try to drag
     const tool = __canvaCommands.getSelectedTool()
     if (tool === ImageEditingTools.Type) {

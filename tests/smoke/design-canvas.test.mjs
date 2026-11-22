@@ -5,6 +5,9 @@
  *   of a document editor. The Design tool bar looked it up by the document
  *   editor's `id` while entries are keyed by its identity (uuid, path), found
  *   nothing, and every tool click was a no-op (#99).
+ * - utils/nodeviewContextMenu.ts builds the canvas context menu. Its template
+ *   crosses IPC, so it must be plain data: one carrying the click handlers
+ *   threw "An object could not be cloned" and no menu opened (#100).
  *
  * Checked here without starting the app.
  */
@@ -115,10 +118,80 @@ async function load(relPath) {
   )
 }
 
+// --- #100: the context menu template must survive structured clone ---------
+{
+  const m = await load('src/renderer/src/utils/nodeviewContextMenu.ts')
+  const calls = []
+  const entries = [
+    { separator: true },
+    { label: 'Duplicate', run: () => calls.push('dup') },
+    { separator: true },
+    { separator: true },
+    { label: 'Center', run: () => calls.push('center') },
+    { separator: true }
+  ]
+  const { template, actions } = m.buildNativeMenu(entries, 3)
+
+  let cloneError = null
+  try {
+    structuredClone(template)
+  } catch (error) {
+    cloneError = error.name
+  }
+  check('the native template is structured-clone safe', cloneError, null)
+  let oldCloneError = null
+  try {
+    structuredClone([{ label: 'Center', click: () => {} }])
+  } catch (error) {
+    oldCloneError = error.name
+  }
+  check('(the old template, with click handlers, was not)', oldCloneError, 'DataCloneError')
+  check('labels, one clickId each, no stray separators', template, [
+    { label: 'Duplicate', clickId: 'nodeview-menu:3:1' },
+    { type: 'separator' },
+    { label: 'Center', clickId: 'nodeview-menu:3:4' }
+  ])
+  actions.get('nodeview-menu:3:4')()
+  check('a clickId runs its own handler', calls, ['center'])
+
+  const web = m.buildWebMenu(entries)
+  check(
+    'in-app menu: actions kept, separators become groups',
+    web.map((i) => [i.label, i.group, typeof i.action]),
+    [
+      ['Duplicate', 0, 'function'],
+      ['Center', 1, 'function']
+    ]
+  )
+
+  // Desktop: plain template over the bridge, handler run on the answer.
+  const sent = []
+  let listener = null
+  let unsubscribed = 0
+  const bridge = {
+    showContextMenu: (t) => sent.push(structuredClone(t)),
+    onInvokeMenuAction: (cb) => {
+      listener = cb
+      return () => unsubscribed++
+    }
+  }
+  calls.length = 0
+  m.showNodeviewContextMenu(entries, true, bridge)
+  const firstId = sent[0]?.[0]?.clickId
+  listener?.(null, 'insert:table')
+  listener?.(null, firstId)
+  check('desktop: template sent, foreign ids ignored, the chosen entry runs', calls, ['dup'])
+  check('desktop: the listener is dropped once answered', unsubscribed, 1)
+
+  const webSent = []
+  m.showNodeviewContextMenu(entries, false, { showContextMenu: (t) => webSent.push(t) })
+  check('web: the in-app items are handed over', webSent[0]?.length, 2)
+}
+
 rmSync(outDir, { recursive: true, force: true })
 
 if (failures > 0) {
   console.error(`\n[design-canvas] FAILED: ${failures} check(s) did not hold.`)
   process.exit(1)
 }
-console.log('\n[design-canvas] OK: the Design canvas finds its node view')
+console.log('\n[design-canvas] OK: the Design canvas finds its node view and opens its menu')

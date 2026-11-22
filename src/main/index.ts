@@ -3722,6 +3722,7 @@ app.whenReady().then(async () => {
   // Handle showing menu
   ipcMain.handle('show-context-menu', (event, template) => {
     const menuTemplate = template.map((item) => {
+      if (item?.type === 'separator') return { type: 'separator' as const }
       let icon
       if (item.iconPath && fs.existsSync(item.iconPath)) {
         icon = nativeImage.createFromPath(item.iconPath)

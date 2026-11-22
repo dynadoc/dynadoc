@@ -249,13 +249,18 @@ const api = {
   // showContextMenu: (template: Electron.MenuItemConstructorOptions[]) =>
   //   ipcRenderer.invoke('show-context-menu', template)
 
+  // Plain data only: the template is structured-cloned over IPC, so handlers
+  // stay in the renderer and are reached through clickId + onInvokeMenuAction.
   showContextMenu: (
-    template: {
-      label: string
-      iconPath?: string
-      accelerator?: string
-      clickId: string
-    }[]
+    template: (
+      | {
+          label: string
+          iconPath?: string
+          accelerator?: string
+          clickId: string
+        }
+      | { type: 'separator' }
+    )[]
   ) => ipcRenderer.invoke('show-context-menu', template),
 
   registerMenuAction: (id: string, _fn: () => void) =>
