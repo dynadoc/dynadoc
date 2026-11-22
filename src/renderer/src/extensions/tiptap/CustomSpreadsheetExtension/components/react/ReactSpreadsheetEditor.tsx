@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { Workbook } from "@fortune-sheet/react";
 import "@fortune-sheet/react/dist/index.css";
 import "../../libs/fortune-sheet/app.css";
+import '../../libs/fortune-sheet/direction.css'
 import React, { useEffect, useRef, useState } from "react"
 import * as Y from "yjs";
 import { createSheetYjs } from "../../collab/collab";
@@ -381,6 +382,8 @@ export default function ReactSpreadsheetEditor({
   return (
     <div
       ref={containerRef}
+      // FortuneSheet only supports LTR layout: keep it LTR under an RTL page
+      dir="ltr"
       className={`w-full h-full fortune-theme-${theme || 'dark'} ${readOnly ? "sheet-readonly" : ""}`}
       onPointerDownCapture={(event) => {
         if (readOnly) {
