@@ -737,18 +737,21 @@ const findVariableByName = (
   return null
 }
 
+// Synchronous and in memory only: it runs for every chip, sheet cell and
+// change listener, several times per saved variable. It used to start an
+// async read of vars.json (getVarsForEditor) whose Promise it could not use,
+// thousands of reads per save once a document had a few dozen chips and
+// variables: enough to freeze the window and run the main process out of
+// file descriptors (EMFILE). tests/smoke/variable-lookup-io.test.mjs.
 const resolveVariableId = (
   nameOrId: string,
   editor: DocumentEditorModel | null,
-  nodeId?: string
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for the callers' signature
+  _nodeId?: string
 ): string | null => {
   if (!nameOrId) return null
-  const vars = getVarsForEditor(editor)
-  if (vars[nameOrId]) return nameOrId
   if (isUuid(nameOrId)) return nameOrId
   const docId = getDocumentId(editor)
-  const match = findVariableByName(vars, nameOrId, docId, nodeId)
-  if (match?.id) return match.id
 
   const variableMap = docId ? _variableMaps.get(docId) : null
   if (variableMap) {
@@ -2399,7 +2402,9 @@ export function renameVariable(
     return
   }
 
-  const vars = getVarsForEditor(resolvedEditor)
+  // From memory: getVarsForEditor is async and would hand back a Promise.
+  const vars: Record<string, VariableValue> = {}
+  for (const [id, entry] of variableMap) vars[id] = entry.rawValue as VariableValue
   const dupe = findVariableByName(
     vars,
     nextName,
