@@ -45,8 +45,9 @@
     "test:smoke:sheet-variables": "node tests/smoke/sheet-variables.test.mjs",
     "test:smoke:variable-format": "node tests/smoke/variable-format.test.mjs",
     "test:smoke:sheet-ref-loading": "node tests/smoke/sheet-ref-loading.test.mjs",
+    "test:smoke:variable-lookup-io": "node tests/smoke/variable-lookup-io.test.mjs",
     "test:security:crypto": "node tests/security/chunked-crypto.test.mjs",
-    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:security:crypto",
+    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:smoke:variable-lookup-io && npm run test:security:crypto",
     "check:file-urls": "node scripts/find-file-url-sites.mjs",
     "ci:check": "npm run check:cycles && npm run typecheck",
     "prepare": "husky"
