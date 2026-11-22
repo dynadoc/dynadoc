@@ -36,6 +36,8 @@ export const pageWidth = 794;
 // export const pageHeight = 1123;
 // export const pageWidth = 794;
 export const animationStep = writable(0)
+/** When the running show started (ms): the presenter's elapsed time counts from it. */
+export const showStartedAt = writable(Date.now())
 export const animationCount = writable(0)
 // export const animations = writable<Element>([])
 

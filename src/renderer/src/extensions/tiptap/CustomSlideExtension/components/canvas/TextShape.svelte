@@ -4,7 +4,9 @@
 
   import { onDestroy, onMount } from 'svelte'
   import Konva from 'konva'
+  import { applySlideZOrder } from './zOrder'
   import { Editor } from '@tiptap/core'
+  import { Selection } from '@tiptap/pm/state'
   import { gsap } from 'gsap'
   import StarterKit from '@tiptap/starter-kit'
   import Collaboration from '@tiptap/extension-collaboration'
@@ -13,9 +15,12 @@
   import CollaborationCaret from '@tiptap/extension-collaboration-caret'
   import EditorExtensionHelpers from '../../../../../utils/EditorExtensionHelpers'
   import { CustomAnimationExtension } from '../../../CustomAnimationExtension/CustomAnimationExtension'
+  import { CustomVarExtensionProps } from '../../../CustomVarExtension/utils/common.utils'
+  import { CustomSlashCommandExtensionProps } from '../../../CustomSlashCommandExtension/utils/common.utils'
   import { smartSnapping } from '../../../../konva/snapping'
   import type { CanvasCommands } from '../../../../../commands/canvasCommands.types'
   import { _$_canvasCommands } from '../../../../../stores/canvas.store'
+  import { _$_slideTextToEdit } from '../../stores/slide.store'
   import type { Shape } from '../../../../../utils/canvas.types'
   import { GenericFormatingEditorCommands } from '../../../../../components/common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
   //   import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
@@ -31,7 +36,9 @@
     __nodeMap, 
     __provider, 
     __awareness, 
-    __onSelect 
+    __onSelect,
+    // The presentation's editor id: `@` and variable chips use its variables.
+    __editorId = null
   } = $props();
 
   // 2. State variables
@@ -57,6 +64,7 @@
   } | null = null;
 
   let slideCommands: CanvasCommands | null = $state(null);
+  let _stopEditRequests: (() => void) | null = null;
   let _animationArmed = false;
 
   function runAnimation() {
@@ -107,7 +115,7 @@
       _group.rotation(__shape.rotation || 0);
       _rect.size({ width: __shape.w, height: __shape.h });
       _rect.rotation(0);
-      _group.zIndex(__shape.z ?? 0);
+      applySlideZOrder(_group, __shape.z ?? 0);
 
       __layer.batchDraw();
       syncEditorPosition();
@@ -160,7 +168,7 @@
     // Update rect size
     _rect.size({ width: __shape.w, height: __shape.h })
     _rect.rotation(__shape.rotation || 0)
-    _group.zIndex(__shape.z ?? 0)
+    applySlideZOrder(_group, __shape.z ?? 0)
 
     // Redraw layer
     __layer.batchDraw()
@@ -563,6 +571,21 @@
     _editorEl.addEventListener('focusout', () => {
       exitEditMode()
     })
+    // At the edge of the text the browser would carry the caret out of the
+    // box into the presentation behind the slide: keep it in the box.
+    _editorEl.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (!_editor?.isEditable || e.shiftKey) return
+      const { state, view } = _editor
+      const head = state.selection.$head
+      const last = Selection.atEnd(state.doc).$head
+      const first = Selection.atStart(state.doc).$head
+      const leaves =
+        (e.key === 'ArrowDown' && head.parent === last.parent && view.endOfTextblock('down')) ||
+        (e.key === 'ArrowUp' && head.parent === first.parent && view.endOfTextblock('up')) ||
+        (e.key === 'ArrowRight' && head.pos >= last.pos) ||
+        (e.key === 'ArrowLeft' && head.pos <= first.pos)
+      if (leaves) e.preventDefault()
+    })
     const container = __layer.getStage().container()
     container.tabIndex = 1 // IMPORTANT: makes div focusable
 
@@ -624,6 +647,7 @@
     console.log("Entering edit mode..."); // For debugging
 
     showTransformer()
+    __onSelect?.(__shape.id)
     _isEditing = true
     _group.draggable(false)
     _editorEl.style.pointerEvents = 'auto'
@@ -649,7 +673,8 @@
     // _$_wysiwygEditorsList.unsetActive(__shape.id)
     _isEditing = false
     _group.draggable(false)
-    _editorEl.style.pointerEvents = 'auto'
+    // Not editing: only the text itself takes the pointer (see .text below)
+    _editorEl.style.pointerEvents = 'none'
     _editor.setEditable(false)
   }
 
@@ -778,16 +803,31 @@
 
     _group.add(_rect)
     __layer.add(_group)
+    applySlideZOrder(_group, __shape.z ?? 0)
     __layer.draw()
 
     // Add smart snapping
     // smartSnapping(__stage, __layer)
 
     const extensions = [
+      // A text box has no trailing empty paragraph, and shows its
+      // placeholder ("Click to add title") while not being edited.
       ...EditorExtensionHelpers.getMainWysiwygExtensions(
         _editorEl,
         null,
         __shape.content?.placeholder
+      )
+        // No "/" menu in a text box: its commands insert document blocks
+        // (tables, sheets...) that a slide's text box cannot hold.
+        .filter((extension) => extension?.name !== CustomSlashCommandExtensionProps.name)
+        .map((extension) =>
+        extension?.name === 'starterKit'
+          ? extension.configure({ trailingNode: false })
+          : extension?.name === 'placeholder'
+            ? extension.configure({ showOnlyWhenEditable: false })
+            : extension?.name === CustomVarExtensionProps.name && __editorId
+              ? extension.configure({ editorId: __editorId })
+              : extension
       ),
       CustomAnimationExtension
     ]
@@ -843,15 +883,28 @@
     })
 
     _editor.setEditable(false)
-    _editorEl.style.pointerEvents = 'auto'
+    _editorEl.style.pointerEvents = 'none'
     syncEditorPosition(true)
+    // Ribbon commands (bold, colour, size...) reach a selected text box
+    // through this registration; onDestroy unregisters it.
+    _$_wysiwygEditorsList.register(__shape.id, _editor, '', _editorEl, null, null, false)
 
     wireBlockInteractions()
+
+    // Just inserted from the toolbar: take the keyboard.
+    _stopEditRequests = _$_slideTextToEdit.subscribe((id) => {
+      if (id !== __shape.id) return
+      _$_slideTextToEdit.set(null)
+      requestAnimationFrame(() => {
+        if (_editor && !_editor.isDestroyed) enterEditMode()
+      })
+    })
 
     __nodeMap.set(__shape.id, _group)
   })
 
   onDestroy(() => {
+    _stopEditRequests?.()
     // 1️⃣ Destroy Konva nodes
     // _rect?.destroy()
 
@@ -869,7 +922,14 @@
     __layer?.batchDraw()
 
     // 3️⃣ Optional: unregister editor
-    _$_wysiwygEditorsList.unregister?.(__shape.id)
+    // Deferred: this runs while ProseMirror tears the slide's node view down,
+    // and a synchronous store update there re-enters the editor view.
+    const shapeId = __shape.id
+    const editor = _editor
+    queueMicrotask(() => {
+      _$_wysiwygEditorsList.unregister?.(shapeId)
+      editor?.destroy()
+    })
   })
 </script>
 
@@ -883,12 +943,60 @@
     height: {__shape.h}px;
   "
 > -->
-<div bind:this={_editorEl} class="text"></div>
+<div bind:this={_editorEl} class="text" data-role={__shape?.role ?? 'body'}></div>
 
 <style>
   .text {
     position: absolute;
     pointer-events: auto;
     transform-origin: top left;
+    /* Theme and placeholder sizes; slideContent.ts draws the same for thumbnails and the show. */
+    font-family: var(--slide-body-font, inherit);
+    color: var(--slide-text-color, inherit);
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .text[data-role='title'] {
+    font-family: var(--slide-title-font, inherit);
+    font-size: 44px;
+  }
+  .text[data-role='subtitle'] {
+    font-size: 26px;
+  }
+  /* Outside editing the box lets clicks on its empty area through to the
+     canvas, so shapes under a large text box can still be picked. */
+  .text :global(.ProseMirror > *) {
+    pointer-events: auto;
+  }
+  .text :global(.ProseMirror) {
+    outline: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .text :global(h1),
+  .text :global(h2),
+  .text :global(h3),
+  .text :global(p) {
+    margin: 0 0 0.3em;
+    line-height: 1.2;
+    font-size: inherit;
+    color: inherit;
+    font-family: inherit;
+  }
+  .text :global(h1),
+  .text :global(h2),
+  .text :global(h3) {
+    font-weight: 700;
+  }
+  .text :global(ul) {
+    margin: 0;
+    padding-left: 1.2em;
+    list-style: disc;
+  }
+  .text :global(ol) {
+    margin: 0;
+    padding-left: 1.2em;
+    list-style: decimal;
   }
 </style>

@@ -264,6 +264,7 @@ declare global {
       navigate: (index: number) => void
       focusOnPresentationWindow: () => void
       stop: (scope?: 'presenter' | 'all') => void
+      onStop: (cb: () => void) => void
     }
     meetingAPI: object
     process: object

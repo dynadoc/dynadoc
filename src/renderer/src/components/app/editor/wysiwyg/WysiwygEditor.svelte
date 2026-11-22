@@ -265,6 +265,9 @@
   import { resolveLocalCollabPresence } from '../../../../utils/collabPresence'
   import { isShareCachePath } from '../../../../lib/api/web/node'
   import { nodeApi } from '../../../../utils/shims/node'
+  import SlideSorter from '../../../../extensions/tiptap/CustomSlideExtension/components/deck/SlideSorter.svelte'
+  import SlideNotesBar from '../../../../extensions/tiptap/CustomSlideExtension/components/deck/SlideNotesBar.svelte'
+  import { isSlideDeckInfo } from '../../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
   import {
     decodeStyleBlocksInHtml,
     prepareStyleHtmlForEditor
@@ -317,6 +320,34 @@
 
   const _currentPaperHeight = $derived(Math.round(mmToPixels(_currentPaperDimensions.height)))
   const _isReadOnly = $derived(!!__isReadOnly)
+  // Presentations (new, or imported from .pptx) get the slide sorter and notes.
+  const _documentEditorStore = _$_documentEditorsList.get(__wysiwygEditorId)
+  const _isSlideDeck = $derived(
+    !_isReadOnly && isSlideDeckInfo($_documentEditorStore?.document?.info)
+  )
+  // A presentation's page (one slide wide) is zoomed down to the width there
+  // is, so the slide is never cut off. CSS zoom, unlike a transform, also
+  // shrinks the layout, so no horizontal scrolling is left.
+  let _deckZoom = $state(1)
+  $effect(() => {
+    const shell = _editorContainerRoot as HTMLElement | null
+    const pageWidth = Number(_editorPaginationOptions?.pageWidth) || 1280
+    if (!_isSlideDeck || !shell) {
+      _deckZoom = 1
+      return
+    }
+    let last = 1
+    const fit = (): void => {
+      // the shell's horizontal padding (px-6) and the page's own frame
+      const available = shell.clientWidth - 96
+      const next = Math.max(0.3, Math.min(1, available / pageWidth))
+      if (Math.abs(next - last) > 0.005) _deckZoom = last = next
+    }
+    const observer = new ResizeObserver(fit)
+    observer.observe(shell)
+    fit()
+    return () => observer.disconnect()
+  })
   // export let handleWysiwygChange = (event, content: string = null): void => {}
   // export let handleWysiwygKeydown = (event): void => {}
   // export let handleWysiwygInput = (event): void => {}
@@ -2061,7 +2092,7 @@ if (yXml.length === 0) {
     const coreExtensions = EditorExtensionHelpers.getMainWysiwygExtensions(
       _editorContainer,
       _editorContainerRoot,
-      $_('Type / for commands, @ for variabes, # for dynamic references'),
+      $_('Type / for commands, @ for variables, # for dynamic references'),
       _paginationOptions,
       _paginationImpactedExtensionOptions,
       __wysiwygEditorId,
@@ -2834,7 +2865,10 @@ if (yXml.length === 0) {
 
 <!-- <MeetingFloatingToolbar/> -->
 
-<div class="h-full min-h-0 w-full flex flex-col overflow-hidden">
+<div
+  class="h-full min-h-0 w-full flex flex-col overflow-hidden"
+  class:slide-deck-layout={_isSlideDeck && _editor}
+>
   <!-- <svelte:document on:selectionchange={handleDocumentSelectionChange} /> -->
 
   <InputModal
@@ -2851,6 +2885,13 @@ if (yXml.length === 0) {
     <UtilityBar {_editorPaginationOptions} {_editor} {__wysiwygEditorId} />
   {/if} -->
 
+  {#if _isSlideDeck && _editor}
+    <!-- In the root's left padding (.slide-deck-layout). -->
+    <div class="slide-deck-sorter">
+      <SlideSorter editor={_editor} editorId={__wysiwygEditorId} />
+    </div>
+  {/if}
+
   <!-- Layout with ruler -->
   <div
     id="editor-{__parentContainerKey}"
@@ -2865,7 +2906,7 @@ if (yXml.length === 0) {
       __zoomControlContainer={document.getElementById('status-bar-right')}
       __zoomKey={__filePathToOpenFromDocument || __wysiwygEditorId}
     >
-      <div class="editor-stage">
+      <div class="editor-stage" style:zoom={_isSlideDeck && _deckZoom < 1 ? _deckZoom : null}>
         <div bind:this={_editorContainer} class="editor-container relative">
           {#if $_$_findBar.open && _editor}
             <FindBar editor={_editor} />
@@ -2993,6 +3034,10 @@ if (yXml.length === 0) {
     >
   </div>
 
+  {#if _isSlideDeck && _editor}
+    <SlideNotesBar editor={_editor} />
+  {/if}
+
   <ExportOptionsModal />
 
   {#if !_isReadOnly}
@@ -3006,6 +3051,24 @@ if (yXml.length === 0) {
 </div>
 
 <style lang="postcss">
+  /* A presentation: the slide sorter fills a column on the left, the editor
+     and the notes bar take the rest. */
+  .slide-deck-layout {
+    position: relative;
+    padding-left: 212px;
+  }
+  .slide-deck-sorter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+  }
+  /* A deck's comments are per slide (notes bar): the page's comment gutter,
+     which sits beyond the page's right edge, would only make it scroll. */
+  .slide-deck-layout :global(.ms-gutter-system) {
+    display: none;
+  }
   :global(.editor-shell) {
     @apply relative flex items-start justify-center;
     /* WPS mockup: flat canvas using the --bg token (was a radial gradient) */

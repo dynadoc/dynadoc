@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Konva from 'konva'
+  import { applySlideZOrder } from './zOrder'
   import * as Y from 'yjs'
   import { gsap } from 'gsap'
 
@@ -134,7 +135,7 @@
     if (!_group || !_node || !__shape) return
     _group.position({ x: __shape.x, y: __shape.y })
     _group.rotation(__shape.rotation || 0)
-    _group.zIndex(__shape.z ?? 0)
+    applySlideZOrder(_group, __shape.z ?? 0)
 
     if (_node instanceof Konva.Line) {
       _node.points([0, 0, __shape.w, __shape.h])
@@ -175,7 +176,7 @@
   }
 
   function showTransformer() {
-    if (__locked || !_group || !_layer) return
+    if (__locked || !_group || !__layer) return
     if (!_transformer) {
       _transformer = new Konva.Transformer({
         enabledAnchors: [
@@ -194,16 +195,16 @@
           return newBox
         }
       })
-      _layer.add(_transformer)
+      __layer.add(_transformer)
     }
     _transformer.nodes([_group])
-    _layer.batchDraw()
+    __layer.batchDraw()
   }
 
   function hideTransformer() {
     if (_transformer) {
       _transformer.nodes([])
-      _layer?.batchDraw()
+      __layer?.batchDraw()
     }
   }
 
@@ -298,6 +299,7 @@
     }
 
     __layer.add(_group)
+    applySlideZOrder(_group, __shape.z ?? 0)
     __nodeMap.set(__shape.id, _group)
 
     _group.on('mousedown tap', (e) => {
@@ -325,6 +327,6 @@
     _transformer?.destroy()
     _transformer = null
     _group?.destroy()
-    _nodeMap?.delete(__shape.id)
+    __nodeMap?.delete(__shape.id)
   })
 </script>

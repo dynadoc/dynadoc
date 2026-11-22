@@ -26,6 +26,7 @@
   import { createSlide } from '../collab/collab'
   import SlidesViewport from './slides/SlidesViewport.svelte'
   import type { CanvasCommands } from '../../../../commands/canvasCommands'
+  import { _$_currentSlideId } from '../stores/slide.store'
 
   // ─── Props ────────────────────────────────────────────────────────────────
 
@@ -110,6 +111,13 @@
   const _canvasMaxHeight = $derived(_ghostHeight)
   // Ideal width at 16:9 for the ghost height, but never exceed 100vw (handled by CSS)
   const _canvasIdealWidth = $derived(Math.round(_canvasMaxHeight * SLIDE_RATIO))
+  // The slide keeps its own coordinates (1280x720) and is scaled to fill the
+  // page it sits on, leaving a small margin.
+  const _fitScale = $derived(
+    _maxPageWidth && _maxPageHeight
+      ? Math.min(_maxPageWidth / _ghostWidth, _maxPageHeight / _ghostHeight) * 0.92
+      : 1
+  )
 
   // The ghost style — transparent, exact A4 dimensions, no visual chrome
   const ghostStyle = $derived(`
@@ -227,6 +235,16 @@
       isActive: false
     })
     _$_wysiwygEditorsList.setActiveNodeview(_wysiwygEditorIdToUpdate, node.attrs.id)
+  }
+
+  // The slide pressed becomes the deck's current slide and the target of
+  // ribbon commands.
+  function onSlidePointerDown(): void {
+    const id = node?.attrs?.id ?? null
+    _$_currentSlideId.set(id)
+    if (id && _wysiwygEditorIdToUpdate) {
+      _$_wysiwygEditorsList.setActiveNodeview(_wysiwygEditorIdToUpdate, id)
+    }
   }
 
   function handleContextMenu(event: MouseEvent) {
@@ -379,18 +397,22 @@
     class:is-selected={selected}
     style={ghostStyle}
     oncontextmenu={handleContextMenu}
+    onpointerdowncapture={onSlidePointerDown}
     bind:this={_nodeViewRoot}
     role="presentation"
   >
     <div
-      class="relative h-full bg-hatched-5-important"
+      class="slide-page relative h-full"
       style={`width: ${_maxPageWidth ? `${_maxPageWidth}px` : '100%'};
       height: ${_maxPageHeight ? `${_maxPageHeight}px` : '100%'};
       max-width: ${_maxPageWidth ? `${_maxPageWidth}px` : '100%'};
       max-height: ${_maxPageHeight ? `${_maxPageHeight}px` : '100%'};`}
     >
-      <div class="slide-breakout" style={`top: ${(_maxPageHeight - _ghostHeight) / 2}px;`}>
-        <div class="slide-canvas" style={`max-height: ${_canvasMaxHeight}px;`}>
+      <div class="slide-breakout">
+        <div
+          class="slide-canvas"
+          style={`width: ${_ghostWidth}px; height: ${_ghostHeight}px; transform: scale(${_fitScale});`}
+        >
           {#if _isVisible}
             <SlidesViewport
               __slideId={node.attrs.id}
@@ -419,13 +441,12 @@
 
 <style>
   /* ─── Breakout zone ─── */
+  .slide-page {
+    background: var(--color-base-200, #e5e7eb);
+  }
   .slide-breakout {
     position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    /* height: 100%;
-    width: 100vw; */
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -438,7 +459,8 @@
   .slide-canvas {
     /* aspect-ratio: 16 / 9; */
     /* height: 100%; */
-    width: auto;
+    flex: 0 0 auto;
+    transform-origin: center;
     /* This is the red part in your screenshot */
     background: #ffffff;
     border-radius: 6px;

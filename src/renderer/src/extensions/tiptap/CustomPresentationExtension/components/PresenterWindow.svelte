@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import {
     bufferedSlides,
     nextSlide,
@@ -78,6 +78,26 @@
           previousSlide()
           break
 
+        case 'PageDown':
+          e.preventDefault()
+          nextSlide()
+          break
+
+        case 'PageUp':
+          e.preventDefault()
+          previousSlide()
+          break
+
+        case 'Home':
+          e.preventDefault()
+          window.presentationAPI.navigate(0)
+          break
+
+        case 'End':
+          e.preventDefault()
+          window.presentationAPI.navigate((payload.pageCount || 1) - 1)
+          break
+
         case 'Escape':
           exit()
           break
@@ -97,15 +117,13 @@
     }
   })
 
-  onDestroy(() => {
-    presentation.update((p) => ({
-      ...p,
-      active: false
-    }))
-  })
+  // No "show ended" on destroy: minimising the presenter view swaps this
+  // component for the minimised one while the show goes on. The show ends
+  // through exit() / End Show, or when its window closes.
 
   function exit() {
-    // unmount / close window
+    window.presentationAPI?.stop('all')
+    presentation.update((p) => ({ ...p, active: false }))
   }
 </script>
 

@@ -123,6 +123,26 @@
 
           break
 
+        case 'PageDown':
+          e.preventDefault()
+          nextSlide()
+          break
+
+        case 'PageUp':
+          e.preventDefault()
+          previousSlide()
+          break
+
+        case 'Home':
+          e.preventDefault()
+          window.presentationAPI.navigate(0)
+          break
+
+        case 'End':
+          e.preventDefault()
+          window.presentationAPI.navigate((payload.pageCount || 1) - 1)
+          break
+
         case 'Escape':
           exit()
           break
@@ -130,9 +150,14 @@
     }
 
     window.addEventListener('keydown', onKeyDown)
+    const onResize = (): void => {
+      _viewport = { width: window.innerWidth, height: window.innerHeight }
+    }
+    window.addEventListener('resize', onResize)
 
     return () => {
       window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', onResize)
     }
   })
 
@@ -144,8 +169,16 @@
   })
 
   function exit() {
-    // unmount / close window
+    window.presentationAPI.stop('all')
   }
+
+  // The page keeps its own size and is scaled to fill the window.
+  let _viewport = $state({ width: window.innerWidth, height: window.innerHeight })
+  const _fit = $derived(
+    payload
+      ? Math.min(_viewport.width / payload.pageWidth, _viewport.height / payload.pageHeight)
+      : 1
+  )
 </script>
 
 {#if payload}
@@ -153,6 +186,7 @@
   <div class="fixed inset-0 bg-black flex justify-center items-center">
     <div
       class="relative w-[{payload.pageWidth}px] h-[{payload.pageHeight}px] overflow-hidden bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] shadow-2xl"
+      style="width:{payload.pageWidth}px;height:{payload.pageHeight}px;flex:none;transform:scale({_fit})"
     >
       {#each $bufferedSlides as i (i)}
         <SlideViewport {payload} index={i} />

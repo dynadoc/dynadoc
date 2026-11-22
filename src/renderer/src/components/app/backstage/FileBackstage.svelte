@@ -28,6 +28,10 @@
   import { openConfirmModal } from '../../../stores/confirmModal.store'
   import { openSettingsModal } from '../../../stores/settingsModal.store'
   import { _$_documentEditorsList } from '../../../stores/editor.store'
+  import {
+    getSlideDeckApi,
+    isSlideDeckInfo
+  } from '../../../extensions/tiptap/CustomSlideExtension/stores/slide.store'
   import { activeSheet } from '../../../stores/sheetBridge.store'
   import { _$_sessionRecovery } from '../../../stores/sessionRecovery.store'
   import { _$_pinnedRecentDocuments } from '../../../stores/common.store'
@@ -164,6 +168,7 @@
   const activeDoc = $derived.by(() => editors.find((editor) => editor.isActive))
   const hasActiveDoc = $derived.by(() => Boolean(activeDoc))
   const hasActiveSheet = $derived.by(() => Boolean(activeSheetEntry?.methods))
+  const hasActiveDeck = $derived.by(() => isSlideDeckInfo(activeDoc?.document?.info))
   const lastSyncLabel = $derived.by(() => formatDate(activeDoc?.document?.info?.updatedAt))
   const isUnsaved = $derived.by(() => {
     const docPath = activeDoc?.document?.path
@@ -284,6 +289,7 @@
   const menuItems = $derived.by(() => {
     const canSave = hasActiveDoc && !isLocked
     const canSaveSheet = Boolean(hasActiveSheet)
+    const canSaveDeck = canSave && hasActiveDeck
     const canSaveSecured = canSave
     const secureBadge = isSecureLeaseAvailable() ? '' : t('Secure license required')
 
@@ -365,7 +371,8 @@
                 id: 'save-to-powerpoint',
                 label: t('PowerPoint (.pptx)'),
                 icon: 'i-carbon-presentation-file',
-                disabled: true
+                disabled: !canSaveDeck,
+                action: handleExportToPowerPoint
               }
             ]
           }
@@ -404,7 +411,8 @@
             id: 'export-powerpoint',
             label: t('PowerPoint (.pptx)'),
             icon: 'i-carbon-presentation-file',
-            disabled: true
+            disabled: !canSaveDeck,
+            action: handleExportToPowerPoint
           },
           {
             id: 'export-odp',
@@ -796,6 +804,20 @@
       reasonLabel: 'ODP export ready',
       promptSelection: true
     })
+  }
+
+  async function handleExportToPowerPoint(): Promise<void> {
+    closeFileMenu()
+    const deckApi = getSlideDeckApi()
+    const deck = deckApi?.getActiveDeck()
+    if (!deckApi?.exportPptx || !deck) {
+      await openAlertModal({
+        title: t('Export failed'),
+        message: t('Open the presentation to export it.')
+      })
+      return
+    }
+    await deckApi.exportPptx(deck.editor, deck.editorId)
   }
 
   async function handleExportToPicture(): Promise<void> {

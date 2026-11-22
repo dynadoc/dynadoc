@@ -9,7 +9,10 @@
     currentSlide,
     pageHeight,
     pageWidth,
+    nextSlide,
     presentation,
+    previousSlide,
+    showStartedAt,
     totalSlides,
     visibleSlideIndexes
   } from '../store/presentation.store'
@@ -29,7 +32,6 @@
   let timer = $state(0)
   let timerInterval: any
   let showNotes = $state(true)
-  let startTime = Date.now()
   let clock = $state(new Date().toLocaleTimeString())
 
   // --- Animation Logic ---
@@ -43,12 +45,19 @@
   // Timer logic
   onMount(() => {
     timerInterval = setInterval(() => {
-      timer = Math.floor((Date.now() - startTime) / 1000)
+      // Counted from the start of the show, not of this slide's view (one
+      // view per slide is mounted).
+      timer = Math.floor((Date.now() - get(showStartedAt)) / 1000)
       clock = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }, 1000)
   })
 
   onDestroy(() => clearInterval(timerInterval))
+
+  function endShow(): void {
+    window.presentationAPI?.stop('all')
+    presentation.update((p) => ({ ...p, active: false }))
+  }
 
   function formatTime(seconds: number) {
     const h = Math.floor(seconds / 3600)
@@ -87,6 +96,9 @@
     const max = Math.max(0, $totalSlides - 1)
     return Math.min(index + 1, max)
   })
+
+  // On the last slide there is no next one to preview.
+  let isLastSlide = $derived(index >= Math.max(0, $totalSlides - 1))
 
   let nextActualIndex = $derived.by(() => {
     return $visibleSlideIndexes?.[nextVisibleIndex] ?? nextVisibleIndex
@@ -182,9 +194,10 @@
     </div>
 
     <div class="flex gap-2">
-      <button class="theme-top-btn" onclick={() => (startTime = Date.now())}>Reset Timer</button>
-      <button class="theme-top-btn text-base-content bg-primary border-transparent hover:bg-[#1473e6]"
-        >{$_('End Show')}</button
+      <button class="theme-top-btn" onclick={() => showStartedAt.set(Date.now())}>Reset Timer</button>
+      <button
+        class="theme-top-btn text-base-content bg-primary border-transparent hover:bg-[#1473e6]"
+        onclick={endShow}>{$_('End Show')}</button
       >
     </div>
   </header>
@@ -225,7 +238,7 @@
             >
               <div
                 class="slide-scale"
-                style="transform: translateY(-{actualIndex * payload.pageHeight}px) scale({currentScale}); transform-origin: top;"
+                style="transform: scale({currentScale}) translateY(-{actualIndex * payload.pageHeight}px); transform-origin: top;"
               >
                 {@html payload.html}
               </div>
@@ -235,13 +248,13 @@
       </div>
 
       <div class="mt-4 flex justify-center gap-4">
-        <button class="theme-nav-btn"
+        <button class="theme-nav-btn" onclick={() => previousSlide()}
           ><div class="i-theme-workflow:chevron-left w-6 h-6"></div></button
         >
         <div class="px-6 py-2 bg-base-200 border border-[#3e3e3e] rounded-full text-xs font-bold">
           Slide {$currentSlide + 1} of {$totalSlides || '??'}
         </div>
-        <button class="theme-nav-btn"
+        <button class="theme-nav-btn" onclick={() => nextSlide()}
           ><div class="i-theme-workflow:chevron-right w-6 h-6"></div></button
         >
       </div>
@@ -261,12 +274,21 @@
             bind:this={nextViewportEl}
             class="absolute inset-0 pointer-events-none origin-top flex items-start justify-center"
           >
-            <div
-              class="bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] slide-scale"
-              style="transform: translateY(-{nextActualIndex * payload.pageHeight}px) scale({nextScale}); transform-origin: top;"
-            >
-              {@html payload.html}
-            </div>
+            {#if isLastSlide}
+              <div
+                class="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-widest text-[#888]"
+                data-role="end-of-show"
+              >
+                {$_('End of show')}
+              </div>
+            {:else}
+              <div
+                class="bg-[color-mix(in_srgb,var(--color-base-white)_100%,transparent)] slide-scale"
+                style="transform: scale({nextScale}) translateY(-{nextActualIndex * payload.pageHeight}px); transform-origin: top;"
+              >
+                {@html payload.html}
+              </div>
+            {/if}
           </div>
         </div>
       </div>
@@ -286,7 +308,16 @@
         <div
           class="p-4 flex-grow overflow-y-auto custom-scrollbar text-sm leading-relaxed text-[#aaa]"
         >
-          {#if payload.notes}
+          {#if payload.notesList}
+            <!-- Slide decks: plain-text notes of the slide on screen. -->
+            {#if payload.notesList[actualIndex]}
+              <div class="whitespace-pre-wrap text-base text-base-content">
+                {payload.notesList[actualIndex]}
+              </div>
+            {:else}
+              <span class="italic opacity-30">{$_('No notes for this slide.')}</span>
+            {/if}
+          {:else if payload.notes}
             {@html payload.notes}
           {:else}
             <span class="italic opacity-30">{$_('No notes for this slide.')}</span>

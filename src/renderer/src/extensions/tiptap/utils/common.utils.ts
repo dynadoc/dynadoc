@@ -199,8 +199,9 @@ export const defaultDesignPaginationOptions: PaginationPlusOptions = { ...defaul
 export const defaultSheetPaginationOptions: PaginationPlusOptions = { ...defaultPaginationOptions, enabled: false }
 export const defaultSlidePaginationOptions: PaginationPlusOptions = {
   ...defaultPaginationOptions,
-  pageWidth: 1920,
-  pageHeight: 1080,
+  // One page per slide, at the slide's own 1280x720 so it fits the editor.
+  pageWidth: 1280,
+  pageHeight: 720,
   enabled: true,
   pageGap: 0,
   marginTop: 0,

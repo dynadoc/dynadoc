@@ -60,3 +60,43 @@
 //     },
 // }
 
+import { writable } from 'svelte/store'
+
+/**
+ * Whether a document's info marks it as a presentation: new decks have
+ * contentType 'slide', imported .pptx files also carry pageKind 'slide'.
+ */
+export const isSlideDeckInfo = (
+  info: { contentType?: unknown; pageKind?: unknown } | null | undefined
+): boolean => info?.contentType === 'slide' || info?.pageKind === 'slide'
+
+/** A text box just inserted from the toolbar: it takes the keyboard once mounted. */
+export const _$_slideTextToEdit = writable<string | null>(null)
+
+/** Id of the slide the deck UI works on (thumbnail selection, toolbar, notes). */
+export const _$_currentSlideId = writable<string | null>(null)
+
+// The deck commands (utils/slideDeckCommands.ts) register here when a
+// presentation is open, so the ribbon reaches them without importing them
+// (which would close an import cycle through the editor stores).
+export interface SlideDeckApi {
+  getActiveDeck(): {
+    editor: unknown
+    editorId: string
+    index: number
+    current: { id: string }
+  } | null
+  addSlide(editor: unknown, editorId: string, layout: string, afterIndex?: number): Promise<unknown>
+  duplicateSlide(editor: unknown, editorId: string, id: string): Promise<unknown>
+  setSlideLayout(slide: unknown, layout: string): Promise<unknown>
+  applyDeckTheme(editor: unknown, themeId: string): Promise<unknown>
+  /** Set by utils/slideShow.ts once loaded. */
+  startSlideShow?(editor: unknown, editorId: string, from: 'start' | 'current'): Promise<unknown>
+  /** Set by utils/pptxExport.ts once loaded. */
+  exportPptx?(editor: unknown, editorId: string, outputPath?: string): Promise<string | null>
+}
+let _slideDeckApi: SlideDeckApi | null = null
+export const registerSlideDeckApi = (api: SlideDeckApi): void => {
+  _slideDeckApi = api
+}
+export const getSlideDeckApi = (): SlideDeckApi | null => _slideDeckApi

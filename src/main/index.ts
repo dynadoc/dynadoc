@@ -2078,16 +2078,23 @@ function createPresentationWindow(payload: PresentationPayload) {
     return
   }
 
-  _presentationWindow = new BrowserWindow(getWindowOptions(payload.pageWidth, payload.pageHeight))
+  const win = new BrowserWindow(getWindowOptions(payload.pageWidth, payload.pageHeight))
+  _presentationWindow = win
 
-  loadWindow(_presentationWindow, 'presentation')
+  loadWindow(win, 'presentation')
 
-  _presentationWindow.once('ready-to-show', () => {
-    _presentationWindow?.show()
-    _presentationWindow?.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
+  win.once('ready-to-show', () => {
+    win.show()
+    if (payload.fullscreen) win.setFullScreen(true)
+    win.webContents.send(IPC_PRESENTATION_DATA, _cachedPayload)
   })
-  _presentationWindow.on('closed', () => {
+  win.on('closed', () => {
+    // A newer show may already be open: leave it alone. (Stopping the show
+    // clears the reference before this event arrives, so null still ends it.)
+    if (_presentationWindow && _presentationWindow !== win) return
     _presentationWindow = null
+    // Lets the presenter view in the main window close with the show.
+    _mainWindow?.webContents.send(IPC_PRESENTATION_STOP)
   })
 }
 
@@ -6434,6 +6441,9 @@ Hello from Dynadoc \\LaTeX!
       filters: filters || []
     })
     if (canceled) return []
+    // As in dialog:openFile: exactly the files the user picked become
+    // reachable, granted here before the paths go back to the renderer.
+    grantDialogResult(filePaths || [], false)
     return filePaths || []
   })
 
@@ -6483,11 +6493,24 @@ Hello from Dynadoc \\LaTeX!
     })
 
     if (canceled || !filePath) return null
+    // On Linux the dialog returns the name as typed. When the filters allow a
+    // single extension and the name lacks it, add it here, so the path that
+    // is granted is the file the caller will write (a caller adding it later
+    // would write outside the grant).
+    const extensions: string[] = (options?.filters || [])
+      .flatMap((filter: { extensions?: unknown }) =>
+        Array.isArray(filter?.extensions) ? filter.extensions : []
+      )
+      .filter((ext: unknown) => typeof ext === 'string' && /^[a-z0-9]+$/i.test(ext))
+    const chosenPath =
+      extensions.length === 1 && !filePath.toLowerCase().endsWith(`.${extensions[0].toLowerCase()}`)
+        ? `${filePath}.${extensions[0]}`
+        : filePath
     // A save target usually does not exist yet; the policy resolves the nearest
     // existing ancestor, so granting the chosen path covers the write that
     // follows.
-    grantUserChosenPath({ path: filePath, directory: false })
-    return filePath
+    grantUserChosenPath({ path: chosenPath, directory: false })
+    return chosenPath
   })
 
   ipcMain.handle('load-system-font', async (_, fontFamily = 'Geneva') => {
@@ -6528,6 +6551,8 @@ Hello from Dynadoc \\LaTeX!
 
   ipcMain.on(IPC_PRESENTATION_UPDATE, (_, payload: PresentationPayload) => {
     if (!_presentationWindow) return
+    // Navigation reads the cached payload; keep it the one on screen.
+    _cachedPayload = payload
     console.log('IPC_PRESENTATION_UPDATE', { payload })
     _presentationWindow?.webContents.send(IPC_PRESENTATION_UPDATE, payload)
     _mainWindow?.webContents.send(IPC_PRESENTATION_UPDATE, payload)

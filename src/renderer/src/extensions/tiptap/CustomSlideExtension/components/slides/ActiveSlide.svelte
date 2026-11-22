@@ -16,6 +16,9 @@
   import { authStore } from '../../../../../stores/auth.store'
   import { resolveLocalCollabPresence } from '../../../../../utils/collabPresence'
   import { buildCollabDocId, resolveShareContext } from '../../../../../utils/collabUtils'
+  import { v4 as uuidv4 } from 'uuid'
+  import { seedSlideDoc } from '../../utils/slideDesign'
+  import { _$_currentSlideId } from '../../stores/slide.store'
 
   let {
     __slideId,
@@ -289,7 +292,28 @@
     }
   })
 
+  // Delete or Backspace removes the selected elements of the current slide,
+  // unless something is being typed in: a field, a text box, another editor.
+  // (The slide sits inside its presentation's own editor, which keeps the
+  // focus when a shape is clicked: that one does not count as typing.)
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return
+    if (event.defaultPrevented || get(_$_currentSlideId) !== __slideId) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest?.('input, textarea, select')) return
+    const editable = target?.closest?.('[contenteditable="true"]')
+    if (editable && !(_containeEl && editable.contains(_containeEl))) return
+    if (!_commands?.getSelectedIds?.().length) return
+    // Handled here only: the presentation's editor must not also act on it.
+    event.preventDefault()
+    event.stopPropagation()
+    _commands.deleteSelected()
+  }
+  // Capture phase: ahead of the presentation's editor, which holds the focus.
+  window.addEventListener('keydown', onWindowKeydown, true)
+
   onDestroy(() => {
+    window.removeEventListener('keydown', onWindowKeydown, true)
     if (_scrollParent && _scrollHandler) {
       _scrollParent.removeEventListener('scroll', _scrollHandler)
     }
@@ -315,9 +339,12 @@
     if (_defaultCreated) return
     if (!_slide?.isLoaded || !_commands) return
     if (_slide.shapes?.size > 0) return
+    // A slide given a layout (even Blank) is not a new, empty file.
+    if (_slide.meta?.get('layout')) return
     if (_slide.newlyCreated || _slide.shapes?.size === 0) {
       _defaultCreated = true
-      _commands.createDefaultCanvasContent(stageW, stageH)
+      // A brand-new deck opens on a title slide.
+      seedSlideDoc(_slide.ydoc, 'title', null, uuidv4, stageW, stageH)
     }
   }
 </script>
@@ -349,6 +376,8 @@
         }
         // _$_canvasCommands.set(commands)
         _$_canvasCommands.set(__slideId, _commands)
+        // The slide being worked on is the current one (sorter, notes, Delete).
+        if (get(_$_currentSlideId) !== __slideId) _$_currentSlideId.set(__slideId)
       }}
       __onCreate={(stageW: number, stageH: number) => onSlideNewlyCreated(stageW, stageH)}
       {__maxPageHeight}
