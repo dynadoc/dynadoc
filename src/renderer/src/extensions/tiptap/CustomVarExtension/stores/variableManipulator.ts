@@ -7,7 +7,7 @@ import { nodeApi } from '../../../../utils/shims/node'
 import { _$_documentEditorsList } from '../../../../stores/editor.store'
 import { setSheetVariablesApi, sheetRegistry } from '../../../../stores/sheetBridge.store'
 import { Node, mergeAttributes, InputRule, Editor } from '@tiptap/core'
-import { formatVariableValue } from '../utils/variableFormat.utils'
+import { formatDateTimeVariableValue, formatVariableValue } from '../utils/variableFormat.utils'
 // import { persistStore } from '../../../../../utils/storePersistenceePersistence'
 import Utils from '../../../../utils/Utils'
 import { runAI } from '../../CustomAIExtension/utils/utils'
@@ -534,6 +534,15 @@ export class VariableManipulatorUtils {
 
   static formatValue(value: any, format: string | number, autoUpdate?: boolean): any {
     return formatVariableValue(value, format, autoUpdate)
+  }
+
+  /** A date-time variable's value: its ISO date is a date under any format. */
+  static formatDateTimeValue(
+    value: unknown,
+    format: string | number,
+    autoUpdate?: boolean
+  ): unknown {
+    return formatDateTimeVariableValue(value, format, autoUpdate)
   }
 
   /**
