@@ -16,7 +16,7 @@ import { caption1StrongerClassNames } from '@fluentui/react-components';
 import { SvelteNodeViewRenderer } from 'svelte-tiptap';
 import { CustomAIExtensionProps } from './utils/common.utils';
 import { runAIGeneration, applyAIGenerationResult, type AIGenerationMode } from './utils/aiGeneration';
-import CustomAIToolbar from './components/CustomAIToolbar.svelte'
+import { attachEditorModeBar } from '../EditorModeBar/mountEditorModeBar.svelte'
 import { AiTrackingPlugin } from './utils/aiTracking'
 
 function posToDOMRect1(view: any, from: number, to: number) {
@@ -182,22 +182,8 @@ export const CustomAIExtension = Node.create<CustomAIOptions>({
             return
         }
 
-        const container = document.createElement('div')
-        container.className = 'ai-toolbar-container'
-        // container.className = 'ai-toolbar-container-wrapper'
-        editorHTMLContainerRoot.prepend(container)
-
-        const props = $state({ editor })
-
-        const component = mount(CustomAIToolbar, {
-            target: container,
-            props
-        })
-
-        editor.on('destroy', () => {
-            if (component) unmount(component)
-            container?.remove()
-        })
+        // @ Variables and the AI menu live in the shared editor mode bar.
+        attachEditorModeBar(editor, editorHTMLContainerRoot, 'ai')
     },
    
     addProseMirrorPlugins() {

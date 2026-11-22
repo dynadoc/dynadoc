@@ -9,7 +9,7 @@ import * as Y from 'yjs'
 import { mount, unmount } from 'svelte'
 import { _$_documentEditorsList, _$_wysiwygEditorsList } from '../../../stores/editor.store'
 import { getVariable } from '../CustomVarExtension/stores/variableManipulator'
-import ReviewQuickModeWidget from './components/ReviewQuickModeWidget.svelte'
+import { attachEditorModeBar } from '../EditorModeBar/mountEditorModeBar.svelte'
 // import { ySyncPlugin, yCursorPlugin } from 'y-prosemirror'
 
 export interface ReviewOptions {
@@ -344,20 +344,8 @@ export const CustomReviewExtension = Node.create({
             }
         }
 
-        const container = document.createElement('div')
-        container.className = 'review-quick-container'
-        editorHTMLContainerRoot.prepend(container)
-
-        const props = $state({ editor })
-        const component = mount(ReviewQuickModeWidget, {
-            target: container,
-            props,
-        })
-
-        editor.on('destroy', () => {
-            if (component) unmount(component)
-            container?.remove()
-        })
+        // The mode button lives in the shared editor mode bar.
+        attachEditorModeBar(editor, editorHTMLContainerRoot, 'review')
     },
 
     /* addAttributes() {

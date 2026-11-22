@@ -1,0 +1,37 @@
+{
+  "modeBar": {
+    "toolbar": "Editing tools",
+    "mode": {
+      "menu": "Editing mode",
+      "current": "Mode: {mode}",
+      "edit": "Editing",
+      "editHint": "You change the text directly",
+      "suggest": "Suggesting",
+      "suggestHint": "Your changes become suggestions to review",
+      "view": "Viewing",
+      "viewHint": "The document without revision marks"
+    },
+    "vars": {
+      "label": "Variables",
+      "on": "Variables on",
+      "off": "Variables off",
+      "onHint": "AI writes with your variables (@client instead of the literal value).",
+      "offHint": "AI writes literal values. They will not follow if the variable changes.",
+      "sheetLabel": "Use my variables"
+    },
+    "ai": {
+      "label": "AI",
+      "menu": "AI tools",
+      "rewrite": "Rewrite selection",
+      "more": "All AI tools",
+      "selectFirst": "Select text to enable"
+    },
+    "sheet": {
+      "title": "Tools",
+      "open": "Tools: {mode} mode",
+      "close": "Close",
+      "mode": "Mode",
+      "ai": "AI"
+    }
+  }
+}

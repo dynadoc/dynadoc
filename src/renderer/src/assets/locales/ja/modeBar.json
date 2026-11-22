@@ -1,0 +1,37 @@
+{
+  "modeBar": {
+    "toolbar": "編集ツール",
+    "mode": {
+      "menu": "編集モード",
+      "current": "モード: {mode}",
+      "edit": "編集",
+      "editHint": "テキストを直接変更します",
+      "suggest": "提案",
+      "suggestHint": "変更は確認用の提案になります",
+      "view": "閲覧",
+      "viewHint": "変更履歴のマークを表示しない文書"
+    },
+    "vars": {
+      "label": "変数",
+      "on": "変数オン",
+      "off": "変数オフ",
+      "onHint": "AI は変数を使って書きます (値の代わりに @client)。",
+      "offHint": "AI は値を直接書きます。変数が変わっても追従しません。",
+      "sheetLabel": "変数を使う"
+    },
+    "ai": {
+      "label": "AI",
+      "menu": "AI ツール",
+      "rewrite": "選択範囲を書き換え",
+      "more": "すべての AI ツール",
+      "selectFirst": "テキストを選択すると有効になります"
+    },
+    "sheet": {
+      "title": "ツール",
+      "open": "ツール: {mode}モード",
+      "close": "閉じる",
+      "mode": "モード",
+      "ai": "AI"
+    }
+  }
+}

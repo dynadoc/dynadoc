@@ -1,0 +1,37 @@
+{
+  "modeBar": {
+    "toolbar": "Outils d'édition",
+    "mode": {
+      "menu": "Mode d'édition",
+      "current": "Mode : {mode}",
+      "edit": "Édition",
+      "editHint": "Vous modifiez directement le texte",
+      "suggest": "Suggestion",
+      "suggestHint": "Vos changements deviennent des suggestions",
+      "view": "Lecture",
+      "viewHint": "Le document sans les marques de révision"
+    },
+    "vars": {
+      "label": "Variables",
+      "on": "Variables activées",
+      "off": "Variables désactivées",
+      "onHint": "L'IA écrit avec vos variables (@client au lieu de la valeur en dur).",
+      "offHint": "L'IA écrit les valeurs en dur. Elles ne suivront pas si la variable change.",
+      "sheetLabel": "Utiliser mes variables"
+    },
+    "ai": {
+      "label": "IA",
+      "menu": "Outils IA",
+      "rewrite": "Réécrire la sélection",
+      "more": "Tous les outils IA",
+      "selectFirst": "Sélectionnez du texte pour activer"
+    },
+    "sheet": {
+      "title": "Outils",
+      "open": "Outils : mode {mode}",
+      "close": "Fermer",
+      "mode": "Mode",
+      "ai": "IA"
+    }
+  }
+}
