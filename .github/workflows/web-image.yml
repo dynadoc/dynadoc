@@ -46,13 +46,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # The built-in token, scoped by `packages: write` above. No personal
       # access token: a publish that depends on one person's credentials stops
       # working the day that person's token is rotated.
       - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -61,7 +61,7 @@ jobs:
       # load: false keeps the result in the build cache instead of the daemon.
       # Nothing consumes the image yet, so there is no reason to materialise it.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/web/Dockerfile
