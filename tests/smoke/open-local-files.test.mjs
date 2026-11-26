@@ -141,7 +141,7 @@ export { FS_CHANNELS } from ${JSON.stringify(path.join(repoRoot, 'src', 'main', 
     console.error(`\n[open-local-files] FAIL: ${failures} check(s) failed\n`)
     process.exit(1)
   }
-  log('OK — probes next to an opened file answer, and refused paths stay refused')
+  log('OK: probes next to an opened file answer, and refused paths stay refused')
 } finally {
   if (existsSync(work)) rmSync(work, { recursive: true, force: true })
 }

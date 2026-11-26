@@ -110,7 +110,7 @@ try {
     console.error(`\n[boot-recovery] FAIL: ${failures} check(s) failed\n`)
     process.exit(1)
   }
-  log('OK — a failed boot reloads once or explains itself, never spins forever')
+  log('OK: a failed boot reloads once or explains itself, never spins forever')
 } finally {
   if (existsSync(work)) rmSync(work, { recursive: true, force: true })
 }

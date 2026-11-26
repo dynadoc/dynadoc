@@ -218,7 +218,7 @@ try {
     console.error(`\n[ddocify-save] FAIL: ${failures} check(s) failed\n`)
     process.exit(1)
   }
-  log('OK — documents are written in one step, and only where the policy allows')
+  log('OK: documents are written in one step, and only where the policy allows')
 } finally {
   if (existsSync(work)) rmSync(work, { recursive: true, force: true })
 }

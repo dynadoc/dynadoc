@@ -214,7 +214,7 @@ try {
     console.error(`\n[save-shortcut] FAIL: ${failures} check(s) failed\n`)
     process.exit(1)
   }
-  log('OK — Ctrl+S and Cmd+S save through the app, never through the browser')
+  log('OK: Ctrl+S and Cmd+S save through the app, never through the browser')
 } finally {
   if (existsSync(work)) rmSync(work, { recursive: true, force: true })
 }
