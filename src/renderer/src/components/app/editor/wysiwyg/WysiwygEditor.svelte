@@ -1528,8 +1528,13 @@ _collaborationExtensionProvider.on('sync', (isSynced) => {
   }
 
   onMount(async () => {
-    const rawHtml = prepareStyleHtmlForEditor(prepareHtmlForEditor(__filePathToOpenFromDocument))
     try {
+      // A document with no main file used to throw here, outside the try, and
+      // left the tab on "Preparing editor" for good.
+      if (!__filePathToOpenFromDocument) {
+        throw new Error('This document has no content file to open.')
+      }
+      const rawHtml = prepareStyleHtmlForEditor(prepareHtmlForEditor(__filePathToOpenFromDocument))
       _editorContent = await __documentToOpen.getFileContent(rawHtml)
     } catch (err: any) {
       console.error('WysiwygEditor: unable to read document content', err)

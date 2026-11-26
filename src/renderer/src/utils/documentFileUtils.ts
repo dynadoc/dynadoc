@@ -403,7 +403,8 @@ ${body}
 export async function convertDocxToHtml(
   filePath: string,
   outputPath: string,
-  returnFilePath = true
+  returnFilePath = true,
+  options: { throwOnError?: boolean } = {}
 ): Promise<string> {
   if (
     !nodeApi.fsPromises?.mkdir ||
@@ -528,6 +529,7 @@ export async function convertDocxToHtml(
     return returnFilePath ? htmlPath : res
   } catch (e) {
     console.error('Conversion failed:', e)
+    if (options.throwOnError) throw e
     return ''
   }
 }
