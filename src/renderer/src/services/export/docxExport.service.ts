@@ -357,7 +357,12 @@ export async function exportActiveEditorToOffice(options: OfficeExportOptions = 
     const tempFileName = `dynadoc-${format}-export-${Date.now()}`
     const cssFilePathName = `${tempFileName}-styles.css`
 
-    const localStagingDir = Platform.isDesktopPlatform ? nodeApi.path.dirname(finalOutputPath) : ''
+    // Staged in the application's temp folder, not next to the output: the
+    // Save dialog grants the chosen file only, so writing a sibling .html and
+    // .css there was refused, and the export failed before it began.
+    const localStagingDir = Platform.isDesktopPlatform
+      ? nodeApi.path.join((await window.api.getTempDir?.()) || '', 'export-staging')
+      : ''
     const tempFilePath = nodeApi.path.join(localStagingDir, `${tempFileName}-${Date.now()}.html`)
     const cssFilePath = nodeApi.path.join(localStagingDir, cssFilePathName)
 

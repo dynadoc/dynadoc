@@ -5965,6 +5965,17 @@ app.whenReady().then(async () => {
 
         console.log('exePath', exePath)
 
+        // The converter is one of the binaries this repository does not ship
+        // (README, "What is not in this repository"). Say so in words instead
+        // of passing a bare spawn ENOENT up to the person who clicked Open.
+        if (!fs.existsSync(exePath)) {
+          resolve(
+            'Error: the DocxToHtml converter was not found. It converts Word files, and it ' +
+              'is not included in builds made from the open-source repository.'
+          )
+          return
+        }
+
         execFile(exePath, [inputPath, outputPath], (err, stdout, stderr) => {
           if (err) {
             console.error('Binary execution error:', stderr || err.message)
