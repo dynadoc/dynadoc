@@ -234,6 +234,12 @@
     appCloseFlowPending = true
 
     try {
+      // Edits from the last second are still in their debounce timers. The
+      // session restored at the next launch reads the document folders, so
+      // write them out before the window goes.
+      await Utils.flushPendingWrites().catch((error) => {
+        console.warn('Could not flush pending writes before quitting', error)
+      })
       const unsavedEditors = _$_documentEditorsList
         .getList()
         .filter((entry) => entry?.document?.isUnsavedDocument?.())

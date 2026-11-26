@@ -2194,6 +2194,9 @@ export default class EditorHelpers {
 
     let savedDocPath: string | null = null
     try {
+      // The editors write to the document folder a second after the last
+      // change. Packing reads that folder, so finish those writes first.
+      await Utils.flushPendingWrites()
       savedDocPath = await document.saveTo(
         saveAsSecured,
         outputPath,

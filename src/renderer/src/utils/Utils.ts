@@ -71,6 +71,15 @@ function normalizePathForPlatform(inputPath: string): string {
   return raw.replace(/^file:\/\//i, '').replace(/^\/+/, '')
 }
 
+// Writes of document content that have started but not finished, and the
+// per-file debounced writers that have not started yet. Utils.flushPendingWrites
+// drains both before a document is packed.
+const pendingFileWrites = new Set<Promise<void>>()
+const debouncedFileWriters = new Map<
+  string,
+  ReturnType<typeof debounce<(latest: string, callback?: () => void) => void>>
+>()
+
 // const pipelineAsync = promisify(pipeline)
 export default class Utils {
   static MAIN_DOCUMENT_FILE_NAME = 'index'
@@ -442,9 +451,13 @@ export default class Utils {
         return false
       }
       if (nodeApi.fsPromises?.writeFile) {
-        void nodeApi.fsPromises.writeFile(safePath, content, 'utf-8').catch((err: any) => {
-          console.error('Error writing file:', err)
-        })
+        const write: Promise<void> = nodeApi.fsPromises
+          .writeFile(safePath, content, 'utf-8')
+          .catch((err: any) => {
+            console.error('Error writing file:', err)
+          })
+          .finally(() => pendingFileWrites.delete(write))
+        pendingFileWrites.add(write)
         return true
       }
       console.warn('saveToFile: filesystem not available.')
@@ -455,16 +468,43 @@ export default class Utils {
     }
   }
 
-  public static saveToFileDebounced = debounce(
-    async (filePath: string, content: string, onSave?: Function) => {
-      console.log('debounce fileContentToSave ok', { filePath, content })
-      const saved = this.saveToFile(filePath, content) // Save the content to the file
-      if (saved) {
-        onSave?.()
-      }
-    },
-    1000
-  )
+  /**
+   * Writes `content` to `filePath` once edits pause for a second.
+   *
+   * One timer per file. A single timer shared by every caller used to drop
+   * the pending write of one file whenever another file was edited within the
+   * same second (typing in one tab, then in another, or a translation pane
+   * next to its document).
+   */
+  public static saveToFileDebounced(filePath: string, content: string, onSave?: () => void): void {
+    let writer = debouncedFileWriters.get(filePath)
+    if (!writer) {
+      writer = debounce((latest: string, callback?: () => void) => {
+        debouncedFileWriters.delete(filePath)
+        const saved = Utils.saveToFile(filePath, latest) // Save the content to the file
+        if (saved) {
+          callback?.()
+        }
+      }, 1000)
+      debouncedFileWriters.set(filePath, writer)
+    }
+    writer(content, onSave)
+  }
+
+  /**
+   * Runs every debounced write now and waits until all of them, and any write
+   * already in progress, have reached the disk.
+   *
+   * Packing a document reads its files from disk. Without this, Ctrl+S within
+   * a second of the last keystroke saved the document as it was before that
+   * keystroke, and said "Saved".
+   */
+  public static async flushPendingWrites(): Promise<void> {
+    for (const writer of [...debouncedFileWriters.values()]) writer.flush()
+    while (pendingFileWrites.size > 0) {
+      await Promise.all([...pendingFileWrites])
+    }
+  }
 
   /* public static async saveAllTranslationsFor(originalPath: string, translatedPath: string) {
     const map = get(_$_translationPairsMap)
