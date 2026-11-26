@@ -444,6 +444,12 @@ function startYWebsocketServer(port: number, name: string) {
     server.on('error', (error) => {
       console.error(`${name} could not listen on 127.0.0.1:${port}`, error)
     })
+    // The WebSocketServer re-emits every error of the server it wraps. Without
+    // its own listener, that second emission was still uncaught, so a busy
+    // port kept raising the main-process error dialog at startup.
+    wss.on('error', () => {
+      // already logged by the server listener above
+    })
     server.listen(port, '127.0.0.1', () => {
       console.log(`✅ ${name} running at ws://127.0.0.1:${port}`)
     })
