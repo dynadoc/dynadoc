@@ -229,7 +229,7 @@
     "simplebar": "^6.3.3",
     "ssf": "^0.11.2",
     "svelte": "^5.56.8",
-    "svelte-hot-french-toast": "^4.0.0",
+    "svelte-hot-french-toast": "^4.1.2",
     "svelte-i18n": "^4.0.1",
     "svelte-i18next": "^2.2.2",
     "svelte-persisted-store": "^0.12.0",
