@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { Workbook } from '@fortune-sheet/react'
 import '@fortune-sheet/react/dist/index.css'
+import '../../libs/fortune-sheet/direction.css'
 import React, { useEffect, useRef, useState } from 'react'
 import { transformExcelToFortune } from '@corbe30/fortune-excel'
 
@@ -221,6 +222,8 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
   return (
     <div
       className="react-spreadsheet-file-viewer"
+      // FortuneSheet only supports LTR layout: keep it LTR under an RTL page
+      dir="ltr"
       tabIndex={0}
       onPointerDownCapture={(event) => {
         if (readOnly) {
