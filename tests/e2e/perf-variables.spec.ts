@@ -9,7 +9,13 @@
  * blocks for long and that each save shows up in the document quickly.
  */
 import { test, expect } from './support/fixtures'
-import { newTextDocument, typeKeys, variableMenu, createVariableFromMenu } from './support/app'
+import {
+  createVariableFromMenu,
+  newTextDocument,
+  typeKeys,
+  uniqueToken,
+  variableMenu
+} from './support/app'
 import type { Page } from '@playwright/test'
 
 const VARIABLES = 20
@@ -47,11 +53,14 @@ test('20 desktop variables: updates stay fast and do not storm vars.json', async
 }) => {
   test.setTimeout(6 * 60_000)
   const editor = await newTextDocument(page)
+  // Desktop variables outlive the test: names of their own, every run.
+  const prefix = uniqueToken()
+  const target = `${prefix}n7`
 
   for (let i = 1; i <= VARIABLES; i++) {
-    await typeKeys(page, ` @perf${i}`)
+    await typeKeys(page, ` @${prefix}n${i}`)
     await createVariableFromMenu(page, `valeur ${i}`, { scope: 'All my files' })
-    await expect(editor.locator(`span[data-variable="perf${i}"]`)).toHaveText(`valeur ${i}`)
+    await expect(editor.locator(`span[data-variable="${prefix}n${i}"]`)).toHaveText(`valeur ${i}`)
   }
 
   // Long tasks while the document was being built are the app's start-up and
@@ -60,15 +69,15 @@ test('20 desktop variables: updates stay fast and do not storm vars.json', async
 
   for (let round = 1; round <= UPDATES; round++) {
     const value = `mise à jour ${round}`
-    await typeKeys(page, ' @perf7')
+    await typeKeys(page, ` @${target}`)
     const menu = variableMenu(page)
-    await menu.getByRole('button', { name: 'Edit "@perf7"' }).click()
+    await menu.getByRole('button', { name: `Edit "@${target}"` }).click()
     await menu.getByLabel('Value').fill(value)
 
     const callsBefore = guard.stubCalls.length
     const started = Date.now()
     await menu.getByRole('button', { name: 'Update and insert' }).click()
-    const chips = editor.locator('span[data-variable="perf7"]')
+    const chips = editor.locator(`span[data-variable="${target}"]`)
     await expect(chips).toHaveCount(round + 1)
     await expect
       .poll(async () => (await chips.allTextContents()).every((text) => text.trim() === value), {

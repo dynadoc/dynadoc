@@ -178,7 +178,9 @@ Review the images before committing them.
    box and status area of the sheet (`support/sheet.ts`), the slide editors
    that open on double-click, or the canvas pixels, as the existing specs do.
 5. Each test must stand alone: create what it needs, assert, and leave
-   nothing the next test relies on.
+   nothing the next test relies on. The stub's drive lives for the whole run
+   (and across a retry), so text you wait for on disk and variables in the
+   "All my files" scope need names of their own: `uniqueToken()`.
 6. Run it several times before pushing:
    `npm run test:e2e -- <spec> --repeat-each=5`.
 7. If the scenario cannot work on the web build, keep it as a `test.skip` (or

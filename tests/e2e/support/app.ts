@@ -72,6 +72,15 @@ export async function newTextDocument(page: Page): Promise<Locator> {
   return editor
 }
 
+/**
+ * Letters and digits no earlier test has used. The stub's drive outlives a
+ * test (and a retry), so text a test waits for on disk, and variables in the
+ * "All my files" scope, must be its own.
+ */
+export function uniqueToken(): string {
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+}
+
 /** Types text one key at a time, the way a person does (the @ menu reacts per key). */
 export async function typeKeys(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text, { delay: 40 })

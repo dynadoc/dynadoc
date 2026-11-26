@@ -12,7 +12,7 @@
  * app for the test.
  */
 import { test, expect } from './support/fixtures'
-import { expectSavedToDisk, newTextDocument, typeKeys } from './support/app'
+import { expectSavedToDisk, newTextDocument, typeKeys, uniqueToken } from './support/app'
 
 /** The Tiptap editor its root element carries, as far as this test uses it. */
 type WithEditor = HTMLElement & {
@@ -26,11 +26,13 @@ type WithEditor = HTMLElement & {
 
 test('setContent replaces the document without throwing and can be undone', async ({ page }) => {
   const editor = await newTextDocument(page)
-  await typeKeys(page, 'Texte original')
-  await expect(editor).toContainText('Texte original')
+  // Unique, so the save waited for below is this document's.
+  const original = `Texte original ${uniqueToken()}`
+  await typeKeys(page, original)
+  await expect(editor).toContainText(original)
   // Saved means the typing is its own undo step: the collaborative undo
   // manager merges changes less than half a second apart into one.
-  await expectSavedToDisk('Texte original')
+  await expectSavedToDisk(original)
 
   const result = await editor.evaluate((element) => {
     const instance = (element as WithEditor).editor
@@ -49,7 +51,7 @@ test('setContent replaces the document without throwing and can be undone', asyn
   expect(result.error).toBe('')
 
   await expect(editor).toContainText('Contenu remplacé')
-  await expect(editor).not.toContainText('Texte original')
+  await expect(editor).not.toContainText(original)
 
   // One undo step, through the same editor. Neither UI path can be used here
   // today: Ctrl+Z undoes twice (see the fixme below) and the title bar's Undo
@@ -58,7 +60,7 @@ test('setContent replaces the document without throwing and can be undone', asyn
     Boolean((element as WithEditor).editor?.commands.undo())
   )
   expect(undone).toBe(true)
-  await expect(editor).toContainText('Texte original')
+  await expect(editor).toContainText(original)
   await expect(editor).not.toContainText('Contenu remplacé')
 })
 
@@ -70,12 +72,13 @@ test('Ctrl+Z in the editor undoes one step', async ({ page }) => {
       'One keystroke undoes two steps.'
   )
   const editor = await newTextDocument(page)
-  await typeKeys(page, 'Premier')
-  await expectSavedToDisk('Premier')
+  const first = `Premier ${uniqueToken()}`
+  await typeKeys(page, first)
+  await expectSavedToDisk(first)
   await typeKeys(page, ' second')
-  await expectSavedToDisk('Premier second')
+  await expectSavedToDisk(`${first} second`)
 
   await page.keyboard.press('ControlOrMeta+z')
   await expect(editor).not.toContainText('second')
-  await expect(editor).toContainText('Premier')
+  await expect(editor).toContainText(first)
 })
