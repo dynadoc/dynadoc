@@ -16,6 +16,11 @@
   import { authStore } from '../../../../stores/auth.store'
   import { resolveLocalCollabPresence } from '../../../../utils/collabPresence'
   import { buildCollabDocId, resolveShareContext } from '../../../../utils/collabUtils'
+  import {
+    showNodeviewContextMenu,
+    type NodeviewMenuEntry
+  } from '../../../../utils/nodeviewContextMenu'
+  import Platform from '../../../../libs/platform'
 
   interface Props {
     node?: any
@@ -102,10 +107,6 @@
   // IMPORTANT: If isMirror is true, we MUST force useNodeViewWrapper to false
   const _shouldWrap = $derived(useNodeViewWrapper && !isMirror)
 
-  const activeNodeviewStore = _$_wysiwygEditorsList.getActiveNodeviewStore(_wysiwygEditorIdToUpdate)
-
-  const _showToolBar = $derived($activeNodeviewStore?.id == _designId)
-
   let _collabDocId = $state('')
   $effect(() => {
     if (_parentDoc && _src) {
@@ -115,54 +116,9 @@
     }
   })
 
-  $effect(() => {
-    console.log('Syncing shapes _showToolBar', { _showToolBar })
+  // Which panes show (Design tools or the regular activity bar and sidebar) is
+  // derived by ActivityBar and SecondarySideBar from the active node view.
 
-    if (_showToolBar) {
-      // show('leftSidebar')
-      // show('secondarySidebar')
-    }
-    // 1. Select all 4 elements
-    const imageToolbar = document.querySelector(
-      '#image-editor-toolbar-bar-pane'
-    ) as HTMLElement | null
-    const activityBar = document.querySelector('#activity-bar-pane') as HTMLElement | null
-    const imageSideBar = document.querySelector(
-      '#image-editor-secondary-side-bar-pane'
-    ) as HTMLElement | null
-    const wysiwygSideBar = document.querySelector(
-      '#wysiwyg-secondary-side-bar-pane'
-    ) as HTMLElement | null
-
-    // 2. Defensive check: only proceed if the primary toggle elements exist
-    if (!imageToolbar || !activityBar) return
-
-    const showToolBar = _showToolBar
-
-    console.log('Pane Switcher Logic:', {
-      showToolBar,
-      designId: _designId,
-      activeId: $activeNodeviewStore?.id
-    })
-
-    if (showToolBar) {
-      // Show Image Editor UI
-      imageToolbar.style.display = 'block'
-      if (imageSideBar) imageSideBar.style.display = 'block'
-
-      // Hide Standard WYSIWYG UI
-      activityBar.style.display = 'none'
-      if (wysiwygSideBar) wysiwygSideBar.style.display = 'none'
-    } else {
-      // Hide Image Editor UI
-      imageToolbar.style.display = 'none'
-      if (imageSideBar) imageSideBar.style.display = 'none'
-
-      // Show Standard WYSIWYG UI
-      activityBar.style.display = 'block'
-      if (wysiwygSideBar) wysiwygSideBar.style.display = 'block'
-    }
-  })
   // export let __designId = "id1"
   // export let __designPath = "~/Library/Application Support/ddoc-office/ddoc-office/test/assets/design/Design.json"
   // export let __designHeight: number = null
@@ -192,60 +148,56 @@
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault()
+    // The document's own text menu would open on top of this one otherwise.
+    event.stopPropagation()
     setActiveNodeview()
-    window.api?.showContextMenu?.([
-      {
-        label: 'In line with text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('inline')
-      },
-      { type: 'separator' },
-      {
-        label: 'Center',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('center')
-      },
-      {
-        label: 'Full width',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('full')
-      },
-      {
-        label: 'Float left',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-left')
-      },
-      {
-        label: 'Float right',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-right')
-      },
-      { type: 'separator' },
-      {
-        label: 'In front of text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('front')
-      },
-      {
-        label: 'Behind text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('behind')
-      },
-      { type: 'separator' },
-      {
-        label: 'Nudge left',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(-10, 0)
-      },
-      {
-        label: 'Nudge right',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(10, 0)
-      },
-      {
-        label: 'Nudge up',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, -10)
-      },
-      {
-        label: 'Nudge down',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, 10)
-      },
-      {
-        label: 'Reset position',
-        click: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
-      }
-    ])
+    const layout = (value: string) => () =>
+      GenericFormatingEditorCommands.setActiveNodeviewLayout?.(value)
+    const nudge = (dx: number, dy: number) => () =>
+      GenericFormatingEditorCommands.nudgeActiveNodeview?.(dx, dy)
+
+    // A right-click on an object selects it first (SkiaCanva), so the
+    // selection is what the object entries act on.
+    const selectedIds = _commands?.getSelectedIds?.() ?? []
+    const objectEntries: NodeviewMenuEntry[] = selectedIds.length
+      ? [
+          {
+            label: $_('Duplicate'),
+            run: () => selectedIds.forEach((id) => _commands?.duplicateShape(id))
+          },
+          { label: $_('Bring forward'), run: () => _commands?.bringForward() },
+          { label: $_('Send backward'), run: () => _commands?.sendBackward() },
+          { label: $_('Delete'), run: () => _commands?.deleteSelected() },
+          { separator: true }
+        ]
+      : []
+
+    // Plain entries: the menu helper turns them into a clone-safe template
+    // for the native menu and keeps the handlers here (#100).
+    showNodeviewContextMenu(
+      [
+        ...objectEntries,
+        { label: $_('In line with text'), run: layout('inline') },
+        { separator: true },
+        { label: $_('Center'), run: layout('center') },
+        { label: $_('Full width'), run: layout('full') },
+        { label: $_('Float left'), run: layout('float-left') },
+        { label: $_('Float right'), run: layout('float-right') },
+        { separator: true },
+        { label: $_('In front of text'), run: layout('front') },
+        { label: $_('Behind text'), run: layout('behind') },
+        { separator: true },
+        { label: $_('Nudge left'), run: nudge(-10, 0) },
+        { label: $_('Nudge right'), run: nudge(10, 0) },
+        { label: $_('Nudge up'), run: nudge(0, -10) },
+        { label: $_('Nudge down'), run: nudge(0, 10) },
+        {
+          label: $_('Reset position'),
+          run: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
+        }
+      ],
+      Platform.isDesktopPlatform
+    )
   }
 
   const _placeholderHeight = $derived(

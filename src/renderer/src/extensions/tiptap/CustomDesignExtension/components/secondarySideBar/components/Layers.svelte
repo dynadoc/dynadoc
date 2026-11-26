@@ -8,10 +8,7 @@
 
   import type { WysiwygEditorEntry } from '../../../../../../stores/editor.store'
   import type { WysiwygEditorNodeviewEntry } from '../../../../../../stores/editor.store'
-  import {
-    _$_documentEditorsList,
-    _$_wysiwygEditorsList
-  } from '../../../../../../stores/editor.store'
+  import { _$_wysiwygEditorsList } from '../../../../../../stores/editor.store'
   import type { CanvasLayer } from '../../../utils/utils'
   import * as Y from 'yjs'
   import type { Shape } from '../../../../../../utils/canvas.utils'
@@ -24,20 +21,9 @@
   let filterActive = $state(false)
 
   // --- 2. Derived Editor Logic ---
-  const activeDocumentEditorStore = _$_documentEditorsList.getActive()
-  let _activeEditor = $derived($activeDocumentEditorStore)
-
-  // let _activeWysiwyg = $derived(
-  //   _activeEditor ? _$_wysiwygEditorsList.getEntry(_activeEditor.id) : null
-  // )
-  let _activeWysiwyg = $derived(
-    _activeEditor ? _$_wysiwygEditorsList.getEntryStore(_activeEditor?.id.toString()) : null
-    // _activeEditor ? _$_wysiwygEditorsList.getEntry(_activeEditor.id.toString()) : null
-  )
-
-  let _activeNodeview = $derived(
-    _activeWysiwyg ? _$_wysiwygEditorsList.getActiveNodeviewStore($_activeWysiwyg?.id) : null
-  )
+  // Resolved through the store, by the editor identity the WYSIWYG entries are
+  // keyed by (not the document editor's `id`, which missed them, #99).
+  const _activeNodeview = _$_wysiwygEditorsList.getActiveNodeviewOfActiveDocumentStore()
 
   function handleOpacityChange(e: Event) {
     const val = parseInt((e.target as HTMLInputElement).value)

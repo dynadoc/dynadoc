@@ -25,6 +25,11 @@
   } from '../../utils/utils'
   import type { CanvasCommands } from '../../../../../commands/canvasCommands'
   import { parseColor } from '../../utils/design.utils'
+  import {
+    createCanvasSurface,
+    isWebGLAvailable,
+    type CanvasRenderMode
+  } from '../../utils/canvasSurface'
   /* let {
     __canvaPath,
     __shapes,
@@ -119,6 +124,10 @@
   const DPR = window.devicePixelRatio || 1
 
   let _canvasEl: HTMLCanvasElement
+  // How the canvas renders: WebGL, CanvasKit's software surface, or not at all
+  // (then the canvas shows why instead of staying blank).
+  let _renderMode = $state<CanvasRenderMode | 'pending'>('pending')
+  let _renderError = $state('')
   let _CanvasKit: CanvasKit
   let _surface: any
   let _canvas: any
@@ -376,7 +385,7 @@
     const strokeWidth = (shape.strokeWidth ?? 1) * DPR
     const strokeColor = shape.stroke
       ? parseColor(_CanvasKit, shape.stroke)
-      : _CanvasKit.Color(0.6, 0.6, 0.6, 0.8)
+      : _CanvasKit.Color4f(0.6, 0.6, 0.6, 0.8)
 
     strokePaint.setStrokeWidth(strokeWidth)
     strokePaint.setColor(strokeColor)
@@ -394,7 +403,9 @@
     activePaint.delete();
   } */
 
-    if (shape.id === activeShapeId) {
+    // The selection lives in the shared shape map (a shape drawn or picked from
+    // the Layers panel is selected there), not only in the local drag state.
+    if (shape.selected || shape.id === activeShapeId) {
       const x = shape.x * DPR
       const y = shape.y * DPR
       const w = shape.w * DPR
@@ -404,7 +415,7 @@
       const boxPaint = new _CanvasKit.Paint()
       boxPaint.setStyle(_CanvasKit.PaintStyle.Stroke)
       boxPaint.setStrokeWidth(1 * DPR)
-      boxPaint.setColor(_CanvasKit.Color(0, 0.47, 0.84, 1))
+      boxPaint.setColor(_CanvasKit.Color4f(0, 0.47, 0.84, 1))
       _canvas.drawRect(_CanvasKit.XYWHRect(x, y, w, h), boxPaint)
       boxPaint.delete()
 
@@ -414,12 +425,12 @@
 
       const handlePaint = new _CanvasKit.Paint()
       handlePaint.setStyle(_CanvasKit.PaintStyle.Fill)
-      handlePaint.setColor(_CanvasKit.Color(1, 1, 1, 1)) // White fill
+      handlePaint.setColor(_CanvasKit.Color4f(1, 1, 1, 1)) // White fill
 
       const handleStroke = new _CanvasKit.Paint()
       handleStroke.setStyle(_CanvasKit.PaintStyle.Stroke)
       handleStroke.setStrokeWidth(1 * DPR)
-      handleStroke.setColor(_CanvasKit.Color(0, 0.47, 0.84, 1)) // Blue border
+      handleStroke.setColor(_CanvasKit.Color4f(0, 0.47, 0.84, 1)) // Blue border
 
       // Define positions: [x, y] for each handle
       const positions = [
@@ -464,15 +475,17 @@
         _canvas.drawOval(rect, paint)
         break
 
-      case ShapeType.Triangle:
-        const path = new _CanvasKit.Path()
-        path.moveTo(rect[0] + rect[2] / 2, rect[1]) // Top Center
-        path.lineTo(rect[0] + rect[2], rect[1] + rect[3]) // Bottom Right
-        path.lineTo(rect[0], rect[1] + rect[3]) // Bottom Left
-        path.close()
+      case ShapeType.Triangle: {
+        // Paths are immutable in this CanvasKit (Path has no moveTo, the
+        // draw threw); they are built with PathBuilder. `rect` is LTRB.
+        const [left, top, right, bottom] = rect
+        const builder = new _CanvasKit.PathBuilder()
+        builder.addPolygon([(left + right) / 2, top, right, bottom, left, bottom], true)
+        const path = builder.detachAndDelete()
         _canvas.drawPath(path, paint)
         path.delete()
         break
+      }
 
       case ShapeType.Text:
         // Text logic usually handled by Tiptap overlay,
@@ -720,6 +733,15 @@
 
     const pos = getCanvasPos(e, _canvasEl)
 
+    // A secondary button only picks what the context menu acts on: it never
+    // draws, types or starts a drag. An object already in the selection keeps
+    // the whole selection.
+    if (e.button !== 0) {
+      const hit = hitTest(pos.x, pos.y)
+      if (!hit || !__canvaCommands.getSelectedIds().includes(hit.id)) __onSelect?.(hit?.id)
+      return
+    }
+
     // 1. PRIORITIZE TOOL: If drawing a rectangle, don't try to drag
     const tool = __canvaCommands.getSelectedTool()
     if (tool === ImageEditingTools.Type) {
@@ -871,14 +893,32 @@
 
     // const CanvasKitInit = (await import('canvaskit-wasm')).default
 
-    _CanvasKit = await CanvasKitInit({
-      locateFile: () => canvasKitWasmUrl
-    })
+    try {
+      _CanvasKit = await CanvasKitInit({
+        locateFile: () => canvasKitWasmUrl
+      })
+    } catch (error) {
+      _renderMode = 'none'
+      _renderError = error instanceof Error ? error.message : String(error)
+      console.error('[design] CanvasKit failed to load', error)
+      return
+    }
     setupCanvasSize(__canvaWidth || 500, __canvaHeight || 500)
-    _surface = _CanvasKit.MakeCanvasSurface(_canvasEl)
-    console.log('syncPosition onMount2', { _syncTick })
+    // WebGL where the device has it, a software surface where it has not
+    // (#101); never an exception out of onMount that leaves a blank canvas.
+    const created = createCanvasSurface(_CanvasKit, _canvasEl, { webgl: isWebGLAvailable() })
+    _renderMode = created.mode
+    _renderError = created.error ?? ''
+    _canvasEl = created.canvas
+    if (!created.surface) {
+      console.error('[design] no drawing surface:', created.error)
+      return
+    }
+    if (created.mode === 'software') {
+      console.info('[design] rendering in software:', created.error)
+    }
+    _surface = created.surface
     _canvas = _surface.getCanvas()
-    console.log('syncPosition onMount23', { _syncTick })
 
     // _CanvasKit = await CanvasKitInit({
     //   locateFile: (f) => `/canvaskit/${f}`
@@ -972,6 +1012,21 @@
         height={__canvaHeight}
       ></canvas>
 
+      {#if _renderMode === 'none'}
+        <div class="design-canvas-unavailable" role="alert">
+          <i class="ph-light ph-warning-circle text-[28px]" aria-hidden="true"></i>
+          <p class="font-semibold">{$_('The Design canvas cannot be displayed')}</p>
+          <p>
+            {$_(
+              'This device provides no WebGL and the software renderer could not start. Your design is saved and will show where graphics are available.'
+            )}
+          </p>
+          {#if _renderError}
+            <p class="design-canvas-unavailable-detail">{_renderError}</p>
+          {/if}
+        </div>
+      {/if}
+
       {#each _shapeList as shape (shape.id)}
         {#if shape.type == 'text'}
           <SkiaTextShape
@@ -1004,3 +1059,32 @@
     </div>
   </svelte:fragment>
 </ImageEditorUI>
+
+<style>
+  .design-canvas-unavailable {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 24px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-base-content, #374151);
+    background: var(--color-base-100, #f9fafb);
+    border: 1px dashed rgba(0, 0, 0, 0.2);
+  }
+
+  .design-canvas-unavailable p {
+    margin: 0;
+    max-width: 420px;
+  }
+
+  .design-canvas-unavailable-detail {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+</style>
