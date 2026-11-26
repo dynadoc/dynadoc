@@ -212,7 +212,7 @@
     "panzoom": "^9.4.4",
     "path-browserify": "^1.0.1",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^6.2.108",
+    "pdfjs-dist": "^6.5.438",
     "photoswipe": "^5.4.4",
     "prosemirror-schema-basic": "^1.2.4",
     "pug": "^3.0.4",
