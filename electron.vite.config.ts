@@ -40,6 +40,12 @@ import fs from 'node:fs'
 const packageJsonPath = path.resolve(__dirname, 'package.json')
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'))
 
+// `electron-vite` and `electron-vite dev` start the renderer dev server;
+// `build` and `preview` bundle it.
+const isRendererDevServer = !process.argv
+  .slice(2)
+  .some((arg) => arg === 'build' || arg === 'preview')
+
 // 2. Extract production dependencies (ignore devDependencies to keep startup fast)
 const allDependencies = Object.keys(packageJson.dependencies || {})
 
@@ -215,7 +221,24 @@ export default defineConfig({
       }),
       react(),
       UnoCSS({
-        configFile: path.resolve(__dirname, 'uno.config.ts')
+        configFile: path.resolve(__dirname, 'uno.config.ts'),
+        // The renderer dev server runs with `hmr: false` (above). UnoCSS
+        // serves its stylesheet from the classes it has seen so far and sends
+        // the rest later over the HMR socket, which does not exist here, so a
+        // freshly started `npm run dev` rendered the shell with most utility
+        // classes missing until a manual reload. Scanning the sources up front
+        // puts every class in the first stylesheet served. Dev server only:
+        // a build sees the whole module graph anyway, and its output stays
+        // exactly as it was.
+        ...(isRendererDevServer
+          ? {
+              content: {
+                filesystem: [
+                  `${path.resolve(__dirname, 'src/renderer/src').replace(/\\/g, '/')}/**/*.{svelte,ts,html}`
+                ]
+              }
+            }
+          : {})
       })
       // monacoEditorPlugin.default({}),
       // svg()
