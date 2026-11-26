@@ -28,7 +28,7 @@
  *   - getHtmlWithStyleBlocks() / decodeStyleBlocksInHtml() for save pipeline
  */
 
-import { Extension, Node } from '@tiptap/core'
+import { Extension, Node, commands as coreCommands } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import type { Node as ProsemirrorNode } from 'prosemirror-model'
@@ -340,19 +340,17 @@ export const CustomHtmlStyleExtension = Extension.create({
   //    This is the fix for the "setContent bypasses transformPastedHTML" bug.
   addCommands() {
     return {
-      setContent:
-        (content: string | object, emitUpdate?: boolean, parseOptions?: object) =>
-        ({ commands }: { commands: any }) => {
-          // Only intercept string HTML — JSON content objects pass through
-          if (typeof content === 'string') {
-            return commands.setContent(
-              prepareStyleHtmlForEditor(content),
-              emitUpdate,
-              parseOptions,
-            )
-          }
-          return commands.setContent(content, emitUpdate, parseOptions)
-        },
+      setContent: (content, options) => (props) => {
+        // Delegate to the core command implementation, not to
+        // `props.commands.setContent`: that one resolves to this override and
+        // recursed until "Maximum call stack size exceeded" (dynadoc#93).
+        // The pre-Tiptap-3 `setContent(html, emitUpdate)` form is still used
+        // by callers, so a boolean second argument means `{ emitUpdate }`.
+        const opts = typeof options === 'boolean' ? { emitUpdate: options } : options
+        // Only intercept string HTML; JSON content objects pass through
+        const prepared = typeof content === 'string' ? prepareStyleHtmlForEditor(content) : content
+        return coreCommands.setContent(prepared, opts)(props)
+      }
     }
   },
 

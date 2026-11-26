@@ -2,8 +2,18 @@
   import { onDestroy } from 'svelte'
   import { _$_documentEditorsList } from '../../../stores/editor.store'
   import { GenericFormatingEditorCommands } from '../../common/actions/formatting'
-  import { get } from 'svelte/store'
   import { _ } from 'svelte-i18n'
+  import { fluentUIcons } from '../../common/icons/Icons'
+
+  type SheetAction = {
+    icon?: string
+    /** Raw SVG markup, used instead of `icon` when set */
+    svg?: string
+    label: string
+    /** i18n key, used instead of `label` when set */
+    labelKey?: string
+    action: () => unknown
+  }
 
   const quickActions = [
     {
@@ -33,7 +43,7 @@
     }
   ]
 
-  const moreActions = [
+  const moreActions: SheetAction[] = [
     {
       icon: 'ph-bold ph-image',
       label: 'Picture',
@@ -63,11 +73,33 @@
       icon: 'ph-bold ph-translate',
       label: 'Translate',
       action: () => GenericFormatingEditorCommands.openTranslatePane()
+    },
+    // Paragraph direction: the desktop ribbon's Paragraph group is not shown
+    // on narrow windows, so its LTR / RTL buttons live here (dynadoc#94).
+    {
+      svg: fluentUIcons.fluentUIconTextParagraphDirectionLeft,
+      label: 'Paragraph Direction Left',
+      labelKey: 'Paragraph Direction Left',
+      action: () => GenericFormatingEditorCommands.setDirectionLTR()
+    },
+    {
+      svg: fluentUIcons.fluentUIconTextParagraphDirectionRight,
+      label: 'Paragraph Direction Right',
+      labelKey: 'Paragraph Direction Right',
+      action: () => GenericFormatingEditorCommands.setDirectionRTL()
+    },
+    {
+      svg: fluentUIcons.fluentUIconTextParagraphDirection,
+      label: 'Paragraph Direction',
+      labelKey: 'Paragraph Direction',
+      action: () => GenericFormatingEditorCommands.toggleDirection()
     }
   ]
 
-  let showMore = false
-  let activeEditorName = ''
+  // The app compiles Svelte with runes on: a plain `let` is not reactive, so
+  // the More sheet never opened (dynadoc#94).
+  let showMore = $state(false)
+  let activeEditorName = $state('')
 
   const activeStore = _$_documentEditorsList.getActive()
   const unsub = activeStore.subscribe((entry) => {
@@ -81,39 +113,49 @@
 
 <div class="mobile-ribbon">
   <div class="mobile-ribbon-bar">
-    {#each quickActions as item}
-      <button class="mobile-ribbon-btn" on:click={item.action} aria-label={item.label}>
+    {#each quickActions as item (item.label)}
+      <button class="mobile-ribbon-btn" onclick={item.action} aria-label={item.label}>
         <i class={item.icon}></i>
         <span>{item.label}</span>
       </button>
     {/each}
 
-    <button class="mobile-ribbon-btn is-more" on:click={() => (showMore = !showMore)}>
+    <button
+      class="mobile-ribbon-btn is-more"
+      aria-expanded={showMore}
+      onclick={() => (showMore = !showMore)}
+    >
       <i class="ph-bold ph-dots-three-outline"></i>
       <span>{$_('More')}</span>
     </button>
   </div>
 
   {#if showMore}
-    <div class="mobile-ribbon-sheet" on:click={() => (showMore = false)}>
-      <div class="sheet-card" on:click|stopPropagation>
+    <div class="mobile-ribbon-sheet" role="presentation" onclick={() => (showMore = false)}>
+      <div class="sheet-card" role="presentation" onclick={(event) => event.stopPropagation()}>
         <div class="sheet-header">
           <span>{$_('Quick Tools')}</span>
-          <button on:click={() => (showMore = false)} class="close-btn">
+          <button onclick={() => (showMore = false)} class="close-btn" aria-label={$_('Close')}>
             <i class="ph-bold ph-x"></i>
           </button>
         </div>
         <div class="sheet-grid">
-          {#each moreActions as item}
+          {#each moreActions as item (item.label)}
             <button
               class="sheet-item"
-              on:click={() => {
+              onclick={() => {
                 item.action()
                 showMore = false
               }}
             >
-              <i class={item.icon}></i>
-              <span>{item.label}</span>
+              {#if item.svg}
+                <!-- bundled Fluent UI icon markup, not user content -->
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                <span class="sheet-item-svg" aria-hidden="true">{@html item.svg}</span>
+              {:else}
+                <i class={item.icon}></i>
+              {/if}
+              <span>{item.labelKey ? $_(item.labelKey) : item.label}</span>
             </button>
           {/each}
         </div>
@@ -165,7 +207,7 @@
     padding: 16px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     max-height: 70vh;
-    overflow: hidden;
+    overflow-y: auto;
   }
   .sheet-header {
     display: flex;
@@ -187,6 +229,16 @@
   }
   .sheet-item i {
     font-size: 20px;
+  }
+  .sheet-item-svg {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+  }
+  .sheet-item-svg :global(svg) {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
   }
   .close-btn {
     @apply text-[var(--color-base-content)]/60 hover:text-[var(--color-base-content)];

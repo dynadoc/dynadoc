@@ -1,0 +1,19 @@
+/*
+ * FortuneSheet lays out and paints the grid for left-to-right only: the cell
+ * canvas draws with textAlign "start" and absolute x positions, so under an
+ * inherited `direction: rtl` (RTL UI language) cell text is drawn leftwards
+ * out of its cell and clipped or hidden (dynadoc#92). The workbook wrappers
+ * carry dir="ltr"; this keeps the canvases LTR even if they are re-parented,
+ * and lets right-to-left text in the cell editor and formula bar take its
+ * own direction.
+ */
+.fortune-container,
+.fortune-sheet-canvas,
+.fortune-sheet-canvas-placeholder {
+  direction: ltr;
+}
+
+#luckysheet-rich-text-editor,
+#luckysheet-functionbox-cell {
+  unicode-bidi: plaintext;
+}
