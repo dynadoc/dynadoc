@@ -190,6 +190,26 @@ try {
     true
   )
 
+  const sheetCollab = readFileSync(
+    path.join(
+      repoRoot,
+      'src',
+      'renderer',
+      'src',
+      'extensions',
+      'tiptap',
+      'CustomSpreadsheetExtension',
+      'collab',
+      'collab.ts'
+    ),
+    'utf8'
+  )
+  check(
+    'sheets take part in the flush before a save',
+    /Utils\.registerWriteFlusher\(/.test(sheetCollab),
+    true
+  )
+
   if (failures > 0) {
     console.error(`\n[save-shortcut] FAIL: ${failures} check(s) failed\n`)
     process.exit(1)

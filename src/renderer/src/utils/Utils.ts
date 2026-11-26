@@ -75,6 +75,7 @@ function normalizePathForPlatform(inputPath: string): string {
 // per-file debounced writers that have not started yet. Utils.flushPendingWrites
 // drains both before a document is packed.
 const pendingFileWrites = new Set<Promise<void>>()
+const writeFlushers = new Set<() => void | Promise<void>>()
 const debouncedFileWriters = new Map<
   string,
   ReturnType<typeof debounce<(latest: string, callback?: () => void) => void>>
@@ -495,6 +496,15 @@ export default class Utils {
   }
 
   /**
+   * Lets an editor that keeps its own write timer (the sheet, for one) take
+   * part in flushPendingWrites. Returns the function that unregisters it.
+   */
+  public static registerWriteFlusher(flush: () => void | Promise<void>): () => void {
+    writeFlushers.add(flush)
+    return () => writeFlushers.delete(flush)
+  }
+
+  /**
    * Runs every debounced write now and waits until all of them, and any write
    * already in progress, have reached the disk.
    *
@@ -504,6 +514,13 @@ export default class Utils {
    */
   public static async flushPendingWrites(): Promise<void> {
     for (const writer of [...debouncedFileWriters.values()]) writer.flush()
+    await Promise.all(
+      [...writeFlushers].map((flush) =>
+        Promise.resolve()
+          .then(flush)
+          .catch((error) => console.warn('A pending write could not be flushed', error))
+      )
+    )
     while (pendingFileWrites.size > 0) {
       await Promise.all([...pendingFileWrites])
     }
