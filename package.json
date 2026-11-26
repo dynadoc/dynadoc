@@ -314,6 +314,7 @@
   "overrides": {
     "happy-dom": "^21.0.4",
     "@xmldom/xmldom@^0.9.0": "^0.9.12",
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.1",
     "fabric": {
       "canvas": "$canvas",
       "jsdom": "^27.0.0"
@@ -326,6 +327,11 @@
     },
     "svelte-i18n": {
       "esbuild": "$esbuild"
+    },
+    "latex.js": {
+      "js-beautify": {
+        "glob": "^13.0.7"
+      }
     }
   }
 }
