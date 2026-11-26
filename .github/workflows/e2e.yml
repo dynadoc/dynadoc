@@ -1,0 +1,163 @@
+name: E2E web
+
+# The Playwright suite for the web build (tests/e2e/README.md): the production
+# bundle against the local stub bridge, in Chromium.
+#
+# When it runs:
+#   - on every push to main, so every merged commit is tested and a red run
+#     names the commit to revert (the policy: a red e2e on main means revert);
+#   - as the first job of web-image.yml, which `needs:` it, so no web image is
+#     built from a commit that failed it (see that file);
+#   - by hand (workflow_dispatch), with inputs to hunt flaky tests or to make
+#     screenshot baselines.
+# Not on pull requests: the suite takes several minutes and is not a required
+# check.
+#
+# Pushes that web-image.yml already tests are left out below with
+# `paths-ignore`, which skips this run only when *every* changed file is one of
+# web-image.yml's paths. Keep the two lists the same.
+#
+# It runs inside the official Playwright image matching @playwright/test, so
+# the browser, its system libraries and its fonts are the ones the screenshot
+# baselines were made with (E2E_VISUAL=1).
+
+on:
+  push:
+    branches: ['main']
+    paths-ignore:
+      - 'deploy/web/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - '.github/workflows/web-image.yml'
+  workflow_dispatch:
+    inputs:
+      repeat_each:
+        description: 'Run every test N times (--repeat-each), to hunt flaky tests'
+        type: number
+        default: 1
+      update_snapshots:
+        description: 'Regenerate the screenshot baselines and upload them as an artifact'
+        type: boolean
+        default: false
+      fail_on_flaky:
+        description: 'Fail the run when a test passes only on retry'
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      repeat_each:
+        type: number
+        default: 1
+      update_snapshots:
+        type: boolean
+        default: false
+      fail_on_flaky:
+        type: boolean
+        default: false
+
+# Least privilege: the suite only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  e2e-web:
+    name: e2e-web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A manual run replaces the previous manual run on the same branch. Runs
+    # on main are never cancelled: each commit must get its own verdict.
+    concurrency:
+      group: e2e-web-${{ github.event_name == 'workflow_dispatch' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    container:
+      # Keep in step with @playwright/test in package.json (checked below).
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    env:
+      CI: 'true'
+      E2E_VISUAL: '1'
+      REPEAT_EACH: ${{ inputs.repeat_each || 1 }}
+      UPDATE_SNAPSHOTS: ${{ inputs.update_snapshots && 'true' || 'false' }}
+      FAIL_ON_FLAKY: ${{ inputs.fail_on_flaky && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # --ignore-scripts, as in ci.yml: the web build needs none of the
+      # desktop build's native modules. The browser comes with the image, so
+      # there is no `playwright install` step.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check the image matches @playwright/test
+        run: |
+          version="$(npx playwright --version)"
+          echo "$version"
+          test "$version" = "Version 1.63.0" || {
+            echo "::error title=Playwright version::@playwright/test is not 1.63.0: update the container image in e2e.yml"
+            exit 1
+          }
+
+      - name: Build the web app
+        id: build
+        run: npm run build:web:e2e
+
+      - name: Run the e2e suite
+        id: suite
+        if: env.UPDATE_SNAPSHOTS != 'true'
+        env:
+          E2E_SKIP_BUILD: '1'
+        run: npm run test:e2e -- --repeat-each="$REPEAT_EACH"
+
+      - name: Regenerate the screenshot baselines
+        if: env.UPDATE_SNAPSHOTS == 'true'
+        env:
+          E2E_SKIP_BUILD: '1'
+        run: npm run test:e2e:update-snapshots
+
+      - name: Report flaky tests
+        if: always()
+        run: node tests/e2e/report-flaky.mjs test-results/results.json
+
+      # When the commit broke the build or the suite; not for flaky tests alone
+      # (FAIL_ON_FLAKY) nor an install that failed on the network.
+      - name: Name the commit to revert
+        if: failure() && (steps.build.outcome == 'failure' || steps.suite.outcome == 'failure')
+        run: |
+          subject="$(git log -1 --format=%s "$GITHUB_SHA" 2>/dev/null || echo 'unknown')"
+          {
+            echo "### e2e-web failed on \`$GITHUB_SHA\`"
+            echo
+            echo "Commit: \`$GITHUB_SHA\` ($subject), event \`$GITHUB_EVENT_NAME\`, ref \`$GITHUB_REF\`."
+            echo
+            echo "Policy: a red e2e on main means reverting that commit:"
+            echo
+            echo '```sh'
+            echo "git revert $GITHUB_SHA"
+            echo '```'
+            echo
+            echo "The report and the traces of the failed tests are in this run's artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=e2e-web failed::Commit $GITHUB_SHA failed the web e2e suite. Revert it with: git revert $GITHUB_SHA"
+
+      - name: Upload the report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-web-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
+      - name: Upload the new screenshot baselines
+        if: env.UPDATE_SNAPSHOTS == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-web-screenshots-${{ github.run_id }}
+          path: tests/e2e/__screenshots__/
+          retention-days: 14
