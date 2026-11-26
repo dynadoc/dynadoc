@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.1](https://github.com/dynadoc/dynadoc/compare/v1.4.0...v1.4.1) (2026-11-26)
+
+
+### Fixes
+
+* **design:** working tools, clone-safe context menu, software fallback ([#106](https://github.com/dynadoc/dynadoc/issues/106)) ([1961603](https://github.com/dynadoc/dynadoc/commit/196160358059297579c1602b6e00a740bd22e741))
+* setContent recursion, RTL sheet grid and narrow-ribbon direction ([#105](https://github.com/dynadoc/dynadoc/issues/105)) ([d8adaa9](https://github.com/dynadoc/dynadoc/commit/d8adaa99ef4a1eafe66759d713734c2a977fb90a))
+
+
+### Documentation
+
+* **architecture:** describe the current client and its boundaries ([#102](https://github.com/dynadoc/dynadoc/issues/102)) ([04eeb1e](https://github.com/dynadoc/dynadoc/commit/04eeb1e5b1a6f33a555662a8681b352ae8b341bc))
+
 ## [1.4.0](https://github.com/dynadoc/dynadoc/compare/v1.3.1...v1.4.0) (2026-11-22)
 
 
