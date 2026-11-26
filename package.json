@@ -53,9 +53,10 @@
     "test:smoke:pptx": "node tests/smoke/pptx.test.mjs",
     "test:smoke:html-style-set-content": "node tests/smoke/html-style-set-content.test.mjs",
     "test:smoke:ddocify-save": "node tests/smoke/ddocify-save.test.mjs",
+    "test:smoke:save-shortcut": "node tests/smoke/save-shortcut.test.mjs",
     "test:smoke:boot-recovery": "node tests/smoke/boot-recovery.test.mjs",
     "test:security:crypto": "node tests/security/chunked-crypto.test.mjs",
-    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:smoke:variable-menu && npm run test:smoke:variable-lookup-io && npm run test:smoke:editor-mode-bar && npm run test:smoke:slides && npm run test:smoke:pptx && npm run test:smoke:html-style-set-content && npm run test:smoke:design-canvas && npm run test:smoke:ddocify-save && npm run test:smoke:boot-recovery && npm run test:security:crypto",
+    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:smoke:variable-menu && npm run test:smoke:variable-lookup-io && npm run test:smoke:editor-mode-bar && npm run test:smoke:slides && npm run test:smoke:pptx && npm run test:smoke:html-style-set-content && npm run test:smoke:design-canvas && npm run test:smoke:ddocify-save && npm run test:smoke:save-shortcut && npm run test:smoke:boot-recovery && npm run test:security:crypto",
     "check:file-urls": "node scripts/find-file-url-sites.mjs",
     "ci:check": "npm run check:cycles && npm run typecheck",
     "prepare": "husky"
