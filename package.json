@@ -28,6 +28,7 @@
     "build:mac": "NODE_OPTIONS='--max-old-space-size=8192' npm run build:no-check && electron-builder --mac",
     "WORKINGbuild:mac": "NODE_OPTIONS='--max-old-space-size=8192' npm run build:no-check && electron-builder --mac dmg --publish never --config.directories.output=/tmp/ddoc-build-test",
     "build:linux1": "npm run build:no-check && electron-builder --linux",
+    "build:linux:dir": "npm run build:no-check && electron-builder --linux dir",
     "build:linux": "cross-env NODE_OPTIONS=--max-old-space-size=16192 npm i && npm run build:no-check && electron-builder --linux",
     "build": "npm run typecheck && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-vite build",
     "build:capacitor": "vite build --config capacitor.vite.config.mts",

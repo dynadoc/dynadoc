@@ -75,40 +75,71 @@ gives precedence and `.gitignore` already covers.
 
 ### Run
 
-```bash
-npm run dev          # Electron desktop app
-npm run dev:web      # web build only, no Electron, no local binaries
-```
+One command per target. The stub bridge (`tools/stub-bridge`) is the local
+stand-in for the proprietary API bridge; it keeps its files in
+`~/.dynadoc-stub`.
 
-Both of those expect a bridge at `VITE_API_URL`. Without one, every call fails
-on the first request — and an unset `VITE_API_URL` resolves to the production
-API rather than to nothing, so "no backend" is not a state you can reach by
-leaving it blank. To work against the local stand-in instead, use two
-terminals:
+| You want                                  | Command                     | What it starts                                     |
+| ----------------------------------------- | --------------------------- | -------------------------------------------------- |
+| The web app, ready to use                 | `npm run dev:web:local`     | the stub on port 7070 and the web client (Vite)    |
+| The desktop app                           | `npm run dev`               | the desktop app; no backend needed for local files |
+| The desktop app with the stub beside it   | `npm run dev:desktop:local` | the stub on port 7070 and the desktop app          |
+| Only the web client, stub already running | `npm run dev:web:stub`      | the web client pointed at `http://localhost:7070`  |
+| Only the stub                             | `npm run stub-bridge`       | the stub on port 7070                              |
 
-```bash
-npm run stub-bridge     # terminal 1 — the stub, on port 7070
-npm run dev:web:stub    # terminal 2 — the web client pointed at it
-```
+With `dev:web:local` and `dev:desktop:local`, Ctrl+C stops both processes,
+a stub already listening on the port is reused, and anything after `--` goes
+to the client (`npm run dev:web:local -- --open`). On macOS or Linux,
+`make start` is the same as `dev:web:local` plus a first-time install and
+opening the browser; `make stop` cleans up anything left behind.
 
-Then open the URL Vite prints. See
+Open the URL Vite prints for the web app. The first load compiles a large
+dependency graph and can take a minute; the page reloads itself once if the
+dev server was still re-optimising dependencies.
+
+Which API the client talks to: `VITE_API_URL` if it is set (`.env.local`, or
+the environment), else, when the page is served from `localhost`, the stub's
+address `http://localhost:7070`. A development server never falls back to the
+production API. One exception survives reloads: an API address the client
+reached once is stored in `localStorage` under `ddoc.api_url` and wins over
+`VITE_API_URL` until you clear it. See
 [tools/stub-bridge/README.md](tools/stub-bridge/README.md) for what the stub
-covers and what it refuses.
+answers and what it refuses by name.
 
-On macOS or Linux, `make start` does all of the above in one terminal: it
-installs dependencies for the web client if needed, creates `.env.local`,
-starts the stub and the web client, and opens the browser. Ctrl+C stops both;
-`make stop` cleans up anything left behind.
+#### What works on desktop without the bridge and the binaries
+
+Working with documents on your disk needs neither: create a document,
+spreadsheet, presentation or design, type, save with Ctrl+S (Cmd+S) or
+File > Save, Save As to any folder, open `.xddoc`, `.xlsx`, `.pptx` and
+`.pdf` files with File > Open, export to PDF, and quit and relaunch with the
+open tabs restored.
+
+These need something this repository does not ship, and each one says so
+when you use it instead of failing silently:
+
+| Feature                                 | Needs                                     |
+| --------------------------------------- | ----------------------------------------- |
+| Sign in, accounts, cloud drive, sharing | the API bridge and `dynadoc-middleware`   |
+| Sealed `.sddoc` documents               | `dynadoc-middleware`                      |
+| Opening `.docx`, exporting to Word      | the `DocxToHtml` converter                |
+| Integrated terminal                     | `node-pty` built for this Electron        |
+| LaTeX, grammar checking                 | the TeX engine, the grammar checker (JRE) |
 
 ### Build
 
 ```bash
-npm run build:web        # static web bundle
-npm run build:electron   # Electron bundle (main + preload + renderer)
-npm run build:mac        # packaged macOS app
-npm run build:win        # packaged Windows app
-npm run build:linux      # packaged Linux app
+npm run build:web          # static web bundle in web/dist
+npm run build:electron     # Electron bundle (main + preload + renderer) in out/
+npm run build:linux:dir    # unpacked Linux app in dist/linux-unpacked
+npm run build:linux        # packaged Linux app (AppImage, snap, deb)
+npm run build:mac          # packaged macOS app
+npm run build:win          # packaged Windows app
 ```
+
+`build:linux:dir` is the quickest way to try a packaged build: run
+`dist/linux-unpacked/dynadoc`. A packaged app is not served from `localhost`,
+so it talks to the API set in `VITE_API_URL` at build time, and to the
+production API if none was set; documents on your disk work either way.
 
 The packaged builds are unsigned: no signing identity is configured in this
 repository.
@@ -123,7 +154,9 @@ ls node_modules/node-pty/build/Release/*.node       # must exist
 ```
 
 `node-pty` exits successfully while producing nothing on recent Node versions.
-If that directory is empty, the integrated terminal will not work.
+If that directory is empty, the app still starts; the integrated terminal
+says it cannot load and how to fix it (`npm ci` again, so `electron-rebuild`
+rebuilds it for this Electron).
 
 ## Repository layout
 

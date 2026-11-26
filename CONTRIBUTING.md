@@ -10,7 +10,8 @@ git clone https://github.com/dynadoc/dynadoc.git
 cd dynadoc
 cp .env.example .env.local
 npm ci
-npm run dev        # or: npm run dev:web
+npm run dev:web:local   # the web app against the local stub bridge
+npm run dev             # the desktop app
 ```
 
 Node **22** and npm **10** exactly. [README.md](README.md) lists the
@@ -24,9 +25,20 @@ to call. `tools/stub-bridge/` is the stand-in that makes this repository
 runnable without it — the normal way to develop here:
 
 ```bash
+npm run dev:web:local       # stub + web client in one terminal, Ctrl+C stops both
+npm run dev:desktop:local   # stub + desktop app
+```
+
+The same pair in two terminals, if you prefer to restart one side on its own:
+
+```bash
 npm run stub-bridge     # terminal 1
 npm run dev:web:stub    # terminal 2, then open the URL Vite prints
 ```
+
+The desktop app needs no backend for documents on your disk: `npm run dev`
+alone is enough to create, edit, save and reopen them. README.md lists what
+needs the bridge or one of the binaries that are not in this repository.
 
 Read [tools/stub-bridge/README.md](tools/stub-bridge/README.md) before you
 trust a result you got through it. It is explicit about which channels it
@@ -52,7 +64,7 @@ npm run check:cycles     # no new circular imports above the recorded baseline
 **Advisory, run them and read the diff, not the total:**
 
 ```bash
-npm run typecheck:node   # TypeScript on main + preload. ~23 pre-existing errors.
+npm run typecheck:node   # TypeScript on main + preload. 8 pre-existing errors.
 npm run lint             # ESLint. Large pre-existing debt.
 ```
 
@@ -65,12 +77,20 @@ it is to not add to the count. Compare against `main` before and after.
   report thousands of pre-existing diagnostics on the renderer. They cannot
   gate anything today and a clean run is not achievable in a single PR. CI does
   not run them.
-- **There is no test suite.** No vitest, no jest, no playwright, no `test`
-  script. Verification is manual. Say in your pull request what you exercised
-  and how.
+  **Smoke tests, fast and worth running before you push:**
 
-If you want to change that, a first `vitest` setup on the pure modules under
-`src/renderer/src/lib/` would be welcome and is a good standalone contribution.
+```bash
+npm run test:ci          # every test under tests/smoke and tests/security
+```
+
+They are plain Node scripts, no test framework: each compiles the module it
+covers with esbuild and checks it directly. There is no unit-test runner and
+no end-to-end suite in CI, so verification of anything visible is still
+manual. Say in your pull request what you exercised and how.
+
+A new smoke test is a file in `tests/smoke/`, a `test:smoke:<name>` script and
+an entry in `test:ci`. A first `vitest` setup on the pure modules under
+`src/renderer/src/lib/` would also be welcome as a standalone contribution.
 
 ### Compiling a single Svelte component
 

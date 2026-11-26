@@ -30,7 +30,14 @@ PUPPETEER_SKIP_DOWNLOAD=true npm install
 of the desktop build's native modules. On npm 11.19 and later it changes
 nothing, since install scripts no longer run by default.
 
-Then two commands, in two terminals:
+Then one command, which starts the stub and the web client together
+(Ctrl+C stops both):
+
+```sh
+npm run dev:web:local
+```
+
+Or the same two processes in two terminals:
 
 ```sh
 npm run stub-bridge
@@ -74,20 +81,17 @@ an empty DOM probe as a broken editor. And the onboarding tour is modal: it
 sits over the `New Document` button and swallows the click, so dismiss it
 before deciding anything is wrong.
 
-## Why the dev script sets the variable inline
+## Which address the client uses
 
 `dev:web:stub` is `dev:web` with `VITE_API_URL` pointed at the stub, set on
-the command line rather than in a file, and that is not a style choice.
+the command line so that it does not depend on any `.env` file.
+`npm run dev:web:local` does the same and starts the stub too.
 
-The web build sets `root: './src/renderer'`, and Vite looks for `.env` files
-in `envDir`, which defaults to `root`. The `.env` files at the top of this
-repository are therefore never read by the web target. Putting `VITE_API_URL`
-in one of them does nothing, which is a slow way to discover that plain
-`npm run dev:web` has no API base configured at all.
-
-And with none configured, the client does not stop. It falls through five
-steps, the last of which is the production API, hardcoded. There is no "no
-backend" state: anything unconfigured is production.
+The web build reads the `.env` files at the top of this repository
+(`web.vite.config.mts` sets `envDir` to it), so `VITE_API_URL` in
+`.env.local` works as well. With no `VITE_API_URL` at all, a client served
+from `localhost` uses the stub's address, `http://localhost:7070`; it never
+falls back to the production API from a development server.
 
 One consequence worth knowing because it survives a reload. If the client ever
 reaches a real backend, it stores that address under `ddoc.api_url` in local
