@@ -4154,6 +4154,15 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
             throw new Error(syncResult.message || 'Unable to sync the document before sealing.')
           }
         }
+        if (isDesktopPlatform) {
+          // The main process writes the archive next to the target and renames
+          // it into place, so the document is replaced in one step. Writing a
+          // sibling ".tmp" file from here instead was refused by the
+          // filesystem policy for every folder the user picked in Save As:
+          // the dialog grants the chosen file, not its neighbours.
+          const written = await window.api.ddocify(cacheDir, outputPath, shouldSecured, require2fa)
+          return written || outputPath
+        }
         const parsed = nodeApi.path.parse(outputPath)
         const tempPath = nodeApi.path.join(
           parsed.dir,

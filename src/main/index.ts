@@ -2488,6 +2488,10 @@ app.whenReady().then(async () => {
       require2fa?: boolean
     ) => {
       console.log('ddocifying', folderPath, 'to', outputFile)
+      // This handler writes a file wherever the renderer says, so it answers
+      // to the same policy as every other write: the target must be inside the
+      // application's folders or a path the user chose in a dialog.
+      outputFile = requirePath(outputFile)
       if (shouldSecured) {
         const output = await runDdocServerJson('sddoc:pack', {
           input_dir: folderPath,
@@ -2516,8 +2520,13 @@ app.whenReady().then(async () => {
       }
 
       const pipelineAsync = promisify(pipeline)
-      return await Utils.ddocify(pipelineAsync, folderPath, outputFile, shouldSecured)
-      // return '✅ Done'
+      const written = await Utils.ddocify(pipelineAsync, folderPath, outputFile, shouldSecured)
+      // ddocify adds the document extension when the chosen name lacks one
+      // ("Report" becomes "Report.xddoc"). That file is the one the user asked
+      // for, and the renderer reads and saves it from now on, so it carries
+      // the grant of the path it was derived from.
+      if (written !== outputFile) grantUserChosenPath({ path: written, directory: false })
+      return written
     }
   )
 
