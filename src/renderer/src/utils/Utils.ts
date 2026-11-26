@@ -256,7 +256,10 @@ export default class Utils {
 
   // File extensions that can be previewed
   static PREVIEWABLE_FILE_EXTENSIONS = {
-    pdf: `${Utils.FILE_TYPES.pdf}`,
+    // With the dot, like every other entry here and like path.extname(): this
+    // used to be the bare type name 'pdf', so no PDF ever matched, and an
+    // opened PDF went to the rich-text editor with no file to load.
+    pdf: `.${Utils.FILE_TYPES.pdf}`,
     ...Utils.IMAGE_EXTENSIONS,
     ...Utils.VIDEO_EXTENSIONS,
     ...Utils.AUDIO_EXTENSIONS
