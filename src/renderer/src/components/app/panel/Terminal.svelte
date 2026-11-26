@@ -20,6 +20,7 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
   import { onMount, tick } from 'svelte'
+  import toast from 'svelte-hot-french-toast'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import '@xterm/xterm/css/xterm.css'
@@ -35,7 +36,20 @@
       folder = active?.document?.dirPath || '~/'
     }
 
-    const { id, folderPath } = await window.terminal.open(folder)
+    let opened: { id: string; folderPath: string }
+    try {
+      opened = await window.terminal.open(folder)
+    } catch (error) {
+      // The main process says why (usually node-pty not built for this
+      // Electron); show that instead of an empty panel and a console error.
+      const message = String((error as Error)?.message || error).replace(
+        /^Error invoking remote method '[^']+': (\w+Error: )?/,
+        ''
+      )
+      toast.error(message, { duration: 8000 })
+      return
+    }
+    const { id, folderPath } = opened
 
     const term = new Terminal({
       cursorBlink: true,
@@ -148,16 +162,18 @@
       </div>
 
       <div class="flex items-center gap-1 pr-1">
-        <button class="theme-icon-btn" onclick={handleResize} title={$_('Fit Terminal')}
-          ><i class="ph-light ph-frame-corners"></i></button
-        >
-        <button class="theme-icon-btn" title={$_('Split Panel (coming soon)')}
-          ><i class="ph-light ph-columns"></i></button
-        >
-        <div class="h-4 w-px bg-[color-mix(in_srgb,var(--color-base-white)_10%,transparent)] mx-1"></div>
-        <button class="theme-icon-btn text-error/60 hover:text-error" title={$_('Kill All')}
-          ><i class="ph-light ph-power"></i></button
-        >
+        <button class="theme-icon-btn" onclick={handleResize} title={$_('Fit Terminal')}>
+          <i class="ph-light ph-frame-corners"></i>
+        </button>
+        <button class="theme-icon-btn" title={$_('Split Panel (coming soon)')}>
+          <i class="ph-light ph-columns"></i>
+        </button>
+        <div
+          class="h-4 w-px bg-[color-mix(in_srgb,var(--color-base-white)_10%,transparent)] mx-1"
+        ></div>
+        <button class="theme-icon-btn text-error/60 hover:text-error" title={$_('Kill All')}>
+          <i class="ph-light ph-power"></i>
+        </button>
       </div>
     </div>
 

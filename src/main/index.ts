@@ -60,7 +60,7 @@ import * as yauzl from 'yauzl'
 import * as mkdirp from 'mkdirp'
 
 import Utils from './utils/Utils'
-import { spawn as nodePtySpawn } from 'node-pty' // or 'node-pty-prebuilt-multiarch'
+import { loadNodePty } from './utils/optionalNative'
 
 import { spawn, execFile, exec } from 'child_process'
 // const { spawn, execFile, exec } = require('child_process')
@@ -5877,6 +5877,7 @@ app.whenReady().then(async () => {
     const termId = nextTerminalId++
 
     console.log('Opening terminal in shellNodePtySpawn:', shellNodePtySpawn, { cwd, termId })
+    const { spawn: nodePtySpawn } = await loadNodePty()
     const ptyProcess = nodePtySpawn(shellNodePtySpawn, [], {
       name: 'xterm-color',
       cwd,
