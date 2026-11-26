@@ -90,7 +90,7 @@
     "@fortune-sheet/react": "^1.0.4",
     "@headless-tree/core": "^1.7.0",
     "@headless-tree/react": "^1.7.0",
-    "@hocuspocus/provider": "^4.5.0",
+    "@hocuspocus/provider": "^4.9.0",
     "@humanspeak/svelte-virtual-list": "^0.5.13",
     "@mui/material": "^9.3.0",
     "@phosphor-icons/web": "^2.1.2",
