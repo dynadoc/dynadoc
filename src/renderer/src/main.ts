@@ -10,6 +10,7 @@ import 'highlight.js/styles/atom-one-light.css'
 
 // The following are now loaded dynamically to improve performance
 import { ensureDriveReadySoon } from './utils/driveReady'
+import { isStaleModuleError, recoverFromBootFailure } from './bootRecovery'
 
 const bootIndexStart =
   typeof window !== 'undefined' && typeof (window as any).__bootIndexStart === 'number'
@@ -288,7 +289,7 @@ const loadNonCriticalAssets = async () => {
   if (isMeetingLaserPointer || isMeetingSharingToolbar) return
   logBoot('nonCriticalAssets:start')
   try {
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       import('./assets/main.css'),
       import('./assets/css/editor.css'),
       import('simplebar'),
@@ -296,6 +297,13 @@ const loadNonCriticalAssets = async () => {
       import('@phosphor-icons/web/light'),
       import('@phosphor-icons/web/bold')
     ])
+    // The application stylesheets arrive here, so "non-critical" is generous:
+    // without them the shell renders as unstyled text. A module that could
+    // not be fetched gets the same treatment as a failed boot.
+    const stale = results.find(
+      (result) => result.status === 'rejected' && isStaleModuleError(result.reason)
+    ) as PromiseRejectedResult | undefined
+    if (stale) recoverFromBootFailure(stale.reason)
   } catch (e) {
     console.warn('Non-critical assets load failed', e)
   }
@@ -436,4 +444,6 @@ const hideAppSplash = () => {
 }
 
 const appPromise = bootstrap()
+// A boot that throws used to leave the splash on "Preparing ..." for good.
+appPromise.catch((error) => recoverFromBootFailure(error))
 export default appPromise
