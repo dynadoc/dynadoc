@@ -47,12 +47,16 @@ function toStat(stats: fs.Stats): FsStat {
  * keeps one behaviour for callers: every failure is an exception, whichever
  * transport it came over.
  */
-function handleSync<T>(channel: string, run: (resolved: string) => T): void {
+function handleSync<T>(channel: string, run: (resolved: string) => T, onDenied?: () => T): void {
   ipcMain.on(channel, (event, requestedPath: string) => {
     try {
       const value = run(requirePath(requestedPath))
       event.returnValue = { ok: true, value } satisfies FsSyncResult<T>
     } catch (error) {
+      if (onDenied && error instanceof FsAccessError && error.code === 'DENIED') {
+        event.returnValue = { ok: true, value: onDenied() } satisfies FsSyncResult<T>
+        return
+      }
       event.returnValue = {
         ok: false,
         error: toFsError(error, requestedPath)
@@ -68,7 +72,18 @@ export function registerFilesystemIpc(): void {
   // roughly 0.1-1ms against microseconds for a direct syscall: fine for a
   // scattered existence check, which is why loops are audited rather than
   // converted blindly.
-  handleSync<boolean>(FS_CHANNELS.exists, (resolved) => fs.existsSync(resolved))
+  //
+  // A path the renderer may not touch reads as absent. The renderer probes
+  // for optional companions of a file the user opened (its config, a share
+  // manifest, a lock file next to it), and the dialog grants the file alone.
+  // Throwing there aborted the open half way, with the tab stuck on
+  // "Preparing editor". Answering false reveals nothing the refusal did not,
+  // and every read or write of that path is still refused.
+  handleSync<boolean>(
+    FS_CHANNELS.exists,
+    (resolved) => fs.existsSync(resolved),
+    () => false
+  )
   handleSync<FsStat>(FS_CHANNELS.stat, (resolved) => toStat(fs.statSync(resolved)))
 
   // --- everything else, asynchronous ---------------------------------------
