@@ -247,12 +247,28 @@
 
   async function handleStart(intent: AuthIntent) {
     busyAction = intent
+    let failure = ''
     try {
       await startAuth(intent)
+      // startAuth records a failure on the store rather than throwing it.
+      failure = get(authStore)?.error || ''
     } catch (error) {
       console.error('Auth start error:', error)
+      failure = error instanceof Error ? error.message : String(error)
     } finally {
       busyAction = ''
+    }
+    if (failure) {
+      // The button used to do nothing visible when the sign-in flow could not
+      // start. Say why, and name the one cause we can recognise.
+      await openAlertModal({
+        title: t('Sign-in is not available'),
+        message: failure.includes('MIDDLEWARE_MISSING')
+          ? t(
+              'Signing in from the desktop app goes through the Dynadoc middleware, which is not included in builds made from the open-source repository. Documents on this computer work without an account.'
+            )
+          : failure.replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, '')
+      })
     }
   }
 

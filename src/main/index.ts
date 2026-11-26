@@ -1843,6 +1843,19 @@ async function runDdocServerJson(command: string, payload: Record<string, any> =
     // const binaryPath = getBinaryPath('ddoc-server', true)
     const binaryPath = getBinaryPath('dynadoc-middleware')
 
+    // The middleware is not shipped from this repository (README, "What is
+    // not in this repository"). Name it, so the feature that needed it can
+    // say so, instead of surfacing "spawn ... ENOENT".
+    if (!fs.existsSync(binaryPath)) {
+      reject(
+        new Error(
+          `MIDDLEWARE_MISSING: "${command}" needs the dynadoc-middleware binary, which is not ` +
+            'included in builds made from the open-source repository.'
+        )
+      )
+      return
+    }
+
     const proc = spawn(binaryPath, [command, JSON.stringify(payload)], {
       env: process.env
     })
