@@ -53,8 +53,9 @@
     "test:smoke:pptx": "node tests/smoke/pptx.test.mjs",
     "test:smoke:html-style-set-content": "node tests/smoke/html-style-set-content.test.mjs",
     "test:smoke:context-menu-callers": "node tests/smoke/context-menu-callers.test.mjs",
+    "test:smoke:pagination": "node tests/smoke/pagination.test.mjs",
     "test:security:crypto": "node tests/security/chunked-crypto.test.mjs",
-    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:smoke:variable-menu && npm run test:smoke:variable-lookup-io && npm run test:smoke:editor-mode-bar && npm run test:smoke:slides && npm run test:smoke:pptx && npm run test:smoke:html-style-set-content && npm run test:smoke:design-canvas && npm run test:smoke:context-menu-callers && npm run test:security:crypto",
+    "test:ci": "npm run test:smoke:preload && npm run test:smoke:fs-policy && npm run test:smoke:asset-protocol && npm run test:smoke:sheet-variables && npm run test:smoke:variable-format && npm run test:smoke:sheet-ref-loading && npm run test:smoke:variable-menu && npm run test:smoke:variable-lookup-io && npm run test:smoke:editor-mode-bar && npm run test:smoke:slides && npm run test:smoke:pptx && npm run test:smoke:html-style-set-content && npm run test:smoke:design-canvas && npm run test:smoke:context-menu-callers && npm run test:smoke:pagination && npm run test:security:crypto",
     "check:file-urls": "node scripts/find-file-url-sites.mjs",
     "ci:check": "npm run check:cycles && npm run typecheck",
     "prepare": "husky"
