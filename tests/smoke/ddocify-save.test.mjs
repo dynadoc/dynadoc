@@ -140,7 +140,59 @@ try {
     0
   )
 
-  // 5. The IPC handler answers to the filesystem policy before it writes.
+  // 5. A file that changes while it is being packed. The editors write their
+  //    debounced content whenever they like, including during a save. The
+  //    archive used to declare each file's size at stat time and then fail on
+  //    the mismatch with an uncaught exception, and the save never returned.
+  const nodeFs = createRequire(import.meta.url)('node:fs')
+  const realCreateReadStream = nodeFs.createReadStream
+  const withTimeout = (promise, ms) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms))
+    ])
+  const growing = path.join(source, 'index.html')
+  nodeFs.createReadStream = function (file, ...rest) {
+    if (file === growing) nodeFs.appendFileSync(growing, '<p>written during the save</p>')
+    return realCreateReadStream.call(this, file, ...rest)
+  }
+  let grewOk = false
+  try {
+    await withTimeout(Utils.ddocify(null, source, target, false), 10000)
+    grewOk = true
+  } catch (error) {
+    console.error('          ', error.message)
+  } finally {
+    nodeFs.createReadStream = realCreateReadStream
+  }
+  check('a file written during the save does not fail the save', grewOk, true)
+
+  // 6. A file that cannot be read fails the save, and says so, instead of
+  //    leaving it waiting forever.
+  const failing = path.join(source, 'assets', 'note.txt')
+  nodeFs.createReadStream = function (file, ...rest) {
+    const stream = realCreateReadStream.call(this, file, ...rest)
+    if (file === failing) {
+      process.nextTick(() => stream.destroy(new Error('EIO: simulated read failure')))
+    }
+    return stream
+  }
+  let readFailure = ''
+  try {
+    await withTimeout(Utils.ddocify(null, source, target, false), 10000)
+  } catch (error) {
+    readFailure = error.message
+  } finally {
+    nodeFs.createReadStream = realCreateReadStream
+  }
+  check('an unreadable file rejects the save', readFailure.includes('simulated read failure'), true)
+  check(
+    'and leaves no partial file',
+    readdirSync(chosenFolder).filter((n) => n.endsWith('.partial')).length,
+    0
+  )
+
+  // 7. The IPC handler answers to the filesystem policy before it writes.
   const mainSource = readFileSync(MAIN, 'utf8')
   const start = mainSource.indexOf("'ddocify',")
   const body = mainSource.slice(start, mainSource.indexOf('ipcMain.handle(', start))
@@ -151,7 +203,7 @@ try {
     true
   )
 
-  // 6. The desktop save no longer writes a sibling temporary file itself.
+  // 8. The desktop save no longer writes a sibling temporary file itself.
   const modelSource = readFileSync(DOCUMENT_MODEL, 'utf8')
   const saveTo = modelSource.slice(modelSource.indexOf('async saveTo('))
   check(

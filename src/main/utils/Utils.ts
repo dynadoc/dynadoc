@@ -97,9 +97,17 @@ export default class Utils {
     const out = fs.createWriteStream(resolvedOutputFile)
 
     const done = new Promise<void>((resolve, reject) => {
+      const fail = (error: Error): void => {
+        out.destroy()
+        reject(error)
+      }
       out.on('close', () => resolve())
-      out.on('error', reject)
-      zipfile.outputStream.on('error', reject)
+      out.on('error', fail)
+      zipfile.outputStream.on('error', fail)
+      // yazl reports a file it cannot read on the ZipFile itself. Unheard,
+      // that was an uncaught exception in the main process (an error dialog)
+      // and a save that never returned.
+      zipfile.on('error', fail)
     })
 
     zipfile.outputStream.pipe(out)
@@ -118,7 +126,16 @@ export default class Utils {
         if (item.isDirectory()) {
           await addFolder(fullPath, relPath)
         } else if (item.isFile()) {
-          zipfile.addFile(fullPath, relPath)
+          // Streamed without a declared size. addFile() records the size at
+          // stat time and fails the whole archive when the file changes before
+          // it is read, which is what an editor writing its debounced content
+          // during a save did.
+          const stats = await fsp.stat(fullPath)
+          zipfile.addReadStreamLazy(relPath, { mtime: stats.mtime, mode: stats.mode }, (cb) => {
+            const stream = fs.createReadStream(fullPath)
+            stream.on('error', (error) => zipfile.emit('error', error))
+            cb(null, stream)
+          })
         }
       }
     }
