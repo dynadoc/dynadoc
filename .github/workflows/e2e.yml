@@ -10,8 +10,9 @@ name: E2E web
 #     built from a commit that failed it (see that file);
 #   - by hand (workflow_dispatch), with inputs to hunt flaky tests or to make
 #     screenshot baselines.
-# Not on pull requests: the suite takes several minutes and is not a required
-# check.
+#   - on a pull request only when it changes the suite or this workflow.
+# Not on other pull requests: the suite takes several minutes and is not a
+# required check.
 #
 # Pushes that web-image.yml already tests are left out below with
 # `paths-ignore`, which skips this run only when *every* changed file is one of
@@ -30,6 +31,13 @@ on:
       - 'package-lock.json'
       - 'src/**'
       - '.github/workflows/web-image.yml'
+  # Only when the suite or this workflow itself changes, so a change to the
+  # tests is proven on its pull request before it can gate main. Other pull
+  # requests do not run it.
+  pull_request:
+    paths:
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
     inputs:
       repeat_each:
