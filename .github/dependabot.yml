@@ -20,6 +20,12 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 10
+    # Vendored sub-projects: the app imports their sources and resolves their
+    # dependencies from the root node_modules, so their own package.json
+    # manifests are never installed. Keep Dependabot out of them.
+    exclude-paths:
+      - 'src/renderer/src/extensions/tiptap/**'
+      - 'src/renderer/src/components/common/web-component/**'
     labels: [dependencies]
     commit-message:
       prefix: chore
