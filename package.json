@@ -340,10 +340,8 @@
     "mermaid": {
       "katex": "$katex"
     },
-    "latex.js": {
-      "js-beautify": {
-        "glob": "^13.0.7"
-      }
+    "js-beautify": {
+      "glob": "^14.0.6"
     }
   }
 }

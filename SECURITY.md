@@ -72,10 +72,10 @@ exploitation path is still useful to us and will be treated as in scope.
 until the work below lands; the `Security` workflow gates on `critical` only
 because of them.
 
-| Dependency                               | Severity | Why it is not fixed yet                                                                                                                                               |
-| ---------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `electron` 40.x                          | high     | Out of support; the fix is a major upgrade (45.x) that needs manual validation of native modules, signing and auto-update. Dependabot will not propose it.            |
-| `xlsx` 0.18.5                            | high     | Reachable: parses user-supplied spreadsheets. The fixed release is only published on cdn.sheetjs.com, not on npm.                                                     |
-| `dree` → `minimatch` 10                  | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
-| `katex`, `mermaid`                       | low      | Fixed only in a major release.                                                                                                                                        |
-| `electron-builder`, `js-beautify` chains | moderate | Build-time or CLI only, not reachable from the client.                                                                                                                |
+| Dependency               | Severity | Why it is not fixed yet                                                                                                                                               |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron` 40.x          | high     | Out of support; the fix is a major upgrade (45.x) that needs manual validation of native modules, signing and auto-update. Dependabot will not propose it.            |
+| `xlsx` 0.18.5            | high     | Reachable: parses user-supplied spreadsheets. The fixed release is only published on cdn.sheetjs.com, not on npm.                                                     |
+| `dree` → `minimatch` 10  | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
+| `katex`, `mermaid`       | low      | Fixed only in a major release.                                                                                                                                        |
+| `electron-builder` chain | moderate | Build-time only, not reachable from the client.                                                                                                                       |
