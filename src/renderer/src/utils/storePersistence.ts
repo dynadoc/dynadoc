@@ -176,6 +176,29 @@ export function persistStore<T>(
   // Add a simple lock/promise chain to ensure sequential execution
   let pendingSave: Promise<void> = Promise.resolve()
 
+  // On the web the session can arrive after these stores already loaded from
+  // localStorage: the sign-in redirect returns without a token, and the auth
+  // bootstrap stores it a moment later (setTokens in lib/api/web/rpc.ts, which
+  // dispatches 'ddoc:session-changed'). Switch backends as soon as that
+  // happens rather than waiting for the next save. The web shell stays blocked
+  // until the session is authenticated, so re-reading here runs before the
+  // user can create anything: the account's own state is adopted, and the
+  // signed-out value stays in localStorage instead of being written into the
+  // account. This is what keeps a document created on the very first visit
+  // open — it is created after the switch, against the right backend.
+  if (!isDesktop && typeof window !== 'undefined') {
+    window.addEventListener('ddoc:session-changed', () => {
+      void (async () => {
+        if (loadedFrom === null || currentBackend() === loadedFrom) return
+        await pendingSave
+        const backend = currentBackend()
+        if (loadedFrom === null || backend === loadedFrom) return
+        await load(backend)
+        loadedFrom = backend
+      })()
+    })
+  }
+
   // Debounced saving
   const saveToDisk = debounce(async (value: T) => {
     if (!hasLoaded) return
@@ -189,11 +212,13 @@ export function persistStore<T>(
         const backend = currentBackend()
 
         // Never write a value into a backend it did not come from. Signing in
-        // switches 'local' to 'settings', and without this the signed-out
-        // session's value would be written straight into the account's
-        // server-side, user-scoped preferences. Re-read instead: the account's
-        // own state is the truth, and the signed-out value stays in
-        // localStorage where it was, rather than being destroyed.
+        // switches 'local' to 'settings' after the stores already loaded, and
+        // without this the signed-out session's value would be written straight
+        // into the account's server-side, user-scoped preferences. Re-read
+        // instead: the account's own state is the truth, and the signed-out
+        // value stays in localStorage where it was. The 'ddoc:session-changed'
+        // listener below normally performs this switch the moment the session
+        // arrives; this guard stays as a fallback for the save that races it.
         if (loadedFrom !== null && backend !== loadedFrom) {
           await load(backend)
           loadedFrom = backend

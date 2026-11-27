@@ -60,6 +60,7 @@ function getRefreshToken(): string | null {
 export function setTokens(accessToken?: string | null, refreshToken?: string | null) {
   if (typeof localStorage === 'undefined') return
   try {
+    const hadAccess = localStorage.getItem(ACCESS_TOKEN_KEY)
     if (accessToken) localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
     if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
     if (accessToken === '' || accessToken == null) localStorage.removeItem(ACCESS_TOKEN_KEY)
@@ -68,6 +69,14 @@ export function setTokens(accessToken?: string | null, refreshToken?: string | n
       setGuestMode(false)
     } else if (accessToken === '' || accessToken == null) {
       setGuestMode(true)
+    }
+    // Which backend a persisted store uses depends on whether anyone is signed
+    // in. storePersistence listens for this to switch backends the moment the
+    // web session arrives or ends, rather than on the next save. Dispatched,
+    // not imported: storePersistence imports `invoke` from this module, and a
+    // back-import would close a cycle that check:cycles (the CI gate) rejects.
+    if ((localStorage.getItem(ACCESS_TOKEN_KEY) || null) !== (hadAccess || null)) {
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('ddoc:session-changed'))
     }
   } catch {
     // ignore
