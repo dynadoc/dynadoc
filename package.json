@@ -29,7 +29,7 @@
     "build:linux": "cross-env NODE_OPTIONS=--max-old-space-size=16192 npm i && npm run build:no-check && electron-builder --linux",
     "build": "npm run typecheck && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-vite build",
     "build:capacitor": "vite build --config capacitor.vite.config.mts",
-    "postinstall": "electron-rebuild electron-builder install-app-deps",
+    "postinstall": "install-electron && electron-rebuild electron-builder install-app-deps",
     "2postinstall2": "electron-rebuild",
     "2build:unpack": "npm run build && electron-builder --dir",
     "2build:win": "npm run build && electron-builder --win",
@@ -197,7 +197,7 @@
     "iconify-icon": "^3.0.5",
     "iso-639-1": "^3.1.6",
     "js-beautify": "^2.0.3",
-    "katex": "^0.16.21",
+    "katex": "^0.18.10",
     "konva": "^10.3.0",
     "latex.js": "^0.12.6",
     "leven": "^4.1.0",
@@ -294,7 +294,7 @@
     "@vitejs/plugin-react": "^5.1.4",
     "autoprefixer": "^10.5.4",
     "cross-env": "^10.1.0",
-    "electron": "^40.2.1",
+    "electron": "^42.11.18",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "esbuild": "^0.28.1",
@@ -332,6 +332,9 @@
     },
     "svelte-i18n": {
       "esbuild": "$esbuild"
+    },
+    "mermaid": {
+      "katex": "$katex"
     },
     "latex.js": {
       "js-beautify": {
