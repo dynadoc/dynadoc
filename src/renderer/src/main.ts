@@ -271,6 +271,12 @@ async function mountApp() {
   }
 
   logBoot('resolveComponent:done')
+  // The component is loaded in parallel with the translations, and it formats
+  // messages as soon as it renders. When its chunk wins the race (a cached
+  // production bundle, typically after a reload), svelte-i18n throws "Cannot
+  // format a message without first setting the initial locale" and the app
+  // stays on the splash screen. The e2e suite hit it about once in 20 loads.
+  await i18nReady
   logBoot(
     'mount:start ' + (ComponentModule?.default?.name || 'UnknownComponent') + ' to #' + targetId
   )

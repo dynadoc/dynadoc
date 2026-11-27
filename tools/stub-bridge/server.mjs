@@ -119,6 +119,9 @@ function localPath(remotePath) {
 // business appearing in it as a document.
 const SETTINGS_FILE = `${ROOT}.settings.json`
 
+// Every settings:set runs after the previous one, see `settings:set`.
+let settingsWrites = Promise.resolve()
+
 async function readSettings() {
   try {
     return JSON.parse(await fs.readFile(SETTINGS_FILE, 'utf8'))
@@ -423,9 +426,23 @@ const channels = {
   'settings:set': async (args) => {
     const key = requireKey(args)
     if (args.length < 2) throw new StubError('value is required', 400)
-    const all = await readSettings()
-    all[key] = args[1] === undefined ? null : args[1]
-    await fs.writeFile(SETTINGS_FILE, JSON.stringify(all, null, 2))
+    const value = args[1] === undefined ? null : args[1]
+    // The client sends several of these at once. Each one is a read, a change
+    // and a write of the whole file, so two in flight used to lose one of the
+    // two keys, and a read landing while a write had truncated the file parsed
+    // as `{}` and wiped every key. The bridge keeps the store in a database and
+    // has neither problem, so the stub serializes its writes and swaps the file
+    // in whole.
+    const write = settingsWrites.then(async () => {
+      const all = await readSettings()
+      all[key] = value
+      const temp = `${SETTINGS_FILE}.${process.pid}.tmp`
+      await fs.writeFile(temp, JSON.stringify(all, null, 2))
+      await fs.rename(temp, SETTINGS_FILE)
+    })
+    // A failed write is reported to its caller and does not block the next.
+    settingsWrites = write.catch(() => {})
+    await write
     return true
   },
 

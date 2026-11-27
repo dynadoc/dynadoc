@@ -37,8 +37,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The web e2e suite (e2e.yml) on this very commit. The image is built only
+  # when it passed: `build` needs it, so a red e2e means no image for that
+  # commit, on every trigger above. It runs in this workflow, not as a
+  # `workflow_run` follow-up, so the tested commit and the built one cannot
+  # differ and the commit tag below is the tested commit.
+  #
+  # e2e.yml runs on its own for pushes this workflow does not cover; its
+  # `paths-ignore` must stay the same as the push `paths` above.
+  e2e:
+    name: e2e-web
+    uses: ./.github/workflows/e2e.yml
+    permissions:
+      contents: read
+
   build:
     name: Build the web image
+    needs: e2e
     runs-on: ubuntu-latest
     permissions:
       contents: read

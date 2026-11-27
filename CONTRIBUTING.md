@@ -65,12 +65,13 @@ it is to not add to the count. Compare against `main` before and after.
   report thousands of pre-existing diagnostics on the renderer. They cannot
   gate anything today and a clean run is not achievable in a single PR. CI does
   not run them.
-- **There is no test suite.** No vitest, no jest, no playwright, no `test`
-  script. Verification is manual. Say in your pull request what you exercised
-  and how.
 
-If you want to change that, a first `vitest` setup on the pure modules under
-`src/renderer/src/lib/` would be welcome and is a good standalone contribution.
+**Tests.** `npm run test:ci` runs the smoke suites, which need nothing but
+Node. `npm run test:e2e` runs the Playwright suite against the web build and
+the stub bridge; see [tests/e2e/README.md](tests/e2e/README.md) for what it
+covers and how to add a test. Neither replaces saying in your pull request
+what you exercised and how. There is no unit-test runner yet: a first `vitest`
+setup on the pure modules under `src/renderer/src/lib/` would be welcome.
 
 ### Compiling a single Svelte component
 
