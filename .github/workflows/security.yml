@@ -8,7 +8,7 @@ name: Security
 #     surfaced even if nobody touches the repository.
 #
 # Both gates fail on `critical` only. Known high findings without a drop-in
-# fix (electron major, xlsx, tui-image-editor/fabric) are listed in the job log
+# fix (electron major, xlsx) are listed in the job log
 # and in SECURITY.md under "Known dependency advisories"; a `high` gate would
 # fail every PR that touches them, including Dependabot's own patch bumps.
 # Tighten both to `high` once they are cleared.
