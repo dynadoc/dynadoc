@@ -30,6 +30,8 @@
   import { openSpreadsheetEditorModal } from '../../../../stores/spreadsheetEditorModal.store'
   import { CustomSpreadsheetExtensionProps } from '../utils/common.utils'
   import { GenericFormatingEditorCommands } from '../../../../components/common/actions/formatting'
+  import { showNodeviewContextMenu } from '../../../../utils/nodeviewContextMenu'
+  import Platform from '../../../../libs/platform'
   import { nodeApi } from '../../../../utils/shims/node'
   import { resolveLocalCollabPresence } from '../../../../utils/collabPresence'
   import { authStore } from '../../../../stores/auth.store'
@@ -170,65 +172,70 @@
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault()
+    // The document's own text menu would open on top of this one otherwise.
+    event.stopPropagation()
     setActiveNodeview()
-    window.api?.showContextMenu?.([
-      {
-        label: 'In line with text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('inline')
-      },
-      { type: 'separator' },
-      {
-        label: 'Center',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('center')
-      },
-      {
-        label: 'Full width',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('full')
-      },
-      {
-        label: 'Float left',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-left')
-      },
-      {
-        label: 'Float right',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-right')
-      },
-      { type: 'separator' },
-      {
-        label: 'In front of text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('front')
-      },
-      {
-        label: 'Behind text',
-        click: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('behind')
-      },
-      { type: 'separator' },
-      {
-        label: 'Nudge left',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(-10, 0)
-      },
-      {
-        label: 'Nudge right',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(10, 0)
-      },
-      {
-        label: 'Nudge up',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, -10)
-      },
-      {
-        label: 'Nudge down',
-        click: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, 10)
-      },
-      {
-        label: 'Reset position',
-        click: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
-      },
-      { type: 'separator' },
-      {
-        label: 'Delete spreadsheet',
-        click: () => deleteSpreadsheetNode()
-      }
-    ])
+    showNodeviewContextMenu(
+      [
+        {
+          label: 'In line with text',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('inline')
+        },
+        { separator: true },
+        {
+          label: 'Center',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('center')
+        },
+        {
+          label: 'Full width',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('full')
+        },
+        {
+          label: 'Float left',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-left')
+        },
+        {
+          label: 'Float right',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('float-right')
+        },
+        { separator: true },
+        {
+          label: 'In front of text',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('front')
+        },
+        {
+          label: 'Behind text',
+          run: () => GenericFormatingEditorCommands.setActiveNodeviewLayout?.('behind')
+        },
+        { separator: true },
+        {
+          label: 'Nudge left',
+          run: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(-10, 0)
+        },
+        {
+          label: 'Nudge right',
+          run: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(10, 0)
+        },
+        {
+          label: 'Nudge up',
+          run: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, -10)
+        },
+        {
+          label: 'Nudge down',
+          run: () => GenericFormatingEditorCommands.nudgeActiveNodeview?.(0, 10)
+        },
+        {
+          label: 'Reset position',
+          run: () => GenericFormatingEditorCommands.resetActiveNodeviewPosition?.()
+        },
+        { separator: true },
+        {
+          label: 'Delete spreadsheet',
+          run: () => deleteSpreadsheetNode()
+        }
+      ],
+      Platform.isDesktopPlatform
+    )
   }
 
   const ensureSpreadsheetSrc = async () => {

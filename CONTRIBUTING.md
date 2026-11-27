@@ -77,20 +77,17 @@ it is to not add to the count. Compare against `main` before and after.
   report thousands of pre-existing diagnostics on the renderer. They cannot
   gate anything today and a clean run is not achievable in a single PR. CI does
   not run them.
-  **Smoke tests, fast and worth running before you push:**
 
-```bash
-npm run test:ci          # every test under tests/smoke and tests/security
-```
-
-They are plain Node scripts, no test framework: each compiles the module it
-covers with esbuild and checks it directly. There is no unit-test runner and
-no end-to-end suite in CI, so verification of anything visible is still
-manual. Say in your pull request what you exercised and how.
+**Tests.** `npm run test:ci` runs the smoke suites, which need nothing but
+Node: each compiles the module it covers with esbuild and checks it directly.
+`npm run test:e2e` runs the Playwright suite against the web build and the
+stub bridge; see [tests/e2e/README.md](tests/e2e/README.md) for what it covers
+and how to add a test. Neither replaces saying in your pull request what you
+exercised and how.
 
 A new smoke test is a file in `tests/smoke/`, a `test:smoke:<name>` script and
-an entry in `test:ci`. A first `vitest` setup on the pure modules under
-`src/renderer/src/lib/` would also be welcome as a standalone contribution.
+an entry in `test:ci`. There is no unit-test runner yet: a first `vitest` setup
+on the pure modules under `src/renderer/src/lib/` would be welcome.
 
 ### Compiling a single Svelte component
 

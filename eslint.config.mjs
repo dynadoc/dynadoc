@@ -16,7 +16,12 @@ export default [
       '**/*DELETE*',
       '**/*DELETEE*',
       '**/*DELEETE*',
-      'src/renderer/src/components/common/react/build-fluent.mjs'
+      'src/renderer/src/components/common/react/build-fluent.mjs',
+      // Output of the web e2e suite (tests/e2e/README.md): a bundle and reports.
+      'tests/e2e/.web-dist/**',
+      'tests/e2e/.stub-root/**',
+      'playwright-report/**',
+      'test-results/**'
     ]
   },
   ...electronToolkitTs.configs.recommended,
