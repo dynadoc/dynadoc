@@ -72,12 +72,32 @@ exploitation path is still useful to us and will be treated as in scope.
 until the work below lands; the `Security` workflow gates on `critical` only
 because of them.
 
-| Dependency                                     | Severity | Why it is not fixed yet                                                                                                                                               |
-| ---------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `electron` 40.x                                | high     | Out of support; the fix is a major upgrade (45.x) that needs manual validation of native modules, signing and auto-update. Dependabot will not propose it.            |
-| `xlsx` 0.18.5                                  | high     | Reachable: parses user-supplied spreadsheets. The fixed release is only published on cdn.sheetjs.com, not on npm.                                                     |
-| `tui-image-editor` → `fabric` 4                | high     | Unmaintained; the XSS is in SVG export, which this codebase does not call. Replacing the editor is the real fix.                                                      |
-| `monaco-editor` 0.56 → bundled DOMPurify 3.4.8 | moderate | monaco ships its own copy of DOMPurify inside its build, so an npm override cannot replace it. Needs a monaco release that bundles DOMPurify ≥ 3.4.17.                |
-| `dree` → `minimatch` 10                        | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
-| `katex`, `mermaid`                             | low      | Fixed only in a major release.                                                                                                                                        |
-| `electron-builder`, `js-beautify` chains       | moderate | Build-time or CLI only, not reachable from the client.                                                                                                                |
+| Dependency               | Severity | Why it is not fixed yet                                                                                                                                               |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron` 40.x          | high     | Out of support; the fix is a major upgrade (45.x) that needs manual validation of native modules, signing and auto-update. Dependabot will not propose it.            |
+| `xlsx` 0.18.5            | high     | Reachable: parses user-supplied spreadsheets. The fixed release is only published on cdn.sheetjs.com, not on npm.                                                     |
+| `dree` → `minimatch` 10  | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
+| `katex`, `mermaid`       | low      | Fixed only in a major release.                                                                                                                                        |
+| `electron-builder` chain | moderate | Build-time only, not reachable from the client.                                                                                                                       |
+
+### `xlsx` (SheetJS)
+
+`xlsx` is only used to read files the user opens or imports, in
+`ReactSpreadsheetFileViewer.tsx` (opening a spreadsheet) and
+`spreadsheetExchange.service.ts` (importing into a sheet). It is reached in
+two cases: converting a legacy `.xls` file to `.xlsx` before
+`@corbe30/fortune-excel` reads it, and a values-only fallback when
+fortune-excel (exceljs) fails on an `.xlsx` or `.csv` file. Exports go through
+fortune-excel and exceljs, not `xlsx`. A crafted file can therefore reach the
+prototype pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9)
+advisories.
+
+exceljs cannot replace it: it is already the primary parser, and it cannot
+read `.xls`. The fix is SheetJS's own 0.20.3 build, which keeps the same API:
+
+```sh
+npm install --save https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+```
+
+`npm ci` then downloads it from `cdn.sheetjs.com`, so that host must be
+reachable from CI, the web image build and contributors' machines first.
