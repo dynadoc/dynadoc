@@ -60,7 +60,7 @@ import * as yauzl from 'yauzl'
 import * as mkdirp from 'mkdirp'
 
 import Utils from './utils/Utils'
-import { spawn as nodePtySpawn } from 'node-pty' // or 'node-pty-prebuilt-multiarch'
+import { loadNodePty } from './utils/optionalNative'
 
 import { spawn, execFile, exec } from 'child_process'
 // const { spawn, execFile, exec } = require('child_process')
@@ -443,6 +443,12 @@ function startYWebsocketServer(port: number, name: string) {
     // startup instead of a log line.
     server.on('error', (error) => {
       console.error(`${name} could not listen on 127.0.0.1:${port}`, error)
+    })
+    // The WebSocketServer re-emits every error of the server it wraps. Without
+    // its own listener, that second emission was still uncaught, so a busy
+    // port kept raising the main-process error dialog at startup.
+    wss.on('error', () => {
+      // already logged by the server listener above
     })
     server.listen(port, '127.0.0.1', () => {
       console.log(`✅ ${name} running at ws://127.0.0.1:${port}`)
@@ -1837,6 +1843,19 @@ async function runDdocServerJson(command: string, payload: Record<string, any> =
     // const binaryPath = getBinaryPath('ddoc-server', true)
     const binaryPath = getBinaryPath('dynadoc-middleware')
 
+    // The middleware is not shipped from this repository (README, "What is
+    // not in this repository"). Name it, so the feature that needed it can
+    // say so, instead of surfacing "spawn ... ENOENT".
+    if (!fs.existsSync(binaryPath)) {
+      reject(
+        new Error(
+          `MIDDLEWARE_MISSING: "${command}" needs the dynadoc-middleware binary, which is not ` +
+            'included in builds made from the open-source repository.'
+        )
+      )
+      return
+    }
+
     const proc = spawn(binaryPath, [command, JSON.stringify(payload)], {
       env: process.env
     })
@@ -2482,6 +2501,10 @@ app.whenReady().then(async () => {
       require2fa?: boolean
     ) => {
       console.log('ddocifying', folderPath, 'to', outputFile)
+      // This handler writes a file wherever the renderer says, so it answers
+      // to the same policy as every other write: the target must be inside the
+      // application's folders or a path the user chose in a dialog.
+      outputFile = requirePath(outputFile)
       if (shouldSecured) {
         const output = await runDdocServerJson('sddoc:pack', {
           input_dir: folderPath,
@@ -2510,8 +2533,13 @@ app.whenReady().then(async () => {
       }
 
       const pipelineAsync = promisify(pipeline)
-      return await Utils.ddocify(pipelineAsync, folderPath, outputFile, shouldSecured)
-      // return '✅ Done'
+      const written = await Utils.ddocify(pipelineAsync, folderPath, outputFile, shouldSecured)
+      // ddocify adds the document extension when the chosen name lacks one
+      // ("Report" becomes "Report.xddoc"). That file is the one the user asked
+      // for, and the renderer reads and saves it from now on, so it carries
+      // the grant of the path it was derived from.
+      if (written !== outputFile) grantUserChosenPath({ path: written, directory: false })
+      return written
     }
   )
 
@@ -5877,6 +5905,7 @@ app.whenReady().then(async () => {
     const termId = nextTerminalId++
 
     console.log('Opening terminal in shellNodePtySpawn:', shellNodePtySpawn, { cwd, termId })
+    const { spawn: nodePtySpawn } = await loadNodePty()
     const ptyProcess = nodePtySpawn(shellNodePtySpawn, [], {
       name: 'xterm-color',
       cwd,
@@ -5948,6 +5977,17 @@ app.whenReady().then(async () => {
         const exePath = getBinaryPath('DocxToHtml')
 
         console.log('exePath', exePath)
+
+        // The converter is one of the binaries this repository does not ship
+        // (README, "What is not in this repository"). Say so in words instead
+        // of passing a bare spawn ENOENT up to the person who clicked Open.
+        if (!fs.existsSync(exePath)) {
+          resolve(
+            'Error: the DocxToHtml converter was not found. It converts Word files, and it ' +
+              'is not included in builds made from the open-source repository.'
+          )
+          return
+        }
 
         execFile(exePath, [inputPath, outputPath], (err, stdout, stderr) => {
           if (err) {

@@ -168,6 +168,7 @@
   import LinkPreviewBubble from './components/common/interaction/LinkPreviewBubble.svelte'
   import EditorCommonUtils from './utils/common.utils'
   import { saveActiveDocument } from './services/save/savePipeline.service'
+  import { installSaveShortcut, isMacPlatform } from './services/save/saveShortcut'
   import { openShareModal } from './stores/shareModal.store'
   import { openAlertModal } from './stores/alertModal.store'
   import { openConfirmModal } from './stores/confirmModal.store'
@@ -234,6 +235,12 @@
     appCloseFlowPending = true
 
     try {
+      // Edits from the last second are still in their debounce timers. The
+      // session restored at the next launch reads the document folders, so
+      // write them out before the window goes.
+      await Utils.flushPendingWrites().catch((error) => {
+        console.warn('Could not flush pending writes before quitting', error)
+      })
       const unsavedEditors = _$_documentEditorsList
         .getList()
         .filter((entry) => entry?.document?.isUnsavedDocument?.())
@@ -522,6 +529,12 @@
     }
 
     const menuActionCleanup = window.api?.onInvokeMenuAction?.(handler)
+    // Ctrl+S / Cmd+S on every target, routed like the menu's Save and Save As.
+    const saveShortcutCleanup = installSaveShortcut(
+      window,
+      (action) => handler(null, action === 'save-as' ? 'file:save-as' : 'file:save'),
+      isMacPlatform(navigator)
+    )
     const cleanupVarDropdown = initGlobalVarDropdown()
     if (!_isDesktopPlatform) {
       _$_terminalVisible.set(false)
@@ -536,6 +549,7 @@
       themeCleanup?.()
       themeCleanup = null
       menuActionCleanup?.()
+      saveShortcutCleanup()
       overlayCleanup?.()
       overlayCleanup = null
       cleanupVarDropdown?.()

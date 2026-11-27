@@ -1718,6 +1718,29 @@ export default class EditorCommonUtils {
         await window.api.openFile(badPath)
         return null
       }
+      if (message.startsWith('CONVERTER_MISSING::')) {
+        const [, kind, tool, missingFor] = message.split('::')
+        _$_lastOpenError.set({ type: 'error', path: missingFor || documentPath || '', message })
+        await openAlertModal({
+          title: `${kind} files cannot be opened in this build`,
+          message:
+            `Opening ${kind} files needs the ${tool} converter, which is not included ` +
+            `in builds made from the open-source repository (see "What is not in this ` +
+            `repository" in the README). The file was not changed.\n\n${missingFor || ''}`
+        })
+        return _$_documentEditorsList.getList()
+      }
+
+      if (message.startsWith('CONVERSION_FAILED::')) {
+        const [, failedPath, ...rest] = message.split('::')
+        _$_lastOpenError.set({ type: 'error', path: failedPath || documentPath || '', message })
+        await openAlertModal({
+          title: 'This file could not be converted',
+          message: `The file was not changed.\n\n${failedPath || ''}\n${rest.join('::')}`
+        })
+        return _$_documentEditorsList.getList()
+      }
+
       if (message.startsWith('EPHEMERAL_EXPIRED::')) {
         const expiredPath = message.replace('EPHEMERAL_EXPIRED::', '')
         _$_lastOpenError.set({ type: 'expired', path: expiredPath })

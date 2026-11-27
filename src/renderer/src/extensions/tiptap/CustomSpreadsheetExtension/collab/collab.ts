@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import EditorHelpers from "../../../../utils/EditorHelpers";
+import Utils from "../../../../utils/Utils";
 import { nodeApi } from '../../../../utils/shims/node'
 import { buildCollabDocId, resolveShareContext } from '../../../../utils/collabUtils'
 import { fetchCollabToken } from '../../../../services/collab/tokenService'
@@ -21,11 +22,18 @@ type SheetEntry = {
     ySnapshot: Y.Map<any>;
     ySettings: Y.Map<any>;
     refCount: number;
-    flushPendingSave: () => void;
+    flushPendingSave: () => Promise<void>;
 };
 
 const sheets = new Map<string, SheetEntry>();
 const pendingSheets = new Map<string, Promise<SheetEntry>>();
+
+// A sheet writes its data a second after the last change. Saving the document
+// packs its folder, so a save must wait for those writes, or a value typed
+// just before Ctrl+S is missing from the saved file.
+Utils.registerWriteFlusher(async () => {
+    await Promise.all([...sheets.values()].map((entry) => entry.flushPendingSave()))
+})
 
 export function extractSettingsFromUpdate(update: Uint8Array) {
     const ydoc = new Y.Doc()
@@ -177,12 +185,12 @@ async function buildSheetEntry(filePath: string, parentDoc?: any, userInfo?: { n
 
         let saveTimer: any = null
 
-        const persistNow = () => {
+        const persistNow = async (): Promise<void> => {
             const update = Y.encodeStateAsUpdate(ydoc)
             if (window?.api?.spreadsheetAtomicWrite) {
-                window.api.spreadsheetAtomicWrite({ path: filePath, data: Buffer.from(update) })
+                await window.api.spreadsheetAtomicWrite({ path: filePath, data: Buffer.from(update) })
             } else if (nodeApi.fs && nodeApi.path) {
-                EditorHelpers.writeFileEnsuringDir(filePath, Buffer.from(update))
+                await EditorHelpers.writeFileEnsuringDirAsync(filePath, Buffer.from(update))
             }
         }
 
@@ -198,11 +206,13 @@ async function buildSheetEntry(filePath: string, parentDoc?: any, userInfo?: { n
             yOps,
             ySettings,
             refCount: 0,
-            flushPendingSave: () => {
+            flushPendingSave: async () => {
                 if (!saveTimer) return
                 clearTimeout(saveTimer)
                 saveTimer = null
-                persistNow()
+                await persistNow().catch((err) => {
+                    console.warn('[Spreadsheet] Failed to persist sheet', err)
+                })
             }
         }
 }

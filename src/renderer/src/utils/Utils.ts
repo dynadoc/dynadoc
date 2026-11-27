@@ -71,6 +71,16 @@ function normalizePathForPlatform(inputPath: string): string {
   return raw.replace(/^file:\/\//i, '').replace(/^\/+/, '')
 }
 
+// Writes of document content that have started but not finished, and the
+// per-file debounced writers that have not started yet. Utils.flushPendingWrites
+// drains both before a document is packed.
+const pendingFileWrites = new Set<Promise<void>>()
+const writeFlushers = new Set<() => void | Promise<void>>()
+const debouncedFileWriters = new Map<
+  string,
+  ReturnType<typeof debounce<(latest: string, callback?: () => void) => void>>
+>()
+
 // const pipelineAsync = promisify(pipeline)
 export default class Utils {
   static MAIN_DOCUMENT_FILE_NAME = 'index'
@@ -247,7 +257,10 @@ export default class Utils {
 
   // File extensions that can be previewed
   static PREVIEWABLE_FILE_EXTENSIONS = {
-    pdf: `${Utils.FILE_TYPES.pdf}`,
+    // With the dot, like every other entry here and like path.extname(): this
+    // used to be the bare type name 'pdf', so no PDF ever matched, and an
+    // opened PDF went to the rich-text editor with no file to load.
+    pdf: `.${Utils.FILE_TYPES.pdf}`,
     ...Utils.IMAGE_EXTENSIONS,
     ...Utils.VIDEO_EXTENSIONS,
     ...Utils.AUDIO_EXTENSIONS
@@ -442,9 +455,13 @@ export default class Utils {
         return false
       }
       if (nodeApi.fsPromises?.writeFile) {
-        void nodeApi.fsPromises.writeFile(safePath, content, 'utf-8').catch((err: any) => {
-          console.error('Error writing file:', err)
-        })
+        const write: Promise<void> = nodeApi.fsPromises
+          .writeFile(safePath, content, 'utf-8')
+          .catch((err: any) => {
+            console.error('Error writing file:', err)
+          })
+          .finally(() => pendingFileWrites.delete(write))
+        pendingFileWrites.add(write)
         return true
       }
       console.warn('saveToFile: filesystem not available.')
@@ -455,16 +472,59 @@ export default class Utils {
     }
   }
 
-  public static saveToFileDebounced = debounce(
-    async (filePath: string, content: string, onSave?: Function) => {
-      console.log('debounce fileContentToSave ok', { filePath, content })
-      const saved = this.saveToFile(filePath, content) // Save the content to the file
-      if (saved) {
-        onSave?.()
-      }
-    },
-    1000
-  )
+  /**
+   * Writes `content` to `filePath` once edits pause for a second.
+   *
+   * One timer per file. A single timer shared by every caller used to drop
+   * the pending write of one file whenever another file was edited within the
+   * same second (typing in one tab, then in another, or a translation pane
+   * next to its document).
+   */
+  public static saveToFileDebounced(filePath: string, content: string, onSave?: () => void): void {
+    let writer = debouncedFileWriters.get(filePath)
+    if (!writer) {
+      writer = debounce((latest: string, callback?: () => void) => {
+        debouncedFileWriters.delete(filePath)
+        const saved = Utils.saveToFile(filePath, latest) // Save the content to the file
+        if (saved) {
+          callback?.()
+        }
+      }, 1000)
+      debouncedFileWriters.set(filePath, writer)
+    }
+    writer(content, onSave)
+  }
+
+  /**
+   * Lets an editor that keeps its own write timer (the sheet, for one) take
+   * part in flushPendingWrites. Returns the function that unregisters it.
+   */
+  public static registerWriteFlusher(flush: () => void | Promise<void>): () => void {
+    writeFlushers.add(flush)
+    return () => writeFlushers.delete(flush)
+  }
+
+  /**
+   * Runs every debounced write now and waits until all of them, and any write
+   * already in progress, have reached the disk.
+   *
+   * Packing a document reads its files from disk. Without this, Ctrl+S within
+   * a second of the last keystroke saved the document as it was before that
+   * keystroke, and said "Saved".
+   */
+  public static async flushPendingWrites(): Promise<void> {
+    for (const writer of [...debouncedFileWriters.values()]) writer.flush()
+    await Promise.all(
+      [...writeFlushers].map((flush) =>
+        Promise.resolve()
+          .then(flush)
+          .catch((error) => console.warn('A pending write could not be flushed', error))
+      )
+    )
+    while (pendingFileWrites.size > 0) {
+      await Promise.all([...pendingFileWrites])
+    }
+  }
 
   /* public static async saveAllTranslationsFor(originalPath: string, translatedPath: string) {
     const map = get(_$_translationPairsMap)

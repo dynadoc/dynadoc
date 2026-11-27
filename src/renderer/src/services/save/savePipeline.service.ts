@@ -173,12 +173,34 @@ const packSnapshotFolder = async (folderPath: string, outputFile: string, isSecu
   return Utils.ddocify(null, folderPath, outputFile, isSecured)
 }
 
-export async function saveActiveDocument(options?: {
+let saveInFlight: Promise<unknown> | null = null
+
+/**
+ * Saves the active document. A save requested while another is still running
+ * (a second Ctrl+S, the menu accelerator and the page shortcut both firing,
+ * a double click on the save button) joins the running one instead of opening
+ * a second dialog or writing the file twice.
+ */
+export function saveActiveDocument(options?: {
   saveAs?: boolean
   saveAsSecured?: boolean
   outputPath?: string
   require2fa?: boolean
-}) {
+}): Promise<unknown> {
+  if (saveInFlight) return saveInFlight
+  const run = runSaveActiveDocument(options).finally(() => {
+    if (saveInFlight === run) saveInFlight = null
+  })
+  saveInFlight = run
+  return run
+}
+
+async function runSaveActiveDocument(options?: {
+  saveAs?: boolean
+  saveAsSecured?: boolean
+  outputPath?: string
+  require2fa?: boolean
+}): Promise<unknown> {
   const active = _$_documentEditorsList.getActiveSync?.()
   if (!active) return false
   if (options?.saveAsSecured && !isSecureLeaseAvailable()) {

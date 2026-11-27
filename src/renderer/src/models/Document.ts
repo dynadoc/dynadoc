@@ -3483,7 +3483,20 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
           // Convert to HTML first, then ddocify
           // const tempFilePath = nodeApi.path.join(cacheDir, `${documentName}.html`)
           console.log('Converting to HTML first...', documentPath)
-          tempFilePath = await convertDocxToHtml(documentPath, tempDir)
+          try {
+            tempFilePath = await convertDocxToHtml(documentPath, tempDir, true, {
+              throwOnError: true
+            })
+          } catch (error) {
+            // An empty result used to carry on into an editor with nothing to
+            // load, which stayed on "Preparing editor" for good. The open now
+            // fails, and says why (see EditorCommonUtils.addNewDocumentEditor).
+            const reason = error instanceof Error ? error.message : String(error)
+            if (/DocxToHtml/.test(reason) && /ENOENT|not found|no such file/i.test(reason)) {
+              throw new Error(`CONVERTER_MISSING::Word (.docx)::DocxToHtml::${documentPath}`)
+            }
+            throw new Error(`CONVERSION_FAILED::${documentPath}::${reason}`)
+          }
           // Conversion is centralized through documentFileUtils/officeConversion.service.
           break
         case Utils.OFFICE_EXTENSIONS.powerpoint:
@@ -4153,6 +4166,15 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
           if (syncResult && syncResult.ok === false) {
             throw new Error(syncResult.message || 'Unable to sync the document before sealing.')
           }
+        }
+        if (isDesktopPlatform) {
+          // The main process writes the archive next to the target and renames
+          // it into place, so the document is replaced in one step. Writing a
+          // sibling ".tmp" file from here instead was refused by the
+          // filesystem policy for every folder the user picked in Save As:
+          // the dialog grants the chosen file, not its neighbours.
+          const written = await window.api.ddocify(cacheDir, outputPath, shouldSecured, require2fa)
+          return written || outputPath
         }
         const parsed = nodeApi.path.parse(outputPath)
         const tempPath = nodeApi.path.join(
