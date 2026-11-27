@@ -23,49 +23,51 @@
   import { _$_slideTextToEdit } from '../../stores/slide.store'
   import type { Shape } from '../../../../../utils/canvas.types'
   import { GenericFormatingEditorCommands } from '../../../../../components/common/actions/formatting/commands/GenericFormatingEditorCommands.svelte'
+  import { showNodeviewContextMenu } from '../../../../../utils/nodeviewContextMenu'
+  import Platform from '../../../../../libs/platform'
   //   import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
 
   // 1. Handle Props using $props()
-  let { 
-    __slideId, 
-    __slidePath, 
-    __stage, 
-    __shape, 
-    __layer, 
-    __yText, 
-    __nodeMap, 
-    __provider, 
-    __awareness, 
+  let {
+    __slideId,
+    __slidePath,
+    __stage,
+    __shape,
+    __layer,
+    __yText,
+    __nodeMap,
+    __provider,
+    __awareness,
     __onSelect,
     // The presentation's editor id: `@` and variable chips use its variables.
     __editorId = null
-  } = $props();
+  } = $props()
 
   // 2. State variables
-  let _editorEl = $state();
-  let _editor: Editor = $state();
-  let _group: Konva.Group = $state();
-  let _rect: Konva.Rect = $state();
-  let _transformer: Konva.Transformer | null = $state(null);
-  let _onNodeClick: (() => void) | null = $state(null);
-  let _onTransform: (() => void) | null = $state(null);
-  let _isEditing = $state(false);
-  const DRAG_BORDER_SIZE = 6;
-  let _duplicateDrag: { id: string; originX: number; originY: number } | null = null;
-  let _transformStartRotation = 0;
-  let _autoResizeRaf = 0;
-  let _lastAnimationKey = '';
+  let _editorEl = $state()
+  let _editor: Editor = $state()
+  let _group: Konva.Group = $state()
+  let _rect: Konva.Rect = $state()
+  let _transformer: Konva.Transformer | null = $state(null)
+  let _onNodeClick: (() => void) | null = $state(null)
+  let _onTransform: (() => void) | null = $state(null)
+  let _isEditing = $state(false)
+  const DRAG_BORDER_SIZE = 6
+  let _duplicateDrag: { id: string; originX: number; originY: number } | null = null
+  let _transformStartRotation = 0
+  let _autoResizeRaf = 0
+  let _lastAnimationKey = ''
   let _pendingDrag: {
-    startX: number;
-    startY: number;
-    startTime: number;
-    timeoutId: number | null;
-    isBorder: boolean;
-  } | null = null;
+    startX: number
+    startY: number
+    startTime: number
+    timeoutId: number | null
+    isBorder: boolean
+  } | null = null
 
-  let slideCommands: CanvasCommands | null = $state(null);
-  let _stopEditRequests: (() => void) | null = null;
-  let _animationArmed = false;
+  let slideCommands: CanvasCommands | null = $state(null)
+  let _stopEditRequests: (() => void) | null = null
+  let _animationArmed = false
 
   function runAnimation() {
     if (!_group || !__shape?.animation) return
@@ -111,32 +113,32 @@
   // This effect handles the Konva group/rect updates whenever props change
   $effect(() => {
     if (_group && _rect && __shape) {
-      _group.position({ x: __shape.x, y: __shape.y });
-      _group.rotation(__shape.rotation || 0);
-      _rect.size({ width: __shape.w, height: __shape.h });
-      _rect.rotation(0);
-      applySlideZOrder(_group, __shape.z ?? 0);
+      _group.position({ x: __shape.x, y: __shape.y })
+      _group.rotation(__shape.rotation || 0)
+      _rect.size({ width: __shape.w, height: __shape.h })
+      _rect.rotation(0)
+      applySlideZOrder(_group, __shape.z ?? 0)
 
-      __layer.batchDraw();
-      syncEditorPosition();
+      __layer.batchDraw()
+      syncEditorPosition()
     }
-  });
+  })
 
   // 4. Separate effect for selection logic
   $effect(() => {
     if (_rect && __shape) {
       if (__shape.selected) {
-        showTransformer();
+        showTransformer()
       } else {
-        hideTransformer();
+        hideTransformer()
       }
     }
-  });
+  })
 
   $effect(() => {
     if (!__shape?.animation) return
     runAnimation()
-  });
+  })
 
   // export let __slideId
   // export let __slidePath
@@ -467,15 +469,20 @@
 
     _group.on('contextmenu', (e) => {
       e.evt.preventDefault()
+      // The deck's own menu, on the slide around this canvas, would replace this one.
+      e.evt.stopPropagation()
       __onSelect?.(__shape.id, e.evt)
-      window.api?.showContextMenu?.([
-        { label: 'Edit Text', click: () => enterEditMode() },
-        { type: 'separator' },
-        { label: 'Bring Forward', click: () => slideCommands?.bringForward() },
-        { label: 'Send Backward', click: () => slideCommands?.sendBackward() },
-        { type: 'separator' },
-        { label: 'Delete', click: () => slideCommands?.deleteSelected() }
-      ])
+      showNodeviewContextMenu(
+        [
+          { label: 'Edit Text', run: () => enterEditMode() },
+          { separator: true },
+          { label: 'Bring Forward', run: () => slideCommands?.bringForward() },
+          { label: 'Send Backward', run: () => slideCommands?.sendBackward() },
+          { separator: true },
+          { label: 'Delete', run: () => slideCommands?.deleteSelected() }
+        ],
+        Platform.isDesktopPlatform
+      )
     })
     _editorEl.addEventListener('pointerdown', (e) => {
       e.stopPropagation()
@@ -644,7 +651,7 @@
     //   function enterEditMode(block: SlideBlock) {
     // if (block.editing) return
     // block.editing = true
-    console.log("Entering edit mode..."); // For debugging
+    console.log('Entering edit mode...') // For debugging
 
     showTransformer()
     __onSelect?.(__shape.id)
@@ -821,14 +828,14 @@
         // (tables, sheets...) that a slide's text box cannot hold.
         .filter((extension) => extension?.name !== CustomSlashCommandExtensionProps.name)
         .map((extension) =>
-        extension?.name === 'starterKit'
-          ? extension.configure({ trailingNode: false })
-          : extension?.name === 'placeholder'
-            ? extension.configure({ showOnlyWhenEditable: false })
-            : extension?.name === CustomVarExtensionProps.name && __editorId
-              ? extension.configure({ editorId: __editorId })
-              : extension
-      ),
+          extension?.name === 'starterKit'
+            ? extension.configure({ trailingNode: false })
+            : extension?.name === 'placeholder'
+              ? extension.configure({ showOnlyWhenEditable: false })
+              : extension?.name === CustomVarExtensionProps.name && __editorId
+                ? extension.configure({ editorId: __editorId })
+                : extension
+        ),
       CustomAnimationExtension
     ]
 

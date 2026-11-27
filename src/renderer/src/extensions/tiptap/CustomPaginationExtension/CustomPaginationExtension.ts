@@ -1,13 +1,24 @@
 import { Editor } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
 import { PaginationPlus as BasePaginationPlus } from 'tiptap-pagination-plus'
 import { mount, unmount } from 'svelte'
 
-import type { PaginationPlusOptions, PaginationPlusPageToIgnoreOptions } from '../utils/common.utils'
+import type {
+  PaginationPlusOptions,
+  PaginationPlusPageToIgnoreOptions
+} from '../utils/common.utils'
 import PageBreakComponent from './components/PageBreakComponent.svelte'
 import { CustomSlideExtensionProps } from '../CustomSlideExtension/utils/common.utils'
 import { CustomDesignExtensionProps } from '../CustomDesignExtension/utils/common.utils'
 import { CustomSpreadsheetExtensionProps } from '../CustomSpreadsheetExtension/utils/common.utils'
+import {
+  checkPageGrowth,
+  PAGE_CONTENT_HEIGHT_VAR,
+  pageContentAreaHeight,
+  type PageGrowthMeasure,
+  type PageGrowthMemory
+} from './pageFit'
 
 export type CustomPaginationOptions = PaginationPlusOptions & {
   nodeViewsToIgnoreClassList?: string[]
@@ -27,11 +38,11 @@ declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     PaginationPlus: {
       updateMargins: (margins: {
-        top: number;
-        bottom: number;
-        left: number;
-        right: number;
-      }) => ReturnType;
+        top: number
+        bottom: number
+        left: number
+        right: number
+      }) => ReturnType
       enablePagination: (enabled: boolean) => ReturnType
       updatePagination: (enablePagination?: boolean) => ReturnType
       getAllNodePageIndexes: (nodeViewWrapperClassList: string[]) => ReturnType
@@ -83,7 +94,9 @@ const arePropsEqual = (a: Record<string, any>, b: Record<string, any>) => {
 
 const setPaginationVisibility = (editorDom: HTMLElement, enabled: boolean) => {
   const paginationElement = editorDom.querySelector('[data-rm-pagination]') as HTMLElement | null
-  const paginationFirstPageHeader = editorDom.querySelector('.rm-first-page-header') as HTMLElement | null
+  const paginationFirstPageHeader = editorDom.querySelector(
+    '.rm-first-page-header'
+  ) as HTMLElement | null
 
   if (!paginationElement && !paginationFirstPageHeader) return
 
@@ -163,14 +176,15 @@ const applyNodeViewIgnoreStyles = (editor: Editor, options: CustomPaginationOpti
 
   if (!pageBreaks.length) {
     editor.storage.PaginationPlus.pagesToIgnore = null
-      ; (editor.storage.PaginationPlus as any)._lastIgnoreSignature = 'pages:0|nodes:0'
+    ;(editor.storage.PaginationPlus as any)._lastIgnoreSignature = 'pages:0|nodes:0'
     return
   }
 
   const nodeViewClassList = options.nodeViewsToIgnoreClassList ?? DEFAULT_NODE_VIEWS_TO_IGNORE
   if (!nodeViewClassList.length) {
     editor.storage.PaginationPlus.pagesToIgnore = null
-      ; (editor.storage.PaginationPlus as any)._lastIgnoreSignature = `pages:${pageBreaks.length}|nodes:0`
+    ;(editor.storage.PaginationPlus as any)._lastIgnoreSignature =
+      `pages:${pageBreaks.length}|nodes:0`
     return
   }
   const nodeViewPageMap = getAllNodePageIndexes(editor, nodeViewClassList)
@@ -199,7 +213,7 @@ const applyNodeViewIgnoreStyles = (editor: Editor, options: CustomPaginationOpti
     })
 
     editor.storage.PaginationPlus.pagesToIgnore = null
-      ; (editor.storage.PaginationPlus as any)._lastIgnoreSignature = signature
+    ;(editor.storage.PaginationPlus as any)._lastIgnoreSignature = signature
     return
   }
 
@@ -373,7 +387,7 @@ const applyNodeViewIgnoreStyles = (editor: Editor, options: CustomPaginationOpti
   })
 
   editor.storage.PaginationPlus.pagesToIgnore = pagesToIgnore
-    ; (editor.storage.PaginationPlus as any)._lastIgnoreSignature = signature
+  ;(editor.storage.PaginationPlus as any)._lastIgnoreSignature = signature
 }
 
 const syncPageBreakComponents = (
@@ -390,7 +404,9 @@ const syncPageBreakComponents = (
   }
   if (!editorEl) return
 
-  const headers = Array.from(editorEl.querySelectorAll<HTMLElement>('.rm-page-break .rm-page-header'))
+  const headers = Array.from(
+    editorEl.querySelectorAll<HTMLElement>('.rm-page-break .rm-page-header')
+  )
   const firstHeader = editorEl.querySelector<HTMLElement>('.rm-first-page-header')
 
   const getOrCreateContainer = (target: HTMLElement) => {
@@ -457,6 +473,155 @@ const syncPageBreakComponents = (
   })
 }
 
+// Settings the base plugin rebuilds its pages for; see boundPageGrowth.
+const PAGE_CONFIG_KEYS = [
+  'enabled',
+  'pageBreakBackground',
+  'pageHeight',
+  'pageWidth',
+  'marginTop',
+  'marginBottom',
+  'marginLeft',
+  'marginRight',
+  'pageGap',
+  'contentMarginTop',
+  'contentMarginBottom',
+  'headerLeft',
+  'headerRight',
+  'footerLeft',
+  'footerRight'
+] as const
+
+const isPageConfigPending = (storage: Record<string, unknown> | undefined): boolean => {
+  const applied = storage?.appliedConfig as Record<string, unknown> | undefined
+  if (!storage || !applied) return true
+  return PAGE_CONFIG_KEYS.some((key) => storage[key] !== applied[key])
+}
+
+/**
+ * Height left for content on a page, measured on the layout: from the first
+ * page header to the first page break, and on the second page between the
+ * two page breaks; the smaller one. The base plugin's
+ * --rm-max-content-child-height includes the first page header while there
+ * is one page, so it is no measure of what fits.
+ */
+const measurePageContentHeight = (dom: HTMLElement): number | null => {
+  const header = dom.querySelector('.rm-first-page-header')
+  const breakers = dom.querySelectorAll('[data-rm-pagination] .breaker')
+  if (!header || !breakers.length) return null
+  let height = breakers[0].getBoundingClientRect().top - header.getBoundingClientRect().bottom
+  if (breakers.length > 1) {
+    const second =
+      breakers[1].getBoundingClientRect().top - breakers[0].getBoundingClientRect().bottom
+    if (second > 0) height = Math.min(height, second)
+  }
+  return height > 0 ? Math.floor(height) : null
+}
+
+/** Keeps PAGE_CONTENT_HEIGHT_VAR on the editor for blocks to size against. */
+const syncPageContentHeight = (dom: HTMLElement): void => {
+  const height = measurePageContentHeight(dom)
+  const value = height ? `${height}px` : ''
+  if (dom.style.getPropertyValue(PAGE_CONTENT_HEIGHT_VAR) === value) return
+  if (value) dom.style.setProperty(PAGE_CONTENT_HEIGHT_VAR, value)
+  else dom.style.removeProperty(PAGE_CONTENT_HEIGHT_VAR)
+}
+
+/**
+ * The page count and how far the last block runs past the last page, as the
+ * base plugin measures them, with the page content height.
+ */
+const measurePageGrowth = (
+  view: EditorView | undefined,
+  options: PaginationPlusOptions
+): PageGrowthMeasure | null => {
+  const dom = view?.dom as HTMLElement | undefined
+  const pagination = dom?.querySelector('[data-rm-pagination]')
+  const lastBreaker = pagination?.lastElementChild?.querySelector('.breaker')
+  const lastBlock = dom?.lastElementChild
+  if (!dom || !pagination || !lastBreaker || !lastBlock) return null
+
+  return {
+    pageCount: pagination.children.length,
+    lastPageGap:
+      lastBlock.getBoundingClientRect().bottom - lastBreaker.getBoundingClientRect().bottom,
+    contentAreaHeight: measurePageContentHeight(dom) ?? pageContentAreaHeight(options)
+  }
+}
+
+/**
+ * The base pagination plugin with its page growth bounded. Its view adds
+ * pages while the last block ends below the last page, and dispatches again
+ * after each change; a block that fits on no page kept that going forever
+ * (#117). Once added pages stop reducing the overflow, the page count stays
+ * as it is (the block overflows the last page) until the overflow or the
+ * page settings change.
+ */
+const boundPageGrowth = (
+  plugin: Plugin,
+  editor: Editor,
+  getOptions: () => PaginationPlusOptions
+): Plugin => {
+  const spec = plugin.spec
+  const baseState = spec.state
+  const baseView = spec.view
+  if (!baseState || !baseView) return plugin
+
+  let memory: PageGrowthMemory | null = null
+  const stalled = (view: EditorView | undefined): boolean => {
+    try {
+      if (
+        isPageConfigPending(editor.storage?.PaginationPlus as unknown as Record<string, unknown>)
+      ) {
+        memory = null
+        return false
+      }
+      const measure = measurePageGrowth(view, getOptions())
+      if (!measure) return false
+      const result = checkPageGrowth(memory, measure)
+      memory = result.memory
+      return result.stalled
+    } catch {
+      return false
+    }
+  }
+  const currentView = (): EditorView | undefined => {
+    try {
+      return editor.isDestroyed ? undefined : editor.view
+    } catch {
+      return undefined
+    }
+  }
+
+  return new Plugin({
+    ...spec,
+    state: {
+      ...baseState,
+      apply(tr, value, oldState, newState) {
+        if (stalled(currentView())) return value
+        return baseState.apply.call(this, tr, value, oldState, newState)
+      }
+    },
+    view(editorView) {
+      const inner = baseView(editorView)
+      return {
+        ...inner,
+        update(view, prevState) {
+          if (!stalled(view)) inner.update?.(view, prevState)
+          try {
+            syncPageContentHeight(view.dom as HTMLElement)
+          } catch {
+            // measuring is best effort
+          }
+        },
+        destroy() {
+          inner.destroy?.()
+        }
+      }
+    }
+  })
+}
+
 export const CustomPaginationExtension = BasePaginationPlus.extend<CustomPaginationOptions>({
   name: 'PaginationPlus',
 
@@ -484,44 +649,46 @@ export const CustomPaginationExtension = BasePaginationPlus.extend<CustomPaginat
     return {
       ...(this.parent?.() ?? {}),
 
-      updateMargins: (margins) => ({ editor, dispatch }) => {
+      updateMargins:
+        (margins) =>
+        ({ editor, dispatch }) => {
+          editor
+            .chain()
+            .focus()
+            // .updatePageHeight(1000)
+            // .updatePageWidth(600)
+            // .updateMargins({ top: 30, bottom: 30, left: 60, right: 60 })
+            .updateHeaderContent('Document Title', 'Page {page}')
+            .updateFooterContent('Confidential', 'Page {page} of {total}')
+            .run()
 
-        editor.chain().focus()
-          // .updatePageHeight(1000)
-          // .updatePageWidth(600)
-          // .updateMargins({ top: 30, bottom: 30, left: 60, right: 60 })
-          .updateHeaderContent('Document Title', 'Page {page}')
-          .updateFooterContent('Confidential', 'Page {page} of {total}')
-          .run()
+          return true
 
-        return true
+          // 1. Update the local extension options
+          this.options.marginTop = margins.top
+          this.options.marginBottom = margins.bottom
+          this.options.marginLeft = margins.left
+          this.options.marginRight = margins.right
 
-        // 1. Update the local extension options
-        this.options.marginTop = margins.top;
-        this.options.marginBottom = margins.bottom;
-        this.options.marginLeft = margins.left;
-        this.options.marginRight = margins.right;
-
-        console.log("updateMarginsupdateMargins", { margins })
+          console.log('updateMarginsupdateMargins', { margins })
           // 2. Optional: If the base PaginationPlus uses storage for margins, update it too
-          // editor.storage.PaginationPlus.marginTop = margins.top; 
+          // editor.storage.PaginationPlus.marginTop = margins.top;
 
           // 3. Set a flag to force recalculation in your plugin's view update
-          ; (editor.storage.PaginationPlus as any)._forceRecalc = true;
+          ;(editor.storage.PaginationPlus as any)._forceRecalc = true
 
-        // 4. Dispatch a "do-nothing" transaction to trigger the plugin's 'update' method
-        if (dispatch) {
-          try {
-            if (editor.view) editor.view.dispatch(editor.state.tr);
-          } catch (e) {
-            // ignore
+          // 4. Dispatch a "do-nothing" transaction to trigger the plugin's 'update' method
+          if (dispatch) {
+            try {
+              if (editor.view) editor.view.dispatch(editor.state.tr)
+            } catch (e) {
+              // ignore
+            }
           }
-        }
-        console.log("updateMarginsupdateMargins", { margins, editor })
+          console.log('updateMarginsupdateMargins', { margins, editor })
 
-
-        return true;
-      },
+          return true
+        },
 
       /* updateMargins: (margins) => ({ editor, dispatch }) => {
         // 1. Update the extension's options
@@ -572,62 +739,67 @@ export const CustomPaginationExtension = BasePaginationPlus.extend<CustomPaginat
 
       enablePagination:
         (enabled: boolean) =>
-          ({ editor }) => {
-            if (editor.isDestroyed) return false
-            try {
-              if (!editor.view?.dom) return false
-            } catch (e) {
-              return false
-            }
+        ({ editor }) => {
+          if (editor.isDestroyed) return false
+          try {
+            if (!editor.view?.dom) return false
+          } catch (e) {
+            return false
+          }
 
-            const currentEnabled = editor.storage?.PaginationPlus?.enabled
-            if (currentEnabled === enabled && this.options.enabled === enabled) {
-              setPaginationVisibility(editor.view.dom, enabled)
-              return true
-            }
-            this.options.enabled = enabled
-            editor.storage.PaginationPlus.enabled = enabled
+          const currentEnabled = editor.storage?.PaginationPlus?.enabled
+          if (currentEnabled === enabled && this.options.enabled === enabled) {
             setPaginationVisibility(editor.view.dom, enabled)
-            editor.view.dispatch(editor.state.tr)
             return true
-          },
+          }
+          this.options.enabled = enabled
+          editor.storage.PaginationPlus.enabled = enabled
+          setPaginationVisibility(editor.view.dom, enabled)
+          editor.view.dispatch(editor.state.tr)
+          return true
+        },
       updatePagination:
         (enablePagination?: boolean) =>
-          ({ editor }) => {
-            if (editor.isDestroyed) return false
-            try {
-              if (!editor.view?.dom) return false
-            } catch (e) {
-              return false
-            }
+        ({ editor }) => {
+          if (editor.isDestroyed) return false
+          try {
+            if (!editor.view?.dom) return false
+          } catch (e) {
+            return false
+          }
 
-            const enabled = enablePagination ?? editor.storage.PaginationPlus.enabled ?? true
-            const currentEnabled = editor.storage?.PaginationPlus?.enabled
-            const forceRecalc = Boolean((editor.storage.PaginationPlus as any)?._forceRecalc)
-            if (!forceRecalc && currentEnabled === enabled && this.options.enabled === enabled) {
-              setPaginationVisibility(editor.view.dom, enabled)
-              return true
-            }
-            if (forceRecalc) {
-              delete (editor.storage.PaginationPlus as any)._forceRecalc
-            }
-            this.options.enabled = enabled
-            editor.storage.PaginationPlus.enabled = enabled
+          const enabled = enablePagination ?? editor.storage.PaginationPlus.enabled ?? true
+          const currentEnabled = editor.storage?.PaginationPlus?.enabled
+          const forceRecalc = Boolean((editor.storage.PaginationPlus as any)?._forceRecalc)
+          if (!forceRecalc && currentEnabled === enabled && this.options.enabled === enabled) {
             setPaginationVisibility(editor.view.dom, enabled)
-            editor.view.dispatch(editor.state.tr)
             return true
-          },
+          }
+          if (forceRecalc) {
+            delete (editor.storage.PaginationPlus as any)._forceRecalc
+          }
+          this.options.enabled = enabled
+          editor.storage.PaginationPlus.enabled = enabled
+          setPaginationVisibility(editor.view.dom, enabled)
+          editor.view.dispatch(editor.state.tr)
+          return true
+        },
       getAllNodePageIndexes:
         (nodeViewWrapperClassList: string[] = []) =>
-          ({ editor }) => {
-            return getAllNodePageIndexes(editor, nodeViewWrapperClassList)
-          }
+        ({ editor }) => {
+          return getAllNodePageIndexes(editor, nodeViewWrapperClassList)
+        }
     }
   },
 
   addProseMirrorPlugins() {
-    const parentPlugins = this.parent?.() ?? []
     const editor = this.editor
+    // The base plugin's key is PluginKey('pagination'), which it does not export.
+    const parentPlugins = (this.parent?.() ?? []).map((plugin) =>
+      String((plugin as unknown as { key?: string }).key ?? '').startsWith('pagination$')
+        ? boundPageGrowth(plugin, editor, () => this.options)
+        : plugin
+    )
     const mountedComponents = new Map<HTMLElement, MountedComponent>()
     let scheduled = false
 
@@ -647,7 +819,8 @@ export const CustomPaginationExtension = BasePaginationPlus.extend<CustomPaginat
         }
         if (!editorEl) return
 
-        const enabled = this.options.enabled !== false && editor.storage?.PaginationPlus?.enabled !== false
+        const enabled =
+          this.options.enabled !== false && editor.storage?.PaginationPlus?.enabled !== false
 
         setPaginationVisibility(editorEl, enabled)
 

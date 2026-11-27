@@ -859,6 +859,21 @@ span[data-suggestion='true']:hover::after {
   --nodeview-offset-y: 0px;
 }
 
+/* Paginated documents: the pages are floats in one widget at the start of the
+   document, so `clear: both` put the node view below the last page whatever
+   the page count; pagination added a page, the node view moved under it, and
+   so on forever (#117). It clears nothing there. */
+.tiptap.rm-with-pagination .nodeview-position {
+  clear: none;
+}
+
+/* An image taller than a page fits between no two page breaks: keep it to
+   one page's content area (CustomPaginationExtension measures it). */
+.tiptap.rm-with-pagination img {
+  max-height: calc(var(--dd-page-content-height, 100000px) - 10px);
+  object-fit: contain;
+}
+
 .tiptap .nodeview-position[data-layout='inline'] {
   width: 100%;
 }

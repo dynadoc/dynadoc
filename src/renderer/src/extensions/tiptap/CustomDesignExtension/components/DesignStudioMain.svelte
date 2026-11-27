@@ -21,6 +21,7 @@
     type NodeviewMenuEntry
   } from '../../../../utils/nodeviewContextMenu'
   import Platform from '../../../../libs/platform'
+  import { fitHeightToPage, PAGE_CONTENT_HEIGHT_VAR } from '../../CustomPaginationExtension/pageFit'
 
   interface Props {
     node?: any
@@ -74,9 +75,11 @@
   const _maxPageHeight = $derived(__maxPageHeight || node?.attrs?.maxPageHeight)
   const _maxPageWidth = $derived(__maxPageWidth ?? node?.attrs?.maxPageWidth)
 
-  const _designHeight = $derived(
-    __designHeight ?? node?.attrs?.designHeight ?? _maxPageHeight ?? DEFAULT_DESIGN_HEIGHT
-  )
+  const _designHeight = $derived.by(() => {
+    const requested =
+      __designHeight ?? node?.attrs?.designHeight ?? _maxPageHeight ?? DEFAULT_DESIGN_HEIGHT
+    return _paginated ? fitToPage(requested) : requested
+  })
   const _designWidth = $derived(
     __designWidth ?? node?.attrs?.designWidth ?? _maxPageWidth ?? DEFAULT_DESIGN_WIDTH
   )
@@ -99,10 +102,35 @@
     })
     return { name: presence.name, color: presence.color }
   })
-  
+
   const paginationStore = _$_wysiwygEditorsList.getPaginationOptionsStore(_wysiwygEditorIdToUpdate)
   // Now $derived will track $paginationStore correctly!
   let _editorPaginationOptions = $derived($paginationStore || null)
+  const _paginated = $derived(Boolean(_editorPaginationOptions?.enabled))
+
+  // In a paginated document the canvas must fit in a page's content area,
+  // header and footer excluded: maxPageHeight only estimates them, and a
+  // block taller than the area fits between no two page breaks (#117). The
+  // pagination extension keeps the measured area on the editor
+  // (PAGE_CONTENT_HEIGHT_VAR); the node view adds its margins and border,
+  // and 10px are left to spare.
+  const NODEVIEW_VERTICAL_CHROME = 42
+  let _pageContentHeight = $state<number | null>(null)
+  function readPageContentHeight(): void {
+    const dom = view?.dom as HTMLElement | undefined
+    const value = parseFloat(dom?.style?.getPropertyValue(PAGE_CONTENT_HEIGHT_VAR) ?? '')
+    const next = Number.isFinite(value) && value > 0 ? value : null
+    if (next !== _pageContentHeight) _pageContentHeight = next
+  }
+  readPageContentHeight()
+  function fitToPage(height: number | string): number {
+    const value = typeof height === 'number' ? height : parseFloat(String(height))
+    return fitHeightToPage(value, _pageContentHeight, NODEVIEW_VERTICAL_CHROME)
+  }
+  const _fittedMaxPageHeight = $derived(
+    _paginated && _maxPageHeight != null ? fitToPage(_maxPageHeight) : _maxPageHeight
+  )
+  let _pageAreaObserver: MutationObserver | null = null
 
   // IMPORTANT: If isMirror is true, we MUST force useNodeViewWrapper to false
   const _shouldWrap = $derived(useNodeViewWrapper && !isMirror)
@@ -202,17 +230,14 @@
 
   const _placeholderHeight = $derived(
     (() => {
-      const raw = _designHeight ?? _maxPageHeight ?? 320
+      const raw = _designHeight ?? _fittedMaxPageHeight ?? 320
       const value = typeof raw === 'number' ? raw : parseFloat(String(raw))
       return Number.isFinite(value) ? value : 320
     })()
   )
   const _layoutTakesSpace = $derived(!['front', 'behind'].includes(_layout))
   const _positionStyle = $derived(() => {
-    const pieces = [
-      `--nodeview-offset-x: ${_offsetX}px`,
-      `--nodeview-offset-y: ${_offsetY}px`
-    ]
+    const pieces = [`--nodeview-offset-x: ${_offsetX}px`, `--nodeview-offset-y: ${_offsetY}px`]
     if (_layoutTakesSpace) {
       pieces.push(`min-height: ${_placeholderHeight}px`)
     }
@@ -299,6 +324,13 @@
   }
 
   onMount(async () => {
+    // The area changes with the page size, header and footer.
+    readPageContentHeight()
+    if (view?.dom && typeof MutationObserver !== 'undefined') {
+      _pageAreaObserver = new MutationObserver(readPageContentHeight)
+      _pageAreaObserver.observe(view.dom, { attributes: true, attributeFilter: ['style'] })
+    }
+
     if (typeof IntersectionObserver === 'undefined') {
       await ensureVisible()
       return
@@ -322,6 +354,8 @@
   })
 
   onDestroy(() => {
+    _pageAreaObserver?.disconnect()
+    _pageAreaObserver = null
     _observer?.disconnect()
     _observer = null
     _design?.provider.destroy()
@@ -339,7 +373,7 @@
   <NodeViewWrapper>
     <Resizer
       __width={_maxPageWidth}
-      __height={_maxPageHeight}
+      __height={_fittedMaxPageHeight}
       __direction="both"
       __lockAspectRatio={false}
       __updateAttributes={(newAttrs) => {}}
@@ -365,9 +399,9 @@
           tabindex="0"
           class="items-center relative m-auto border border-dashed dark:border-dark rounded-[5px]"
           style:max-width={_editorPaginationOptions?.enabled ? `${_maxPageWidth}px` : 'none'}
-          style:max-height={_editorPaginationOptions?.enabled ? `${_maxPageHeight}px` : 'none'}
+          style:max-height={_paginated ? `${_fittedMaxPageHeight}px` : 'none'}
           style:width={_editorPaginationOptions?.enabled ? `${_maxPageWidth}px` : '100%'}
-          style:height={_editorPaginationOptions?.enabled ? `${_maxPageHeight}px` : 'auto'}
+          style:height={_paginated ? `${_fittedMaxPageHeight}px` : 'auto'}
         >
           {#if _isVisible && _design}
             <SkiaCanva
@@ -381,7 +415,7 @@
               __canvaWidth={_designWidth}
               __canvaHeight={_designHeight}
               __maxPageWidth={_maxPageWidth}
-              __maxPageHeight={_maxPageHeight}
+              __maxPageHeight={_fittedMaxPageHeight}
               __wysiwygEditorIdToUpdate={_wysiwygEditorIdToUpdate}
               __onCreate={(w, h) => onDesignCreated(w, h)}
               __onSelect={(id, evt) => {
@@ -414,7 +448,7 @@
   > -->
   <Resizer
     __width={_maxPageWidth}
-    __height={_maxPageHeight}
+    __height={_fittedMaxPageHeight}
     __direction="both"
     __lockAspectRatio={false}
     __updateAttributes={(newAttrs) => {}}
@@ -439,7 +473,7 @@
             __canvaWidth={_designWidth}
             __canvaHeight={_designHeight}
             __maxPageWidth={_maxPageWidth}
-            __maxPageHeight={_maxPageHeight}
+            __maxPageHeight={_fittedMaxPageHeight}
             __wysiwygEditorIdToUpdate={_wysiwygEditorIdToUpdate}
             __onCreate={(w, h) => onDesignCreated(w, h)}
             __onSelect={(id, evt) => {
