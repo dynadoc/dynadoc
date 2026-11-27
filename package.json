@@ -216,7 +216,7 @@
     "mathjs": "^15.2.0",
     "mediaelement": "^7.1.0",
     "mermaid": "^11.16.1",
-    "monaco-editor": "^0.56.0",
+    "monaco-editor": "^0.58.0",
     "ninja-keys": "^1.2.2",
     "node-pty": "^1.1.0",
     "ollama-ai-provider-v2": "^4.0.1",
