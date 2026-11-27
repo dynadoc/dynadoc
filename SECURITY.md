@@ -79,3 +79,25 @@ because of them.
 | `dree` → `minimatch` 10  | moderate | ReDoS in glob matching. `dree` is not imported anywhere in the client; it should be removed rather than overridden, since minimatch 11 dropped the `makeRe` it calls. |
 | `katex`, `mermaid`       | low      | Fixed only in a major release.                                                                                                                                        |
 | `electron-builder` chain | moderate | Build-time only, not reachable from the client.                                                                                                                       |
+
+### `xlsx` (SheetJS)
+
+`xlsx` is only used to read files the user opens or imports, in
+`ReactSpreadsheetFileViewer.tsx` (opening a spreadsheet) and
+`spreadsheetExchange.service.ts` (importing into a sheet). It is reached in
+two cases: converting a legacy `.xls` file to `.xlsx` before
+`@corbe30/fortune-excel` reads it, and a values-only fallback when
+fortune-excel (exceljs) fails on an `.xlsx` or `.csv` file. Exports go through
+fortune-excel and exceljs, not `xlsx`. A crafted file can therefore reach the
+prototype pollution (GHSA-4r6h-8v6p-xvw6) and ReDoS (GHSA-5pgg-2g8v-p4x9)
+advisories.
+
+exceljs cannot replace it: it is already the primary parser, and it cannot
+read `.xls`. The fix is SheetJS's own 0.20.3 build, which keeps the same API:
+
+```sh
+npm install --save https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+```
+
+`npm ci` then downloads it from `cdn.sheetjs.com`, so that host must be
+reachable from CI, the web image build and contributors' machines first.
