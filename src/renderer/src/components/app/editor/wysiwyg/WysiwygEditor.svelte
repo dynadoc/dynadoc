@@ -740,7 +740,7 @@
     }
 
     try {
-      await EditorHelpers.saveDocumentEditor(entry, { outputPath })
+      await EditorHelpers.saveDocumentEditor(entry, { outputPath, autosave: true })
     } catch (err) {
       console.warn('Autosave failed', err)
       return

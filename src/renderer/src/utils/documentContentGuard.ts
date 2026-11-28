@@ -2,7 +2,8 @@ import Platform from '../libs/platform'
 
 /**
  * Refuses to write the main file of a spreadsheet document when the content no
- * longer holds its workbook.
+ * longer holds its workbook (and the same for presentation and design
+ * documents, which have the same shape).
  *
  * A spreadsheet document is a Tiptap document whose only content is one
  * `<sheet src="...">` element; the workbook lives in the file that element
@@ -22,17 +23,33 @@ import Platform from '../libs/platform'
  * write that file.
  */
 
-const SHEET_ELEMENT = /<sheet[\s>/]/i
-
-/** Kinds whose main file must keep a given element, and that element's test. */
+/**
+ * Kinds whose main file must keep a given element, and that element's test.
+ * Slide and design documents have the same shape as spreadsheet documents:
+ * one `<slide>` or `<design>` element pointing to the file that holds them.
+ */
 const REQUIRED_ELEMENT: Record<string, RegExp> = {
-  sheet: SHEET_ELEMENT
+  sheet: /<sheet[\s>/]/i,
+  slide: /<slide[\s>/]/i,
+  design: /<design[\s>/]/i
+}
+
+const KIND_NAME: Record<string, string> = {
+  sheet: 'spreadsheet',
+  slide: 'presentation',
+  design: 'design'
+}
+
+/** What the user calls the content a refused document lost ("spreadsheet"). */
+export function guardedKindName(contentType: string | null | undefined): string {
+  return (contentType && KIND_NAME[contentType]) || 'document'
 }
 
 /**
  * True when `html` may be written as the main file of a document of this kind.
- * A spreadsheet document must still contain its `<sheet>` element; every other
- * kind, and an unknown kind, is not checked.
+ * A spreadsheet, presentation or design document must still contain its
+ * `<sheet>`, `<slide>` or `<design>` element; every other kind, and an unknown
+ * kind, is not checked.
  */
 export function isSafeToWrite(contentType: string | null | undefined, html: string): boolean {
   const required = contentType ? REQUIRED_ELEMENT[contentType] : undefined
@@ -83,8 +100,12 @@ export function checkDocumentWrite(filePath: string, content: string): WriteChec
   return { ok: false, firstRefusal, contentType }
 }
 
-/** True while the last write to this path was refused. */
-export function isDocumentWriteRefused(filePath: string | null | undefined): boolean {
+/**
+ * The kind of the document whose last write to this path was refused, or null
+ * when the last write went through.
+ */
+export function refusedDocumentKind(filePath: string | null | undefined): string | null {
   const key = normalize(filePath || '')
-  return Boolean(key) && refusedPaths.has(key)
+  if (!key || !refusedPaths.has(key)) return null
+  return kindByPath.get(key) ?? null
 }

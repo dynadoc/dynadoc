@@ -63,7 +63,7 @@ import { CustomSecuredContentExtensionProps } from '../extensions/tiptap/CustomS
 import { CustomProgrammingStyleCommentExtensionProps } from '../extensions/tiptap/CustomProgrammingStyleCommentExtension/utils/common.utils'
 import { nodeApi } from './shims/node'
 import { isFileUnreadable } from './unreadableFiles'
-import { isDocumentWriteRefused } from './documentContentGuard'
+import { guardedKindName, refusedDocumentKind } from './documentContentGuard'
 import { CustomLatexProjectExtensionProps } from '../extensions/tiptap/CustomLatexProjectExtension/utils/common.utils'
 import { CustomSpreadsheetExtensionProps } from '../extensions/tiptap/CustomSpreadsheetExtension/utils/common.utils'
 import { CustomSlideExtensionProps } from '../extensions/tiptap/CustomSlideExtension/utils/common.utils'
@@ -2085,6 +2085,8 @@ export default class EditorHelpers {
           outputPath?: string
           skipExportPrompt?: boolean
           require2fa?: boolean
+          /** A background save: report problems in the console, not in a modal. */
+          autosave?: boolean
         } = false
   ) {
     if (!documentEditor?.document) return false
@@ -2106,14 +2108,20 @@ export default class EditorHelpers {
     // The editor's last content was refused (a spreadsheet document without
     // its <sheet>, dynadoc#133). The folder still holds the last good version;
     // do not report that version as the user's save, nor ask where to put it.
+    // Utils.saveToFile already told the user once; an autosave stays quiet.
     if (mainFilePath) {
       await Utils.flushPendingWrites()
-      if (isDocumentWriteRefused(mainFilePath)) {
-        await openAlertModal({
-          title: 'Spreadsheet not saved',
-          message:
-            'The spreadsheet is missing from this document, so it was not saved. The last saved version is kept. Undo (Ctrl+Z) to bring the sheet back, then save again.'
-        })
+      const refusedKind = refusedDocumentKind(mainFilePath)
+      if (refusedKind) {
+        const kind = guardedKindName(refusedKind)
+        if (typeof options === 'object' && options?.autosave) {
+          console.warn(`saveDocumentEditor: autosave skipped, the ${kind} is missing.`)
+        } else {
+          await openAlertModal({
+            title: 'Document not saved',
+            message: `The ${kind} is missing from this document, so it was not saved. The last saved version is kept. Undo (Ctrl+Z) to bring the ${kind} back, then save again.`
+          })
+        }
         return false
       }
     }

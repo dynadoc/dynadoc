@@ -60,8 +60,13 @@ try {
 
   // The web build: no Electron bridge.
   globalThis.window = globalThis.window || {}
-  const { isSafeToWrite, registerDocumentKind, checkDocumentWrite, isDocumentWriteRefused } =
-    await import(`file://${compiled}`)
+  const {
+    isSafeToWrite,
+    registerDocumentKind,
+    checkDocumentWrite,
+    refusedDocumentKind,
+    guardedKindName
+  } = await import(`file://${compiled}`)
 
   const healthy =
     '<sheet uuid="u1" data-uuid="u1" src="assets/sheet/sheet.json" id="s1" layout="inline"></sheet>'
@@ -84,6 +89,28 @@ try {
     isSafeToWrite('sheet', '<sheetname></sheetname>'),
     false
   )
+  check(
+    'a presentation document with its <slide> may be written',
+    isSafeToWrite('slide', '<slide id="d1" src="assets/slide/deck.json"></slide>'),
+    true
+  )
+  check(
+    'a presentation document without its <slide> is refused',
+    isSafeToWrite('slide', '<p>title</p>'),
+    false
+  )
+  check(
+    'a design document with its <design> may be written',
+    isSafeToWrite('design', '<design src="assets/design/design.json"></design>'),
+    true
+  )
+  check(
+    'a design document without its <design> is refused',
+    isSafeToWrite('design', '<p></p>'),
+    false
+  )
+  check('the alert names what was lost', guardedKindName('sheet'), 'spreadsheet')
+  check('the alert names what was lost', guardedKindName('slide'), 'presentation')
   check('a text document without a sheet is accepted', isSafeToWrite('text', '<p>hello</p>'), true)
   check('an unknown kind is accepted', isSafeToWrite(undefined, '<p>hello</p>'), true)
 
@@ -96,7 +123,7 @@ try {
   check('a text document is never refused', checkDocumentWrite(textPath, '<p>x</p>').ok, true)
   check('an unregistered path is never refused', checkDocumentWrite('other.html', '').ok, true)
   check('a healthy sheet write passes', checkDocumentWrite(sheetPath, healthy).ok, true)
-  check('no refusal is pending after a good write', isDocumentWriteRefused(sheetPath), false)
+  check('no refusal is pending after a good write', Boolean(refusedDocumentKind(sheetPath)), false)
 
   const first = checkDocumentWrite(sheetPath, '<p>hello</p>')
   check('the first bad write is refused', first.ok, false)
@@ -104,10 +131,15 @@ try {
   const second = checkDocumentWrite(sheetPath, '<p>hello world</p>')
   check('the next autosave is refused too', second.ok, false)
   check('without telling the user again', second.firstRefusal, false)
-  check('the refusal is pending for an explicit save', isDocumentWriteRefused(sheetPath), true)
+  check('the refusal says which kind was refused', refusedDocumentKind(sheetPath), 'sheet')
+  check(
+    'the refusal is pending for an explicit save',
+    Boolean(refusedDocumentKind(sheetPath)),
+    true
+  )
   check(
     'a leading slash or file:// names the same file on the web',
-    isDocumentWriteRefused(`file:///${sheetPath}`),
+    Boolean(refusedDocumentKind(`file:///${sheetPath}`)),
     true
   )
 
@@ -116,7 +148,7 @@ try {
     checkDocumentWrite(sheetPath, healthy).ok,
     true
   )
-  check('and clears the refusal', isDocumentWriteRefused(sheetPath), false)
+  check('and clears the refusal', Boolean(refusedDocumentKind(sheetPath)), false)
   check(
     'a later bad write is reported again',
     checkDocumentWrite(sheetPath, '<p>again</p>').firstRefusal,

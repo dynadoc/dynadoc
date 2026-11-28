@@ -16,8 +16,6 @@ import { DocumentModel } from '../../../models/Document'
 import { ensureNodeViewSrc } from '../utils/utils'
 import { nodeApi } from '../../../utils/shims/node'
 import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state'
-import { get } from 'svelte/store'
-import { _$_activeDocKind } from '../../../stores/docKind.store'
 // import { ReactNodeViewRenderer } from '@tiptap/react'
 
 
@@ -55,14 +53,43 @@ function isSheetNodeSelected(state): boolean {
     return selection instanceof NodeSelection && selection.node?.type?.name === extensionName
 }
 
-// In a spreadsheet document the <sheet> is the document: only the explicit
-// "Delete spreadsheet" command may remove it, never a key.
-function isSpreadsheetDocument(): boolean {
-    try {
-        return get(_$_activeDocKind) === 'sheets'
-    } catch {
-        return false
-    }
+// A spreadsheet document is one <sheet> and nothing else but empty
+// paragraphs. Read from the editor's own document, not from the active
+// document's kind, which belongs to whichever tab is in front.
+function isSpreadsheetDocument(doc): boolean {
+    let sheets = 0
+    let other = false
+    doc?.forEach?.((child) => {
+        if (child.type.name === extensionName) sheets++
+        else if (!(child.isTextblock && child.content.size === 0)) other = true
+    })
+    return sheets === 1 && !other
+}
+
+// True when the selection covers a <sheet> node: a node selection on it, or a
+// range such as Ctrl+A that contains it.
+function selectionHoldsSheet(state): boolean {
+    if (isSheetNodeSelected(state)) return true
+    const { from, to, empty } = state.selection
+    if (empty) return false
+    let found = false
+    state.doc.nodesBetween(from, to, (node, pos) => {
+        if (found) return false
+        if (node.type.name === extensionName && pos >= from && pos + node.nodeSize <= to) {
+            found = true
+        }
+        return !found
+    })
+    return found
+}
+
+// Whether input that would replace the selection must be dropped. In a
+// spreadsheet document nothing may replace the sheet; in a text document,
+// typing or pasting over a selected sheet is refused too, since one key would
+// remove a whole workbook from the page.
+function mustKeepSheet(state): boolean {
+    if (isSpreadsheetDocument(state.doc)) return selectionHoldsSheet(state)
+    return isSheetNodeSelected(state)
 }
 
 export const CustomSpreadsheetExtension = Node.create({
@@ -227,17 +254,24 @@ export const CustomSpreadsheetExtension = Node.create({
             new Plugin({
                 key: new PluginKey('sheetNodeGuard'),
                 props: {
-                    handleTextInput: (view) => isSheetNodeSelected(view.state),
-                    handlePaste: (view) => isSheetNodeSelected(view.state),
-                    handleDrop: (view) => isSheetNodeSelected(view.state),
+                    handleTextInput: (view) => mustKeepSheet(view.state),
+                    handlePaste: (view) => mustKeepSheet(view.state),
                     handleKeyDown: (view, event) => {
-                        if (!isSheetNodeSelected(view.state)) return false
                         // Backspace and Delete still remove a sheet embedded in
                         // a text document; in a spreadsheet document they must not.
-                        if (event.key === 'Backspace' || event.key === 'Delete') {
-                            return isSpreadsheetDocument()
+                        if (event.key !== 'Backspace' && event.key !== 'Delete') return false
+                        return isSpreadsheetDocument(view.state.doc) && selectionHoldsSheet(view.state)
+                    },
+                    handleDOMEvents: {
+                        // Cutting a sheet out of a text document is a move; out
+                        // of a spreadsheet document it would empty the document.
+                        cut: (view, event) => {
+                            if (!isSpreadsheetDocument(view.state.doc) || !selectionHoldsSheet(view.state)) {
+                                return false
+                            }
+                            event.preventDefault()
+                            return true
                         }
-                        return false
                     }
                 }
             })
@@ -384,7 +418,7 @@ export const CustomSpreadsheetExtension = Node.create({
             
             // Custom handling for backspace when spreadsheet is selected
             'Backspace': ({ editor }) => {
-                if (isSpreadsheetDocument()) return false
+                if (isSpreadsheetDocument(editor.state.doc)) return false
 
                 const { state } = editor;
                 const { selection } = state;
@@ -414,7 +448,7 @@ export const CustomSpreadsheetExtension = Node.create({
 
             // Custom handling for delete key
             'Delete': ({ editor }) => {
-                if (isSpreadsheetDocument()) return false
+                if (isSpreadsheetDocument(editor.state.doc)) return false
 
                 const { state } = editor;
                 const { selection } = state;
