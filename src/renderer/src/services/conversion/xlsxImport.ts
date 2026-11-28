@@ -9,6 +9,7 @@ import {
   scanXlsxPackage,
   sheetsFromWorkbook,
   type FortuneSheetLike,
+  type XlsxDefinedName,
   type XlsxPackageScan,
   type XlsxWorkbookContent
 } from './xlsxImportFidelity'
@@ -153,15 +154,20 @@ export async function importXlsxFile(
 /**
  * The .xlsx fortune-excel exported from `sheets`, with what the import kept
  * aside written back (formulas with names, array formulas, defined names,
- * notes). `restored` is false when that failed: `bytes` then come back
+ * notes). `baseNames` is the name list held outside the grid, written back
+ * even if the copy on A1 was cleared. `restored` is false when that failed: `bytes` then come back
  * unchanged, and saving them over an Office file would lose those.
  */
 export async function withDefinedNamesRestored(
   bytes: Uint8Array,
-  sheets: FortuneSheetLike[]
+  sheets: FortuneSheetLike[],
+  baseNames: XlsxDefinedName[] = []
 ): Promise<{ bytes: Uint8Array; restored: boolean }> {
   try {
-    return { bytes: await restoreXlsxExport(await loadExcelJs(), bytes, sheets), restored: true }
+    return {
+      bytes: await restoreXlsxExport(await loadExcelJs(), bytes, sheets, baseNames),
+      restored: true
+    }
   } catch (err) {
     console.warn('[xlsx export] could not write the defined names back', err)
     return { bytes, restored: false }

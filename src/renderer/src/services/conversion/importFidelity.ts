@@ -85,6 +85,8 @@ export const KIND_LABELS: Record<string, string> = {
   externalLinks: 'External links',
   protection: 'Protection',
   macros: 'Macros',
+  hiddenSheets: 'Hidden sheets',
+  documentProperties: 'Document properties',
   otherParts: 'Other content'
 }
 

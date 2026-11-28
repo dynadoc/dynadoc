@@ -13,7 +13,7 @@ import Utils from '../../utils/Utils'
 import { hasFidelityLoss, type ImportFidelityReport } from '../conversion/importFidelity'
 import { showImportFidelityReport } from '../conversion/importFidelityToast'
 import { importXlsxFile, withDefinedNamesRestored } from '../conversion/xlsxImport'
-import { renameSheet, withSheetId } from '../conversion/xlsxImportFidelity'
+import { collectKeptNames, withFreeSheetNames, withSheetId } from '../conversion/xlsxImportFidelity'
 
 // const nodeApi =
 //   typeof window !== 'undefined' ? (window as any)?.api?.node || (window as any)?.node : null
@@ -305,7 +305,13 @@ export async function exportActiveSheetToFile(
   }
   let bytes: Uint8Array = new Uint8Array(await blob.arrayBuffer())
   if (options.fileType === 'xlsx') {
-    const restored = await withDefinedNamesRestored(bytes, sheetsToExport)
+    // Names kept on any sheet, so exporting one sheet still carries the
+    // names its validations and print areas use.
+    const restored = await withDefinedNamesRestored(
+      bytes,
+      sheetsToExport,
+      collectKeptNames(allSheets)
+    )
     bytes = restored.bytes
     if (!restored.restored) {
       await openAlertModal({
@@ -342,7 +348,8 @@ export async function exportActiveSheetToFile(
     : `${savePath}.${options.fileType}`
 
   await nodeApi.fsPromises.mkdir(nodeApi.path.dirname(finalPath), { recursive: true })
-  await nodeApi.fsPromises.writeFile(finalPath, buffer)
+  // base64: the web bridge would write a Buffer as its printed form.
+  await nodeApi.fsPromises.writeFile(finalPath, buffer.toString('base64'), 'base64')
   setLastExportDir(nodeApi.path.dirname(finalPath))
 
   showExportToast('Spreadsheet export ready', finalPath, {
@@ -414,17 +421,10 @@ export async function importSpreadsheetFileToActiveSheet(
 
     if (options.mode === 'append') {
       // A sheet whose name is taken gets a new one, and its formulas follow.
-      const taken = new Set(existingSheets.map((sheet: any) => sheet.name))
-      for (const sheet of [...nextSheets]) {
-        if (!taken.has(sheet.name)) {
-          taken.add(sheet.name)
-          continue
-        }
-        let n = 2
-        while (taken.has(`${sheet.name} (${n})`)) n++
-        taken.add(`${sheet.name} (${n})`)
-        nextSheets = renameSheet(nextSheets, sheet.name, `${sheet.name} (${n})`)
-      }
+      nextSheets = withFreeSheetNames(
+        nextSheets,
+        existingSheets.map((sheet: any) => sheet.name)
+      )
       const adjusted = ensureUniqueSheetIds(nextSheets, existingIds)
       nextSheets = [...existingSheets, ...adjusted]
     } else if (options.mode === 'replaceCurrent' && currentSheet) {

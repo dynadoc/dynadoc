@@ -95,7 +95,7 @@ export type XlsxPackageScan = {
   comments: number
   pictures: number
   /** Per sheet name, the first cell (0-based) of each data validation rule. */
-  validations: Record<string, Array<{ r: number; c: number }>>
+  validations: Record<string, Array<{ r: number; c: number; fromRange?: boolean }>>
   /** Always lost: the sheets cannot hold them and the export does not write them. */
   findings: XlsxFinding[]
 }
@@ -278,8 +278,8 @@ function hasRelativeReference(ref: string): boolean {
 const KNOWN_PARTS = [
   /^\[Content_Types\]\.xml$/,
   /(^|\/)_rels\//,
-  /^docProps\//,
-  /^customXml\//,
+  /^docProps\/(app|core)\.xml$/,
+  /^docProps\/thumbnail\.\w+$/,
   /^xl\/(workbook|styles|sharedStrings|calcChain|metadata)\.xml$/,
   /^xl\/theme\//,
   /^xl\/worksheets\/[^/]+\.xml$/,
@@ -338,9 +338,23 @@ export function scanXlsxPackage(bytes: Uint8Array): XlsxPackageScan {
       lost('externalLinks', 'links to other workbooks are dropped', 1, place)
     if (/^xl\/slicers\/[^/]+\.xml$/.test(part))
       lost('slicers', 'slicers are not converted', 1, place)
+    if (part === 'docProps/custom.xml')
+      lost(
+        'documentProperties',
+        'custom document properties, sensitivity labels included, are not kept',
+        1,
+        place
+      )
+    if (/^customXml\/item\d+\.xml$/.test(part))
+      lost('documentProperties', 'custom XML data attached to the workbook is not kept', 1, place)
     if (/^xl\/printerSettings\//.test(part))
       lost('printSettings', 'printer settings are not kept', 1, place)
-    if (!part.endsWith('/') && !KNOWN_PARTS.some((known) => known.test(part)))
+    if (
+      !part.endsWith('/') &&
+      !/^customXml\//.test(part) &&
+      part !== 'docProps/custom.xml' &&
+      !KNOWN_PARTS.some((known) => known.test(part))
+    )
       lost('otherParts', 'content the import does not recognise', 1, place)
   }
 
@@ -388,6 +402,9 @@ export function scanXlsxPackage(bytes: Uint8Array): XlsxPackageScan {
   }
   for (const sheetElement of workbookXml.match(/<(?:\w+:)?sheet\b[^>]*>/g) || []) {
     const sheet = attr(sheetElement, 'name') || ''
+    const state = attr(sheetElement, 'state')
+    if (state === 'hidden' || state === 'veryHidden')
+      lost('hiddenSheets', 'a hidden sheet is saved visible', 1, { sheet })
     const xml = text(targets[attr(sheetElement, 'r:id') || ''] || '')
     if (!xml) continue
     if (/<(?:\w+:)?sheetProtection[\s/>]/.test(xml))
@@ -399,22 +416,58 @@ export function scanXlsxPackage(bytes: Uint8Array): XlsxPackageScan {
         cell: attr(block, 'sqref')
       })
     }
+    for (const block of xml.match(
+      /<x14:conditionalFormatting\b[\s\S]*?<\/x14:conditionalFormatting>/g
+    ) || []) {
+      lost('conditionalFormatting', 'not converted', count(block, /<x14:cfRule[\s>]/g), {
+        sheet,
+        cell: /<xm:sqref>([^<]*)<\/xm:sqref>/.exec(block)?.[1]
+      })
+    }
     const filter = /<autoFilter\b[^>]*>/.exec(xml)?.[0]
     if (filter) lost('autoFilter', 'filters are not kept', 1, { sheet, cell: attr(filter, 'ref') })
     if (/<pane\b[^>]*\sstate="frozen(Split)?"/.test(xml))
       lost('frozenPanes', 'frozen rows and columns are not kept', 1, { sheet })
     if (/<(odd|even|first)(Header|Footer)>[^<]/.test(xml))
       lost('printSettings', 'headers and footers are not kept', 1, { sheet })
-    lost('sparklines', 'sparklines are not converted', count(xml, /<x14:sparkline>/g), { sheet })
-    const cells: Array<{ r: number; c: number }> = []
-    for (const rule of xml.match(/<dataValidation\b[^>]*>/g) || []) {
-      const cell = firstCellOf(attr(rule, 'sqref') || '')
-      if (cell) cells.push(cell)
+    // fortune-excel writes a default portrait page setup and no page breaks.
+    const pageSetup = /<pageSetup\b[^>]*>/.exec(xml)?.[0] || ''
+    const margins = /<pageMargins\b[^>]*>/.exec(xml)?.[0]
+    const defaultMargins = {
+      left: 0.7,
+      right: 0.7,
+      top: 0.75,
+      bottom: 0.75,
+      header: 0.3,
+      footer: 0.3
     }
-    // Rules Excel writes in the x14 extension (lists that read another sheet).
+    if (
+      attr(pageSetup, 'orientation') === 'landscape' ||
+      (attr(pageSetup, 'scale') ?? '100') !== '100' ||
+      /<pageSetUpPr\b[^>]*\sfitToPage="(1|true)"/.test(xml) ||
+      (margins &&
+        Object.entries(defaultMargins).some(
+          ([side, value]) => Math.abs(Number(attr(margins, side) ?? value) - value) > 1e-6
+        ))
+    )
+      lost('printSettings', 'page orientation, scaling and margins are not kept', 1, { sheet })
+    const breaks = count(xml, /<brk\b/g)
+    lost('printSettings', 'page breaks are not kept', breaks, { sheet })
+    lost('sparklines', 'sparklines are not converted', count(xml, /<x14:sparkline>/g), { sheet })
+    // A list read from a range or a name (not "a,b,c") is saved by
+    // fortune-excel as the fixed text of its formula.
+    const cells: Array<{ r: number; c: number; fromRange?: boolean }> = []
+    for (const rule of xml.match(/<dataValidation\b[\s\S]*?(?:<\/dataValidation>|\/>)/g) || []) {
+      const cell = firstCellOf(attr(rule, 'sqref') || '')
+      const formula = decodeXml(/<formula1>([^<]*)<\/formula1>/.exec(rule)?.[1] || '').trim()
+      const fromRange =
+        attr(rule, 'type') === 'list' && Boolean(formula) && !formula.startsWith('"')
+      if (cell) cells.push({ ...cell, ...(fromRange ? { fromRange } : {}) })
+    }
+    // Rules Excel writes in the x14 extension: lists that read another sheet.
     for (const rule of xml.match(/<x14:dataValidation\b[\s\S]*?<\/x14:dataValidation>/g) || []) {
       const cell = firstCellOf(/<xm:sqref>([^<]*)<\/xm:sqref>/.exec(rule)?.[1] || '')
-      if (cell) cells.push(cell)
+      if (cell) cells.push({ ...cell, fromRange: true })
     }
     if (cells.length) scan.validations[sheet] = cells
   }
@@ -445,7 +498,16 @@ export function reportXlsxPackage(
   for (const [sheet, cells] of Object.entries(scan.validations)) {
     const imported = sheets.find((candidate) => candidate.name === sheet)
     for (const cell of cells) {
-      if (imported?.dataVerification?.[`${cell.r}_${cell.c}`]) {
+      const place = { sheet, cell: toA1(cell.r, cell.c) }
+      if (cell.fromRange) {
+        collector.add(
+          'dataValidation',
+          'lost',
+          1,
+          'a list read from a range or a name is saved as fixed text',
+          place
+        )
+      } else if (imported?.dataVerification?.[`${cell.r}_${cell.c}`]) {
         collector.add('dataValidation', 'converted')
       } else {
         collector.add('dataValidation', 'lost', 1, 'rule types the converter does not read', {
@@ -898,6 +960,39 @@ export function renameSheet<T extends FortuneSheetLike>(
   }))
 }
 
+/** Every defined name the sheets keep, on A1 or with the formulas that use them. */
+export function collectKeptNames(sheets: FortuneSheetLike[]): XlsxDefinedName[] {
+  const names = new Map<string, XlsxDefinedName>()
+  const visit = (cell: FortuneCellValue | null | undefined): void => {
+    if (!cell || typeof cell !== 'object') return
+    for (const n of cell[XLSX_WORKBOOK_KEY]?.names || []) names.set(nameKey(n), n)
+    for (const n of cell[XLSX_NAMES_KEY] || []) if (!names.has(nameKey(n))) names.set(nameKey(n), n)
+  }
+  for (const sheet of sheets) {
+    sheet.celldata?.forEach((entry) => visit(entry.v))
+    sheet.data?.forEach((row) => row?.forEach(visit))
+  }
+  return [...names.values()]
+}
+
+/**
+ * `sheets` with every name in `taken` replaced by a free one ("A (2)"), and
+ * the references to it following. Names already in `sheets` stay reserved,
+ * so a renamed sheet never lands on another imported sheet's name.
+ */
+export function withFreeSheetNames<T extends FortuneSheetLike>(sheets: T[], taken: string[]): T[] {
+  const reserved = new Set([...taken, ...sheets.map((sheet) => sheet.name)])
+  const renames: Array<[string, string]> = []
+  for (const sheet of sheets) {
+    if (!taken.includes(sheet.name)) continue
+    let n = 2
+    while (reserved.has(`${sheet.name} (${n})`)) n++
+    reserved.add(`${sheet.name} (${n})`)
+    renames.push([sheet.name, `${sheet.name} (${n})`])
+  }
+  return renames.reduce((current, [from, to]) => renameSheet(current, from, to), sheets)
+}
+
 // --- export -----------------------------------------------------------------
 
 const nameKey = (n: XlsxDefinedName): string => `${n.sheetName ?? ''}\u0000${n.name.toUpperCase()}`
@@ -907,15 +1002,18 @@ const nameKey = (n: XlsxDefinedName): string => `${n.sheetName ?? ''}\u0000${n.n
  * aside written back: the user's formulas where names had been written out,
  * array formulas with their range (unless the formula was edited since), the
  * workbook's defined names, and the cell notes (comments), which
- * fortune-excel does not write. Names that point at a sheet the export does
- * not contain are left out.
+ * fortune-excel does not write. `baseNames` (the list the import read, held
+ * outside the grid by the caller) is written back even when the copy kept on
+ * A1 was cleared. Names that point at a sheet the export does not contain,
+ * or at another workbook (its link is not written), are left out.
  */
 export async function restoreXlsxExport(
   ExcelJS: ExcelJs,
   bytes: Uint8Array,
-  sheets: FortuneSheetLike[]
+  sheets: FortuneSheetLike[],
+  baseNames: XlsxDefinedName[] = []
 ): Promise<Uint8Array> {
-  const names = new Map<string, XlsxDefinedName>()
+  const names = new Map<string, XlsxDefinedName>(baseNames.map((n) => [nameKey(n), n]))
   const restores: Array<{ sheet: string; address: string; formula: string; array?: string }> = []
   const notes: Array<{ sheet: string; address: string; note: string }> = []
   for (const sheet of sheets) {
@@ -984,6 +1082,7 @@ export async function restoreXlsxExport(
       ([key, n]) =>
         !present.has(key) &&
         (!n.sheetName || sheetNames.includes(n.sheetName)) &&
+        !readsOtherWorkbook(n.ref) &&
         referencedSheets(n.ref).every((sheet) => sheetNames.includes(sheet))
     )
     .map(([, n]) => {

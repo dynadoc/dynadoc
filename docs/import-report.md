@@ -69,12 +69,16 @@ incomplete (`hasFidelityLoss`).
 `formulas`, `definedNames`, `comments`, `images`, `shapes`, `textBoxes`,
 `formControls`, `charts`, `tables`, `dataValidation`, `conditionalFormatting`,
 `autoFilter`, `frozenPanes`, `printSettings`, `sparklines`, `slicers`,
-`pivotCaches`, `externalLinks`, `protection`, `macros`, `otherParts` (a
+`pivotCaches`, `externalLinks`, `protection`, `macros`, `hiddenSheets`,
+`documentProperties` (custom properties, sensitivity labels included, and
+custom XML parts), `otherParts` (a
 package part the producer does not recognise, reported so the save warning
 fails safe).
 
 A producer may add a kind. A reader must keep items whose kind it does not
-know and show them by their key.
+know and show them by their key. `parseImportFidelityReport` checks the
+version, the statuses and the counts; it does not check `source.kind` or the
+fields of `places`, which are only displayed.
 
 ## What the .xlsx import keeps aside
 
@@ -89,7 +93,13 @@ edits and the saved snapshot:
   (print areas and names used only by validation lists or charts included).
 
 The export (`restoreXlsxExport`) writes them back, unless the formula was
-edited since. Clearing A1 with Delete removes the kept name list.
+edited since. Clearing A1 with Delete removes the copy of the name list kept
+there. The spreadsheet viewer, which saves over the original file, also holds
+the list it imported outside the grid and always writes it back. "Export" in
+a document gathers the names kept on every sheet, so exporting one sheet keeps
+them; but in a document sheet, clearing A1 of the sheet that holds the list
+still drops the names no formula uses. Names pointing at another workbook are
+not written back, since the link to that workbook is not kept.
 
 ## Not done yet
 

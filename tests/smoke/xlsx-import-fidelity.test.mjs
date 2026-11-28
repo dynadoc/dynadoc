@@ -699,6 +699,146 @@ check(
   json(fromXls.report)
 )
 
+// --- what a save would change: properties, page setup, hidden sheets, lists --
+const sheetXml = (b, n = 1) => M.strFromU8(M.unzipSync(b)[`xl/worksheets/sheet${n}.xml`])
+const workbookXml = (b) => M.strFromU8(M.unzipSync(b)['xl/workbook.xml'])
+{
+  const book = new ExcelJS.Workbook()
+  const main = book.addWorksheet('Main')
+  const lists = book.addWorksheet('Lists')
+  const hidden = book.addWorksheet('Hidden', { state: 'hidden' })
+  hidden.getCell('A1').value = 2
+  lists.getCell('A1').value = 'x'
+  lists.getCell('A2').value = 'y'
+  main.getCell('A1').value = 'Header'
+  main.getCell('B2').dataValidation = { type: 'list', allowBlank: true, formulae: ['MyList'] }
+  main.getCell('B3').dataValidation = { type: 'list', allowBlank: true, formulae: ['"a,b"'] }
+  main.pageSetup.orientation = 'landscape'
+  main.pageSetup.fitToPage = true
+  main.getRow(3).addPageBreak()
+  book.definedNames.add('Lists!$A$1:$A$2', 'MyList')
+  const zip = M.unzipSync(new Uint8Array(await book.xlsx.writeBuffer()))
+  zip['xl/workbook.xml'] = M.strToU8(
+    M.strFromU8(zip['xl/workbook.xml']).replace(
+      '</definedNames>',
+      '<definedName name="_xlnm.Print_Area" localSheetId="0">Main!$A$1:$D$5</definedName>' +
+        '<definedName name="Remote">[1]Prices!$A$1</definedName></definedNames>'
+    )
+  )
+  zip['docProps/custom.xml'] = M.strToU8(
+    '<Properties><property name="MSIP_Label_x_Enabled"><vt:lpwstr>true</vt:lpwstr></property></Properties>'
+  )
+  zip['customXml/item1.xml'] = M.strToU8('<root/>')
+  zip['xl/worksheets/sheet1.xml'] = M.strToU8(
+    M.strFromU8(zip['xl/worksheets/sheet1.xml']).replace(
+      '</worksheet>',
+      '<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">' +
+        '<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">' +
+        '<x14:cfRule type="iconSet" priority="1" id="{1}"><x14:iconSet iconSet="3Stars"/></x14:cfRule>' +
+        '<xm:sqref>A1:A5</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst></worksheet>'
+    )
+  )
+  const settingsBytes = M.zipSync(zip)
+  const imported = await M.importXlsxFile(
+    new File([settingsBytes], 'settings.xlsx', { type: XLSX_TYPE }),
+    () => 'unused'
+  )
+  const got = totals(imported.report)
+  const reasons = imported.report.items.map((i) => `${i.kind}: ${i.reason || ''}`)
+  check(
+    'custom document properties and custom XML are reported lost',
+    got.documentProperties?.lost === 2,
+    json(got.documentProperties)
+  )
+  check(
+    'page orientation, fit to page and page breaks are reported lost',
+    reasons.includes('printSettings: page orientation, scaling and margins are not kept') &&
+      reasons.includes('printSettings: page breaks are not kept'),
+    json(reasons)
+  )
+  check('a hidden sheet is reported', got.hiddenSheets?.lost === 1, json(got.hiddenSheets))
+  check(
+    'a conditional format written only in the x14 extension is reported lost',
+    got.conditionalFormatting?.lost === 1,
+    json(got.conditionalFormatting)
+  )
+  const lists2 = imported.report.items.filter((i) => i.kind === 'dataValidation')
+  check(
+    'a list read from a name is reported lost, a list of fixed values is kept',
+    json(lists2.map((i) => [i.status, i.count, i.places?.[0]?.cell ?? null]).sort()) ===
+      json([
+        ['converted', 1, null],
+        ['lost', 1, 'B2']
+      ]),
+    json(lists2)
+  )
+  check('all of this makes a save over the original ask', M.needsSaveConfirmation(imported.report))
+
+  // Delete on A1: fortune-sheet sets the cell to {}, the copy of the names
+  // goes with it. The list held outside the grid still writes them back.
+  const cleared = toTables(imported.sheets)
+  cleared[0].data[0][0] = {}
+  const baseNames = M.collectKeptNames(imported.sheets)
+  const blob = await FortuneExcel.transformFortuneToExcel(
+    { current: { getAllSheets: () => cleared, getSheet: () => cleared[0] } },
+    'xlsx',
+    false
+  )
+  const raw = new Uint8Array(await blob.arrayBuffer())
+  const withoutBase = await M.withDefinedNamesRestored(raw, cleared)
+  const withBase = await M.withDefinedNamesRestored(raw, cleared, baseNames)
+  const namesIn = (b) =>
+    M.scanXlsxPackage(b)
+      .definedNames.map((n) => n.name)
+      .sort()
+  check(
+    'after Delete on A1 the grid alone has lost the names',
+    !namesIn(withoutBase.bytes).includes('MyList'),
+    json(namesIn(withoutBase.bytes))
+  )
+  check(
+    'the name list held outside the grid writes them back, not the one pointing at another workbook',
+    json(namesIn(withBase.bytes)) === json(['MyList', '_xlnm.Print_Area']),
+    json(namesIn(withBase.bytes))
+  )
+  check(
+    'exporting one sheet still carries the names kept on another',
+    json(
+      M.collectKeptNames([imported.sheets[1], imported.sheets[0]])
+        .map((n) => n.name)
+        .sort()
+    ) === json(['MyList', 'Remote', '_xlnm.Print_Area']),
+    json(M.collectKeptNames(imported.sheets))
+  )
+  check(
+    'fortune-excel writes a default page setup over the landscape one (why it is reported)',
+    !/orientation="landscape"/.test(sheetXml(withBase.bytes)) &&
+      !/<rowBreaks/.test(sheetXml(withBase.bytes)) &&
+      !/state="hidden"/.test(workbookXml(withBase.bytes)),
+    /<pageSetup[^>]*>/.exec(sheetXml(withBase.bytes))?.[0]
+  )
+}
+
+// --- append: free sheet names, references following -------------------------
+{
+  const appended = M.withFreeSheetNames(
+    [
+      { name: 'A', celldata: [{ r: 0, c: 0, v: { f: "='A (2)'!A1+A!B1" } }] },
+      { name: 'A (2)', celldata: [{ r: 0, c: 0, v: { f: '=A!A1' } }] }
+    ],
+    ['A']
+  )
+  check(
+    'append renames a taken name to one no other sheet has, and the references follow',
+    json(appended.map((sheet) => [sheet.name, sheet.celldata[0].v.f])) ===
+      json([
+        ['A (3)', "='A (2)'!A1+'A (3)'!B1"],
+        ['A (2)', "='A (3)'!A1"]
+      ]),
+    json(appended.map((sheet) => [sheet.name, sheet.celldata[0].v.f]))
+  )
+}
+
 rmSync(outDir, { recursive: true, force: true })
 let failed = 0
 for (const [what, passed, detail] of results) {
