@@ -60,6 +60,8 @@ import * as yauzl from 'yauzl'
 import * as mkdirp from 'mkdirp'
 
 import Utils from './utils/Utils'
+import { officeKindOf } from './search/officeText'
+import { searchOfficeFile } from './search/officeSearch'
 import { loadNodePty } from './utils/optionalNative'
 
 import { spawn, execFile, exec } from 'child_process'
@@ -3178,6 +3180,8 @@ app.whenReady().then(async () => {
     before: string
     match: string
     after: string
+    /** Inside a .docx or .xlsx: the package part and where in it (#136). */
+    location?: { part: string; label: string }
   }
 
   type SearchFsFileResult = {
@@ -3437,10 +3441,52 @@ app.whenReady().then(async () => {
       restrictToPaths
     )
     const grouped: SearchFsFileResult[] = []
+    const skippedFiles: Array<{ path: string; reason: string }> = []
     let totalMatches = 0
     let truncated = false
+    // Files actually read: a file skipped by type, size or content is not "scanned".
+    let scannedFiles = 0
 
     for (const filePath of files) {
+      // Word and Excel packages: the text of every part, with a location (#136).
+      if (officeKindOf(filePath)) {
+        let bytes: Buffer
+        try {
+          bytes = await fsp.readFile(filePath)
+        } catch (err) {
+          console.warn('[searchInFiles] skipping file:', filePath, err)
+          continue
+        }
+        if (bytes.byteLength > 10 * 1024 * 1024) {
+          skippedFiles.push({ path: filePath, reason: 'larger than 10 MB' })
+          continue
+        }
+        const limit = Math.min(maxMatchesPerFile, maxResults - totalMatches)
+        const office = searchOfficeFile(filePath, bytes, matcher, limit)
+        if (office.skipped) {
+          console.warn('[searchInFiles] skipping package:', filePath, office.skipped)
+          skippedFiles.push({ path: filePath, reason: office.skipped })
+          continue
+        }
+        scannedFiles += 1
+        totalMatches += office.matches.length
+        if (office.truncated) truncated = true
+        if (office.matches.length > 0) {
+          grouped.push({
+            file: path.basename(filePath),
+            path: filePath,
+            relativePath: path.relative(rootPath, filePath),
+            matches: office.matches.length,
+            items: office.matches
+          })
+        }
+        if (truncated || totalMatches >= maxResults) {
+          truncated = true
+          break
+        }
+        continue
+      }
+
       if (!isLikelyTextFile(filePath)) continue
 
       let buffer: Buffer
@@ -3453,6 +3499,7 @@ app.whenReady().then(async () => {
       // Skip files > 10 MB to avoid blocking the event loop
       if (buffer.byteLength > 10 * 1024 * 1024) continue
       if (hasBinaryContent(buffer)) continue
+      scannedFiles += 1
 
       const rawContent = buffer.toString('utf-8')
       const lowerPath = filePath.toLowerCase()
@@ -3512,7 +3559,8 @@ app.whenReady().then(async () => {
       ok: true,
       files: grouped,
       totalMatches,
-      scannedFiles: files.length,
+      scannedFiles,
+      skippedFiles,
       truncated
     }
   }

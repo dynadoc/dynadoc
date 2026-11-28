@@ -1,7 +1,8 @@
 import { Unzip, UnzipInflate } from 'fflate'
 
-// Limits for an untrusted zip (a .pptx) before it is handed to a parser that
-// inflates everything into memory. Pure (fflate only): tests/smoke runs it.
+// Limits for an untrusted zip (a .pptx, or a .docx or .xlsx read by the search)
+// before it is handed to a parser that inflates everything into memory. Pure
+// (fflate only): tests/smoke runs it, and the main process imports it.
 
 export type ZipLimits = {
   /** Total uncompressed bytes. */
@@ -29,10 +30,22 @@ const mb = (bytes: number): string => `${Math.round(bytes / MB)} MB`
  * declared size can lie, so the entries are then inflated as a stream and
  * counted, stopping at the first limit crossed; nothing inflated is kept.
  */
+export type ZipNames = {
+  /** The file, as in "The file is not a valid {file}." */
+  file: string
+  /** What it holds, as in "The {thing} is too large to import." */
+  thing: string
+}
+
+export const PPTX_ZIP_NAMES: ZipNames = { file: 'PowerPoint (.pptx) file', thing: 'presentation' }
+
 export function checkZipLimits(
   bytes: Uint8Array,
-  limits: ZipLimits = PPTX_ZIP_LIMITS
+  limits: ZipLimits = PPTX_ZIP_LIMITS,
+  names: ZipNames = PPTX_ZIP_NAMES
 ): string | null {
+  const invalid = `The file is not a valid ${names.file}.`
+  const tooLarge = `The ${names.thing} is too large to import.`
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   // End of central directory: 22 bytes plus a comment of up to 65535.
   let eocd = -1
@@ -42,29 +55,27 @@ export function checkZipLimits(
       break
     }
   }
-  if (eocd < 0) return 'The file is not a valid PowerPoint (.pptx) file.'
+  if (eocd < 0) return invalid
   const entries = view.getUint16(eocd + 10, true)
   const cdSize = view.getUint32(eocd + 12, true)
   const cdOffset = view.getUint32(eocd + 16, true)
   // 0xFFFF / 0xFFFFFFFF mean ZIP64, which no presentation within the limits needs.
-  if (entries === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff)
-    return 'The presentation is too large to import.'
+  if (entries === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) return tooLarge
   if (entries > limits.maxEntries)
-    return `The presentation has too many parts to import (${entries}, at most ${limits.maxEntries}).`
-  if (cdOffset + cdSize > bytes.length) return 'The file is not a valid PowerPoint (.pptx) file.'
+    return `The ${names.thing} has too many parts to import (${entries}, at most ${limits.maxEntries}).`
+  if (cdOffset + cdSize > bytes.length) return invalid
 
   let declared = 0
   let at = cdOffset
   for (let n = 0; n < entries; n++) {
-    if (at + 46 > bytes.length || view.getUint32(at, true) !== 0x02014b50)
-      return 'The file is not a valid PowerPoint (.pptx) file.'
+    if (at + 46 > bytes.length || view.getUint32(at, true) !== 0x02014b50) return invalid
     const size = view.getUint32(at + 24, true)
-    if (size === 0xffffffff) return 'The presentation is too large to import.'
+    if (size === 0xffffffff) return tooLarge
     if (size > limits.maxEntryBytes)
-      return `A part of the presentation is too large to import (${mb(size)}, at most ${mb(limits.maxEntryBytes)}).`
+      return `A part of the ${names.thing} is too large to import (${mb(size)}, at most ${mb(limits.maxEntryBytes)}).`
     declared += size
     if (declared > limits.maxTotalBytes)
-      return `The presentation is too large to import (more than ${mb(limits.maxTotalBytes)} unpacked).`
+      return `The ${names.thing} is too large to import (more than ${mb(limits.maxTotalBytes)} unpacked).`
     at +=
       46 +
       view.getUint16(at + 28, true) +
@@ -80,20 +91,20 @@ export function checkZipLimits(
   unzip.onfile = (file): void => {
     if (problem) return
     if (++count > limits.maxEntries) {
-      problem = `The presentation has too many parts to import (at most ${limits.maxEntries}).`
+      problem = `The ${names.thing} has too many parts to import (at most ${limits.maxEntries}).`
       return
     }
     let size = 0
     file.ondata = (err, chunk): void => {
       if (problem) return
       if (err) {
-        problem = 'The file is not a valid PowerPoint (.pptx) file.'
+        problem = invalid
         return
       }
       size += chunk.length
       total += chunk.length
       if (size > limits.maxEntryBytes || total > limits.maxTotalBytes) {
-        problem = `The presentation is too large to import (more than ${mb(limits.maxTotalBytes)} unpacked).`
+        problem = `The ${names.thing} is too large to import (more than ${mb(limits.maxTotalBytes)} unpacked).`
         file.terminate()
       }
     }
@@ -102,7 +113,7 @@ export function checkZipLimits(
   try {
     unzip.push(bytes, true)
   } catch {
-    return problem ?? 'The file is not a valid PowerPoint (.pptx) file.'
+    return problem ?? invalid
   }
   return problem
 }

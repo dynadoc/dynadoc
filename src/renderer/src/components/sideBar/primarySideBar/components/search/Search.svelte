@@ -21,6 +21,8 @@ import { nodeApi } from '../../../../../utils/shims/node'
     match: string
     after: string
     occurrence?: number
+    /** Inside a .docx or .xlsx: the package part and where in it (#136). */
+    location?: { part: string; label: string }
   }
 
   type SearchResultFile = {
@@ -56,7 +58,7 @@ import { nodeApi } from '../../../../../utils/shims/node'
   let isReplaceOpen = $state(false)
   let searchQuery = $state('')
   let replaceQuery = $state('')
-  const DOCUMENT_INCLUDE_GLOB = '**/*.html,**/*.md,**/*.txt,**/*.'
+  const DOCUMENT_INCLUDE_GLOB = '**/*.html,**/*.md,**/*.txt,**/*.,**/*.docx,**/*.xlsx'
 
   let filesToInclude = $state('')
   let filesToExclude = $state('')
@@ -227,9 +229,15 @@ import { nodeApi } from '../../../../../utils/shims/node'
             const visibleMatch = sanitizeSnippet(match.match || '')
             return visibleMatch && visibleLine.includes(visibleMatch)
           })
-          .map((match, idx) => ({
+          .map((match, idx, all) => ({
             ...match,
-            occurrence: idx
+            // In a .docx, only body matches can be found again in the opened
+            // document: the occurrence counts those alone.
+            occurrence: match.location
+              ? isBodyLocation(match.location)
+                ? all.slice(0, idx).filter((other) => other.location && isBodyLocation(other.location)).length
+                : undefined
+              : idx
           }))
       }))
     totalMatches = results.reduce((sum, file) => sum + (file.items?.length || 0), 0)
@@ -411,10 +419,19 @@ import { nodeApi } from '../../../../../utils/shims/node'
     return true
   }
 
+  /** A match in the body of a .docx: the converted document shows it. */
+  function isBodyLocation(location: { part: string; label: string }): boolean {
+    return location.part === 'word/document.xml' && location.label.startsWith('body,')
+  }
+
   async function openResult(filePath: string, match?: SearchMatch) {
     const activeDocPath = $activeEditorStore?.document?.path || null
     await EditorCommonUtils.addNewDocumentEditor(filePath, activeDocPath)
     if (!match) return
+    // Headers, footers, notes, comments and text boxes of a .docx, and any
+    // place in an .xlsx, are not where the opened editor can point: open the
+    // file without highlighting the wrong place.
+    if (match.location && match.occurrence === undefined) return
 
     // Poll for the active wysiwyg editor (UUID-based, max 2s)
     let editor: Editor | null = null
@@ -467,6 +484,8 @@ import { nodeApi } from '../../../../../utils/shims/node'
       case 'html': case Utils.DYNADOC_EXTENSIONS_FORMAT.secured: return { icon: 'ph-light ph-file-text', color: '#047857' }
       case 'md': return { icon: 'ph-light ph-file-text', color: '#5a5a52' }
       case 'txt': return { icon: 'ph-light ph-file-text', color: '#8a8a7f' }
+      case 'docx': return { icon: 'ph-light ph-file-doc', color: '#2b579a' }
+      case 'xlsx': return { icon: 'ph-light ph-file-xls', color: '#217346' }
       default: return { icon: 'ph-light ph-file-text', color: '#6b7280' }
     }
   }
@@ -642,6 +661,7 @@ import { nodeApi } from '../../../../../utils/shims/node'
               >
                 <span class="text-[9px] opacity-25 w-8 shrink-0 text-right pr-2 tabular-nums">{match.line}</span>
                 <span class="truncate text-left text-[11px] opacity-55">
+                  {#if match.location}<span class="search-location" title={match.location.part}>{match.location.label}</span>{/if}
                   {clipText(sanitizeSnippet(match.before), 40)}<mark class="search-hl">{sanitizeSnippet(match.match)}</mark>{clipText(sanitizeSnippet(match.after), 40)}
                 </span>
               </button>
@@ -705,6 +725,11 @@ import { nodeApi } from '../../../../../utils/shims/node'
   .search-match-row.focused {
     @apply outline-none;
     background: color-mix(in srgb, #3b82f6 12%, transparent);
+  }
+
+  .search-location {
+    @apply text-[9px] opacity-70 mr-1 px-1 rounded-sm;
+    background: color-mix(in srgb, var(--color-base-content) 8%, transparent);
   }
 
   .search-hl {

@@ -38,7 +38,7 @@ writeFileSync(
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideDesign.ts'))}`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'slideContent.ts'))}`,
     `export * from ${JSON.stringify(path.join(slideUtils, 'pptxMapping.ts'))}`,
-    `export * from ${JSON.stringify(path.join(slideUtils, 'zipLimits.ts'))}`
+    `export * from ${JSON.stringify(path.join(repoRoot, 'src/renderer/src/shared/zipLimits.ts'))}`
   ].join('\n')
 )
 const build = spawnSync(
