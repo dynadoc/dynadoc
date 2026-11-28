@@ -1,4 +1,4 @@
-import { transformExcelToFortune, transformFortuneToExcel } from '@corbe30/fortune-excel'
+import { transformFortuneToExcel } from '@corbe30/fortune-excel'
 import { get } from 'svelte/store'
 import { v4 as uuidv4 } from 'uuid'
 import { activeSheet } from '../../stores/sheetBridge.store'
@@ -10,6 +10,10 @@ import { openSpreadsheetImportModal } from '../../stores/spreadsheetImportModal.
 import { nodeApi } from '../../utils/shims/node'
 import { getUploadedFile, getLastUploadedFile } from '../../utils/uploadCache'
 import Utils from '../../utils/Utils'
+import { hasFidelityLoss, type ImportFidelityReport } from '../conversion/importFidelity'
+import { showImportFidelityReport } from '../conversion/importFidelityToast'
+import { importXlsxFile, withDefinedNamesRestored } from '../conversion/xlsxImport'
+import { collectKeptNames, withFreeSheetNames, withSheetId } from '../conversion/xlsxImportFidelity'
 
 // const nodeApi =
 //   typeof window !== 'undefined' ? (window as any)?.api?.node || (window as any)?.node : null
@@ -192,27 +196,16 @@ function ensureUniqueSheetIds(sheets: any[], existingIds: Set<string>) {
     while (existingIds.has(id)) id = uuidv4()
     existingIds.add(id)
     return {
-      ...sheet,
-      id,
+      ...withSheetId(sheet, id),
       name: sheet?.name || 'Sheet'
     }
   })
 }
 
 async function createFileFromPath(filePath: string) {
+  // An .xls stays as it is: importXlsxFile() converts it and says so in its report.
   const cached = getUploadedFile(filePath)
   if (cached) {
-    const ext = cached.name ? `.${cached.name.split('.').pop() || ''}`.toLowerCase() : ''
-    if (ext === '.xls') {
-      const xlsx = await import('xlsx')
-      const arrayBuffer = await cached.arrayBuffer()
-      const workbook = xlsx.read(arrayBuffer, { type: 'array' })
-      const out = xlsx.write(workbook, { bookType: 'xlsx', type: 'array' })
-      const nextName = cached.name.replace(/\.xls$/i, Utils.OFFICE_EXTENSIONS.excel)
-      return new File([out], nextName, {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      })
-    }
     return cached
   }
   const fallback =
@@ -242,18 +235,11 @@ async function createFileFromPath(filePath: string) {
   }
   const name = nodeApi.path.basename(filePath)
   const ext = nodeApi.path.extname(name).toLowerCase()
-  if (ext === '.xls') {
-    const xlsx = await import('xlsx')
-    const workbook = xlsx.read(normalizedBuffer as any, { type: 'buffer' })
-    const out = xlsx.write(workbook, { bookType: 'xlsx', type: 'array' })
-    const nextName = name.replace(/\.xls$/i, Utils.OFFICE_EXTENSIONS.excel)
-    return new File([out], nextName, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-  }
   const type = ext === '.csv'
     ? 'text/csv'
-    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : ext === '.xls'
+      ? 'application/vnd.ms-excel'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   return new File([normalizedBuffer], name, { type })
 }
 
@@ -317,7 +303,25 @@ export async function exportActiveSheetToFile(
   } finally {
     dismissProgress()
   }
-  const buffer = Buffer.from(await blob.arrayBuffer())
+  let bytes: Uint8Array = new Uint8Array(await blob.arrayBuffer())
+  if (options.fileType === 'xlsx') {
+    // Names kept on any sheet, so exporting one sheet still carries the
+    // names its validations and print areas use.
+    const restored = await withDefinedNamesRestored(
+      bytes,
+      sheetsToExport,
+      collectKeptNames(allSheets)
+    )
+    bytes = restored.bytes
+    if (!restored.restored) {
+      await openAlertModal({
+        title: 'Export Spreadsheet',
+        message:
+          'The defined names, array formulas and comments of the imported workbook could not be written back. The file is exported without them.'
+      })
+    }
+  }
+  const buffer = Buffer.from(bytes)
 
   const suggestedName = (currentSheet?.name || 'Spreadsheet')
     .replace(/[\\/:*?"<>|]/g, '_')
@@ -344,7 +348,8 @@ export async function exportActiveSheetToFile(
     : `${savePath}.${options.fileType}`
 
   await nodeApi.fsPromises.mkdir(nodeApi.path.dirname(finalPath), { recursive: true })
-  await nodeApi.fsPromises.writeFile(finalPath, buffer)
+  // base64: the web bridge would write a Buffer as its printed form.
+  await nodeApi.fsPromises.writeFile(finalPath, buffer.toString('base64'), 'base64')
   setLastExportDir(nodeApi.path.dirname(finalPath))
 
   showExportToast('Spreadsheet export ready', finalPath, {
@@ -387,15 +392,23 @@ export async function promptAndImportSpreadsheetToActiveSheet() {
   })
   if (!result) return
 
-  await importSpreadsheetFileToActiveSheet(filePath, result, entry)
+  try {
+    await importSpreadsheetFileToActiveSheet(filePath, result, entry)
+  } catch (error) {
+    console.error('Import spreadsheet failed', error)
+    await openAlertModal({
+      title: 'Import Spreadsheet',
+      message: 'Unable to read the selected file. Please try again.'
+    })
+  }
 }
 
 export async function importSpreadsheetFileToActiveSheet(
   filePath: string,
   options: SpreadsheetImportResult,
   entry = get(activeSheet)
-) {
-  if (!entry?.methods) return
+): Promise<ImportFidelityReport | null> {
+  if (!entry?.methods) return null
   const methods = entry.methods
   const existingSheets = methods.getAllSheets?.() || []
   const currentSheet = methods.getSheet?.()
@@ -407,13 +420,20 @@ export async function importSpreadsheetFileToActiveSheet(
     let nextSheets = JSON.parse(JSON.stringify(importedSheets || []))
 
     if (options.mode === 'append') {
+      // A sheet whose name is taken gets a new one, and its formulas follow.
+      nextSheets = withFreeSheetNames(
+        nextSheets,
+        existingSheets.map((sheet: any) => sheet.name)
+      )
       const adjusted = ensureUniqueSheetIds(nextSheets, existingIds)
       nextSheets = [...existingSheets, ...adjusted]
     } else if (options.mode === 'replaceCurrent' && currentSheet) {
+      // importXlsxFile() kept the first sheet only, already renamed.
       const adjusted = ensureUniqueSheetIds(nextSheets, new Set(existingIds))
-      const replacement = JSON.parse(JSON.stringify(adjusted[0] || currentSheet))
-      replacement.id = currentSheet.id
-      replacement.name = currentSheet.name || replacement.name
+      const replacement = withSheetId(
+        JSON.parse(JSON.stringify(adjusted[0] || currentSheet)),
+        currentSheet.id
+      )
       nextSheets = existingSheets.map((sheet: any) =>
         sheet.id === currentSheet.id ? replacement : sheet
       )
@@ -422,60 +442,26 @@ export async function importSpreadsheetFileToActiveSheet(
     methods.updateSheet?.(JSON.parse(JSON.stringify(nextSheets)))
   }
 
-  const setKey = () => {
-    // no-op: FortuneSheet already reacts to updateSheet
-  }
-
   const sheetRef = { current: methods }
 
   const dismissProgress = showProgressToast('Importing spreadsheet…')
+  let report: ImportFidelityReport | null = null
   try {
-    // Try primary conversion
-    let success = false
-    try {
-      await transformExcelToFortune(file, (sheets) => {
-        if (sheets && sheets.length) {
-           setSheets(sheets)
-           success = true
-        }
-      }, setKey, sheetRef)
-    } catch (err) {
-      console.warn('Primary spreadsheet conversion failed, trying fallback...', err)
-    }
-
-    // Fallback manual conversion if primary failed or didn't produce sheets
-    if (!success) {
-      const xlsx = await import('xlsx')
-      const arrayBuffer = await file.arrayBuffer()
-      const workbook = xlsx.read(arrayBuffer, { type: 'array' })
-      
-      const fortuneData = workbook.SheetNames.map((name, index) => {
-        const sheet = workbook.Sheets[name]
-        const celldata = []
-        for (const cellKey in sheet) {
-          if (cellKey[0] === '!') continue
-          const cell = sheet[cellKey]
-          const { r, c } = xlsx.utils.decode_cell(cellKey)
-          celldata.push({
-            r,
-            c,
-            v: { v: cell.v, m: cell.w || String(cell.v || '') }
-          })
-        }
-        return {
-          id: `sheet-${index}-${uuidv4().slice(0, 8)}`,
-          name: name,
-          celldata: celldata
-        }
-      })
-      
-      if (fortuneData.length) {
-        setSheets(fortuneData)
-      }
-    }
+    // fortune-excel first, exceljs if it fails; formulas, defined names and
+    // comments come from exceljs either way (services/conversion/xlsxImport.ts).
+    const result = await importXlsxFile(file, () => `sheet-${uuidv4().slice(0, 8)}`, {
+      sheetRef,
+      ...(options.mode === 'replaceCurrent' && currentSheet?.name
+        ? { keepFirstSheetAs: currentSheet.name }
+        : {})
+    })
+    if (result.sheets.length) setSheets(result.sheets)
+    report = result.report
   } finally {
     dismissProgress()
   }
+  if (report && hasFidelityLoss(report)) showImportFidelityReport(report)
+  return report
 }
 
 export async function openSpreadsheetFileDialog() {
