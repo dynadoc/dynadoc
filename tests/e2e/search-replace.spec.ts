@@ -105,7 +105,7 @@ test('replace across files changes visible text only, after a preview, and can b
   expect(readFileSync(varsPath, 'utf8')).toBe('{"client":"Acme Corp"}')
   expect(readFileSync(path.join(folder!, 'index.html'), 'utf8')).toMatch(/Acme (<[^>]+>)+Corp/)
 
-  const backupRoot = path.join(STUB_ROOT, 'cache', 'search-replace-backups')
+  const backupRoot = `${STUB_ROOT}.search-replace-backups`
   expect(existsSync(path.join(backupRoot, 'replace-log.jsonl'))).toBe(true)
 
   await pane.getByRole('button', { name: 'Undo replace' }).click()

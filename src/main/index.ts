@@ -3171,7 +3171,11 @@ app.whenReady().then(async () => {
 
   // Multi-file search and replace: src/main/search/fileSearch.ts, shared with
   // the stub bridge. Replace is preview, then apply with a backup (#137).
-  const searchReplaceBackupRoot = () => getCacheDirPath('search-replace-backups')
+  // In userData itself, which is not a root of the renderer's filesystem
+  // policy (like the grants file): the renderer cannot write a manifest there,
+  // so restore only ever puts back what an apply wrote.
+  const searchReplaceBackupRoot = () =>
+    path.join(app.getPath('userData'), 'search-replace-backups')
 
   // Office text is extracted in a worker thread (#136). A new search from the
   // same window stops the one still running, and the extraction in flight.

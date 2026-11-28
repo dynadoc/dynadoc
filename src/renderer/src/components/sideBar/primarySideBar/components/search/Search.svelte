@@ -76,6 +76,7 @@
     replacements?: number
     changedFiles?: number
     backupId?: string
+    files?: string[]
     skippedFiles?: SkippedFile[]
   }
 
@@ -125,6 +126,8 @@
   let replaceSummary = $state('')
   let replacePreview = $state<ReplacePreview | null>(null)
   let lastBackupId = $state<string | null>(null)
+  /** The files the last replace changed, to check before an undo. */
+  let lastReplacedFiles: string[] = []
 
   let inputEl = $state<HTMLInputElement | null>(null)
 
@@ -354,10 +357,10 @@
     const scope = searchScope()
     if (!scope) return
 
+    // The summary and the Undo link of the last replace stay until a new
+    // replace is applied: a preview that is cancelled changes nothing.
     isLoading = true
-    replaceSummary = ''
     errorMessage = ''
-    lastBackupId = null
 
     let response: PreviewResponse
     try {
@@ -466,6 +469,7 @@
 
     replacePreview = null
     lastBackupId = response.backupId || null
+    lastReplacedFiles = response.files || []
     const skipped = response.skippedFiles || []
     replaceSummary =
       $_('Replaced {count} occurrence(s) in {files} file(s).', {
@@ -486,6 +490,16 @@
 
   async function undoReplace(): Promise<void> {
     if (!lastBackupId) return
+    // Same rule as the apply: never write under an open editor, whose next
+    // save would put the replaced text back.
+    const openFiles = openEditorFiles()
+    const open = lastReplacedFiles.filter((file) => openFiles.has(comparablePath(file)))
+    if (open.length > 0) {
+      errorMessage = $_('Close {list} to undo the replace.', {
+        values: { list: open.map((file) => nodeApi.path.basename(file)).join(', ') }
+      })
+      return
+    }
     isLoading = true
     errorMessage = ''
     let response: RestoreResponse

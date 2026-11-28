@@ -70,6 +70,7 @@ try {
     previewReplaceInFiles,
     applyReplaceInFiles,
     previewTokenFor,
+    hashContent,
     restoreReplaceBackup
   } = search
 
@@ -484,6 +485,46 @@ try {
       readFileSync(docPath, 'utf8').includes('<p>Acme <b>Corp</b> signs')
     ],
     [1, true]
+  )
+  // A forged manifest (from anything that can write to the backup folder)
+  // names a file outside the folder it replaced in, or a file of another type.
+  const victim = path.join(work, 'outside-victim.txt')
+  writeFileSync(victim, 'original file outside the folder')
+  const inside = path.join(root, 'settings.json')
+  writeFileSync(inside, '{"a":1}')
+  const forgedId = '2026-11-28T00-00-00-000Z-abcdef'
+  mkdirSync(path.join(backupRoot, forgedId, 'files'), { recursive: true })
+  writeFileSync(path.join(backupRoot, forgedId, 'files', 'x'), 'written through restore')
+  writeFileSync(
+    path.join(backupRoot, forgedId, 'manifest.json'),
+    JSON.stringify({
+      id: forgedId,
+      rootPath: root,
+      files: [victim, inside].map((target) => ({
+        path: target,
+        backup: 'files/x',
+        hashBefore: '',
+        hashAfter: hashContent(readFileSync(target)),
+        replacements: 1,
+        changes: []
+      }))
+    })
+  )
+  const forged = await restoreReplaceBackup(forgedId, backupRoot)
+  check(
+    'restore refuses a manifest entry outside its folder or of another type',
+    [
+      forged.restored.length,
+      forged.skippedFiles.map((f) => f.reason),
+      readFileSync(victim, 'utf8'),
+      readFileSync(inside, 'utf8')
+    ],
+    [
+      0,
+      ['invalid backup entry', 'invalid backup entry'],
+      'original file outside the folder',
+      '{"a":1}'
+    ]
   )
   check(
     'restore refuses an id that is not a backup',

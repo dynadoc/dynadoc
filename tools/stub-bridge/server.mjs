@@ -107,10 +107,7 @@ function localPath(remotePath) {
     // Logged like every other refusal, and more loudly than most: this is the
     // one refusal that protects something, so it must not be the quiet one.
     console.error(`refused  path escape: ${remotePath}`)
-    throw new StubError(
-      refusal(`path "${remotePath}" escapes the stub root and was refused`),
-      400
-    )
+    throw new StubError(refusal(`path "${remotePath}" escapes the stub root and was refused`), 400)
   }
   return resolved
 }
@@ -598,7 +595,9 @@ const channels = {
  * build, and that the Search panel can be exercised end to end against it.
  * Paths cross the wire in the drive's form and are mapped to the stub root on
  * the way in and back on the way out. Backups and the replace log go to
- * `cache/search-replace-backups`.
+ * `<stub root>.search-replace-backups`, beside the drive like the settings
+ * file: inside the drive, the filesystem channels could write a manifest that
+ * a restore would follow, and a search of the drive would list old copies.
  */
 /* eslint-disable @typescript-eslint/explicit-function-return-type --
    plain .mjs: there is no type annotation syntax to satisfy this rule here. */
@@ -622,7 +621,7 @@ async function loadSearchModule() {
   return searchModule
 }
 
-const SEARCH_BACKUP_ROOT = () => path.join(ROOT, 'cache', 'search-replace-backups')
+const SEARCH_BACKUP_ROOT = () => `${ROOT}.search-replace-backups`
 
 function remotePathOf(local) {
   return path.relative(ROOT, local).split(path.sep).join('/')
@@ -670,8 +669,9 @@ Object.assign(channels, {
       ...result,
       files: (result.files || []).map(remotePathOf),
       skippedFiles: remoteFiles(result.skippedFiles),
-      ...(result.backupDir ? { backupDir: remotePathOf(result.backupDir) } : {}),
-      ...(result.logPath ? { logPath: remotePathOf(result.logPath) } : {})
+      // Outside the drive: not a path the client could use.
+      backupDir: undefined,
+      logPath: undefined
     }
   },
 

@@ -1770,5 +1770,6 @@
   "Open in an editor: close it to replace in this file.": "エディターで開いています。このファイルで置換するには閉じてください。",
   "variable, not replaced": "変数のため置換しません",
   "spans an object, not replaced": "オブジェクトを含むため置換しません",
-  "Replace failed": "置換に失敗しました"
+  "Replace failed": "置換に失敗しました",
+  "Close {list} to undo the replace.": "置換を元に戻すには {list} を閉じてください。"
 }

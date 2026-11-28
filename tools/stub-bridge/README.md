@@ -198,7 +198,8 @@ run, unlike the rest of the stub. This is the client's own implementation,
 not a copy of the bridge's, which is not in this repository: it gives the web
 build the same contract as the desktop build and lets the e2e suite drive the
 Search sidebar. Paths stay inside the drive; backups and the replace log go to
-`cache/search-replace-backups`.
+`<stub root>.search-replace-backups`, beside the drive like the settings file,
+so nothing written through the filesystem channels can reach them.
 
 Two quirks worth knowing before you write code against the filesystem channels,
 both mirrored from the real bridge:

@@ -784,6 +784,7 @@ export async function applyReplaceInFiles(
     } catch (err) {
       console.warn('[search] write failed:', filePath, err)
       manifest.files.pop()
+      await fsp.rm(backupPath, { force: true }).catch(() => {})
       skippedFiles.push({ path: filePath, reason: 'write failed' })
       await writeManifest(backupDir, manifest).catch(() => {})
       continue
@@ -844,9 +845,18 @@ export async function restoreReplaceBackup(
   const restored: string[] = []
   const skippedFiles: Array<{ path: string; reason: string }> = []
   for (const file of manifest.files) {
-    const backupPath = path.join(backupDir, file.backup)
-    if (!isInsideRoot(backupPath, backupDir)) {
-      skippedFiles.push({ path: file.path, reason: 'invalid backup entry' })
+    const backupPath = path.join(backupDir, String(file.backup || ''))
+    // A manifest is only trusted to put back a document of the folder it
+    // replaced in, from its own backup folder: an entry naming anything else
+    // (a forged or damaged manifest) is refused.
+    if (
+      !isInsideRoot(backupPath, backupDir) ||
+      typeof file.path !== 'string' ||
+      !isReplaceableFile(file.path) ||
+      !manifest.rootPath ||
+      !isReallyInsideRoot(file.path, manifest.rootPath)
+    ) {
+      skippedFiles.push({ path: String(file.path), reason: 'invalid backup entry' })
       continue
     }
     let current: Buffer
