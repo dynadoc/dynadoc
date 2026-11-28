@@ -34,6 +34,8 @@ import { onMount } from 'svelte'
 import { debounce } from 'lodash'
 import { nodeApi } from './shims/node'
 import { isFileUnreadable } from './unreadableFiles'
+import { checkDocumentWrite, guardedKindName } from './documentContentGuard'
+import { openAlertModal } from '../stores/alertModal.store'
 // import { _$_translationPairsMap } from '../extensions/tiptap/CustomTranslationExtension/stores/translationSync.store'
 // import { get } from 'svelte/store'
 // import { pathToFileURL } from 'url'
@@ -452,6 +454,26 @@ export default class Utils {
           'saveToFile: refusing to write over a file whose content could not be read.',
           safePath
         )
+        return false
+      }
+      // A spreadsheet document whose content lost its <sheet> element no
+      // longer points to its workbook (dynadoc#133); the same for <slide> and
+      // <design>. Keep the file on disk, which is the last good version, and
+      // say so once.
+      const check = checkDocumentWrite(safePath, content)
+      if (check.ok === false) {
+        const kind = guardedKindName(check.contentType)
+        console.warn(
+          `saveToFile: refusing to write a ${kind} document without its ${kind}.`,
+          safePath,
+          String(content).slice(0, 200)
+        )
+        if (check.firstRefusal) {
+          void openAlertModal({
+            title: 'Document not saved',
+            message: `The ${kind} was removed from this document. Nothing was written: the last saved version is kept. Undo (Ctrl+Z) to bring the ${kind} back, or reopen the document.`
+          })
+        }
         return false
       }
       if (nodeApi.fsPromises?.writeFile) {

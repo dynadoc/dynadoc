@@ -15,6 +15,7 @@ import { CustomSpreadsheetExtensionProps } from './utils/common.utils';
 import { DocumentModel } from '../../../models/Document'
 import { ensureNodeViewSrc } from '../utils/utils'
 import { nodeApi } from '../../../utils/shims/node'
+import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state'
 // import { ReactNodeViewRenderer } from '@tiptap/react'
 
 
@@ -46,6 +47,51 @@ const defaultOptions: PaginationOptions = {
     maxPageWidth: null,
     wysiwygEditorIdToUpdate: null
 }
+// True when the editor's selection is the whole <sheet> node.
+function isSheetNodeSelected(state): boolean {
+    const { selection } = state
+    return selection instanceof NodeSelection && selection.node?.type?.name === extensionName
+}
+
+// A spreadsheet document is one <sheet> and nothing else but empty
+// paragraphs. Read from the editor's own document, not from the active
+// document's kind, which belongs to whichever tab is in front.
+function isSpreadsheetDocument(doc): boolean {
+    let sheets = 0
+    let other = false
+    doc?.forEach?.((child) => {
+        if (child.type.name === extensionName) sheets++
+        else if (!(child.isTextblock && child.content.size === 0)) other = true
+    })
+    return sheets === 1 && !other
+}
+
+// True when the selection covers a <sheet> node: a node selection on it, or a
+// range such as Ctrl+A that contains it.
+function selectionHoldsSheet(state): boolean {
+    if (isSheetNodeSelected(state)) return true
+    const { from, to, empty } = state.selection
+    if (empty) return false
+    let found = false
+    state.doc.nodesBetween(from, to, (node, pos) => {
+        if (found) return false
+        if (node.type.name === extensionName && pos >= from && pos + node.nodeSize <= to) {
+            found = true
+        }
+        return !found
+    })
+    return found
+}
+
+// Whether input that would replace the selection must be dropped. In a
+// spreadsheet document nothing may replace the sheet; in a text document,
+// typing or pasting over a selected sheet is refused too, since one key would
+// remove a whole workbook from the page.
+function mustKeepSheet(state): boolean {
+    if (isSpreadsheetDocument(state.doc)) return selectionHoldsSheet(state)
+    return isSheetNodeSelected(state)
+}
+
 export const CustomSpreadsheetExtension = Node.create({
     name: extensionName,
     group: 'block',
@@ -199,6 +245,39 @@ export const CustomSpreadsheetExtension = Node.create({
     // },
 
 
+    // Typing or pasting with the sheet node selected replaced the whole
+    // workbook block with text, which the next autosave wrote as the document
+    // (dynadoc#133). Keys meant for a cell that reach ProseMirror instead are
+    // dropped here.
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: new PluginKey('sheetNodeGuard'),
+                props: {
+                    handleTextInput: (view) => mustKeepSheet(view.state),
+                    handlePaste: (view) => mustKeepSheet(view.state),
+                    handleKeyDown: (view, event) => {
+                        // Backspace and Delete still remove a sheet embedded in
+                        // a text document; in a spreadsheet document they must not.
+                        if (event.key !== 'Backspace' && event.key !== 'Delete') return false
+                        return isSpreadsheetDocument(view.state.doc) && selectionHoldsSheet(view.state)
+                    },
+                    handleDOMEvents: {
+                        // Cutting a sheet out of a text document is a move; out
+                        // of a spreadsheet document it would empty the document.
+                        cut: (view, event) => {
+                            if (!isSpreadsheetDocument(view.state.doc) || !selectionHoldsSheet(view.state)) {
+                                return false
+                            }
+                            event.preventDefault()
+                            return true
+                        }
+                    }
+                }
+            })
+        ]
+    },
+
     addCommands() {
         return {
             // INNOVATIVE: Delete Spreadsheet Command
@@ -339,6 +418,8 @@ export const CustomSpreadsheetExtension = Node.create({
             
             // Custom handling for backspace when spreadsheet is selected
             'Backspace': ({ editor }) => {
+                if (isSpreadsheetDocument(editor.state.doc)) return false
+
                 const { state } = editor;
                 const { selection } = state;
                 
@@ -367,6 +448,8 @@ export const CustomSpreadsheetExtension = Node.create({
 
             // Custom handling for delete key
             'Delete': ({ editor }) => {
+                if (isSpreadsheetDocument(editor.state.doc)) return false
+
                 const { state } = editor;
                 const { selection } = state;
                 
