@@ -22,7 +22,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import fsp from 'fs/promises'
 import path from 'path'
-import { findInTextModel, planReplace, textModelFor } from './htmlText'
+import { findInTextModel, planReplace, replacementFor, textModelFor } from './htmlText'
 import { createSearchRegExp } from './matcher'
 
 export type SearchFsPayload = {
@@ -41,8 +41,11 @@ export type SearchFsPayload = {
 export type ReplacePayload = SearchFsPayload & { replaceText: string }
 
 export type ApplyReplacePayload = ReplacePayload & {
-  /** The files of the preview, with the hash each had when it was previewed. */
-  files: Array<{ path: string; hash: string }>
+  /**
+   * The files of the preview, with the hash each had when it was previewed and
+   * the indexes (in the preview's `changes`) the user unticked.
+   */
+  files: Array<{ path: string; hash: string; exclude?: number[] }>
 }
 
 export type SearchFsMatch = {
@@ -422,11 +425,15 @@ export async function previewReplaceInFiles(payload: ReplacePayload): Promise<{
   for (const filePath of files) {
     const buffer = await readSearchableFile(filePath)
     if (!buffer) continue
-    const plan = planReplace(filePath, buffer.toString('utf-8'), built.matcher, replaceText)
+    const plan = planReplace(filePath, buffer.toString('utf-8'), built.matcher, replaceText, {
+      expand: !!payload.isRegex
+    })
     if (plan.matches.length === 0) continue
     const changes: ReplacePreviewChange[] = plan.matches.map((match) => ({
       ...toSearchMatch(match),
-      replacement: match.blocked ? match.match : replaceText,
+      replacement: match.blocked
+        ? match.match
+        : replacementFor(match, replaceText, { expand: !!payload.isRegex }),
       ...(match.blocked ? { skipped: match.blocked } : {})
     }))
     replacements += plan.replaced
@@ -453,14 +460,15 @@ export async function previewReplaceInFiles(payload: ReplacePayload): Promise<{
 /** Each changed line, as it read before and after, for the manifest and the log. */
 function changedLines(
   filePath: string,
-  matches: Array<{ line: number; before: string; match: string; after: string; blocked?: string }>,
+  matches: Array<{ line: number; before: string; match: string; after: string }>,
+  applied: boolean[],
   output: string
 ): Array<{ line: number; before: string; after: string }> {
   const afterLines = textModelFor(filePath, output).text.split('\n')
   const seen = new Set<number>()
   const lines: Array<{ line: number; before: string; after: string }> = []
-  for (const match of matches) {
-    if (match.blocked || seen.has(match.line)) continue
+  for (const [index, match] of matches.entries()) {
+    if (!applied[index] || seen.has(match.line)) continue
     seen.add(match.line)
     lines.push({
       line: match.line,
@@ -469,6 +477,18 @@ function changedLines(
     })
   }
   return lines
+}
+
+/** Writes next to the file, then renames: a failed write leaves the file as it was. */
+async function writeFileAtomic(filePath: string, content: string | Buffer): Promise<void> {
+  const temp = `${filePath}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`
+  try {
+    await fsp.writeFile(temp, content)
+    await fsp.rename(temp, filePath)
+  } catch (err) {
+    await fsp.rm(temp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 function newBackupId(): string {
@@ -517,6 +537,12 @@ export async function applyReplaceInFiles(
   if ('error' in built) return { ok: false, ...empty, error: built.error }
 
   const expectedHash = new Map(expected.map((item) => [path.resolve(item.path), item.hash]))
+  const excluded = new Map(
+    expected.map((item) => [
+      path.resolve(item.path),
+      new Set((Array.isArray(item.exclude) ? item.exclude : []).map(Number))
+    ])
+  )
   const allowed = new Set(
     (
       await filesForPayload(
@@ -559,7 +585,10 @@ export async function applyReplaceInFiles(
       skippedFiles.push({ path: filePath, reason: 'changed since the preview' })
       continue
     }
-    const plan = planReplace(filePath, buffer.toString('utf-8'), built.matcher, replaceText)
+    const plan = planReplace(filePath, buffer.toString('utf-8'), built.matcher, replaceText, {
+      expand: !!payload.isRegex,
+      skip: excluded.get(filePath)
+    })
     if (plan.replaced === 0) continue
 
     const backupName = `${String(manifest.files.length + 1).padStart(4, '0')}-${path.basename(filePath)}`
@@ -574,7 +603,7 @@ export async function applyReplaceInFiles(
       continue
     }
     try {
-      await fsp.writeFile(filePath, plan.output, 'utf-8')
+      await writeFileAtomic(filePath, plan.output)
     } catch (err) {
       console.warn('[search] write failed:', filePath, err)
       skippedFiles.push({ path: filePath, reason: 'write failed' })
@@ -588,7 +617,7 @@ export async function applyReplaceInFiles(
       hashBefore,
       hashAfter: hashContent(Buffer.from(plan.output, 'utf-8')),
       replacements: plan.replaced,
-      changes: changedLines(filePath, plan.matches, plan.output)
+      changes: changedLines(filePath, plan.matches, plan.applied, plan.output)
     })
   }
 
@@ -667,7 +696,7 @@ export async function restoreReplaceBackup(
       continue
     }
     try {
-      await fsp.writeFile(file.path, await fsp.readFile(backupPath))
+      await writeFileAtomic(file.path, await fsp.readFile(backupPath))
       restored.push(file.path)
     } catch (err) {
       console.warn('[search] restore failed:', file.path, err)

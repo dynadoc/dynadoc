@@ -64,6 +64,9 @@ export type TextMatch = {
   after: string
   /** Why this match cannot be replaced, when it cannot. */
   blocked?: 'protected' | 'object'
+  /** Capture groups of the match, for `$1` in a regular expression replace. */
+  captures: Array<string | undefined>
+  groups?: Record<string, string | undefined>
 }
 
 const BLOCK_ELEMENTS = new Set([
@@ -517,6 +520,8 @@ export function findInTextModel(
         before: lineText.slice(0, found.index),
         match: matched,
         after: lineText.slice(found.index + matched.length),
+        captures: found.slice(1),
+        ...(found.groups ? { groups: { ...found.groups } } : {}),
         ...(blocked ? { blocked } : {})
       })
       if (matches.length >= limit) return { matches, truncated: true }
@@ -570,41 +575,92 @@ function editsForMatch(model: TextModel, match: TextMatch, insert: string): Edit
   return edits
 }
 
+/**
+ * Expands `$$`, `$&`, `` $` ``, `$'`, `$1`..`$99` and `$<name>` in a
+ * replacement, as String.prototype.replace does. `` $` `` and `$'` stop at the
+ * line, since a match never spans one.
+ */
+export function expandReplacement(template: string, match: TextMatch): string {
+  return template.replace(/\$(\$|&|`|'|<([^>]*)>|(\d{1,2}))/g, (token, kind, name, digits) => {
+    if (kind === '$') return '$'
+    if (kind === '&') return match.match
+    if (kind === '`') return match.before
+    if (kind === "'") return match.after
+    if (name !== undefined) {
+      if (!match.groups) return token
+      return match.groups[name] ?? ''
+    }
+    if (digits !== undefined) {
+      const count = match.captures.length
+      let index = Number(digits)
+      let rest = ''
+      if (digits.length === 2 && (index === 0 || index > count)) {
+        index = Number(digits[0])
+        rest = digits[1]
+      }
+      if (index === 0 || index > count) return token
+      return (match.captures[index - 1] ?? '') + rest
+    }
+    return token
+  })
+}
+
+export type ReplaceOptions = {
+  /** Expand `$1` and the like (regular expression mode). Otherwise literal. */
+  expand?: boolean
+  /** Indexes, in `matches`, of the matches the user chose not to replace. */
+  skip?: ReadonlySet<number>
+}
+
+/** The text that replaces `match`, before any HTML escaping. */
+export function replacementFor(
+  match: TextMatch,
+  replacement: string,
+  options: ReplaceOptions = {}
+): string {
+  return options.expand ? expandReplacement(replacement, match) : replacement
+}
+
 export type ReplacePlan = {
   output: string
   /** Every match, in order; `blocked` ones were left as they are. */
   matches: TextMatch[]
+  /** For each match: whether it was written. */
+  applied: boolean[]
   replaced: number
 }
 
 /**
- * Replaces every unblocked match of `matcher` in `raw`. `replacement` is
- * literal text (no `$1` expansion, as before), escaped for HTML when the file
- * is HTML.
+ * Replaces every unblocked match of `matcher` in `raw`, except the ones in
+ * `options.skip`. The replacement is escaped for HTML when the file is HTML.
  */
 export function planReplace(
   filePath: string,
   raw: string,
   matcher: RegExp,
-  replacement: string
+  replacement: string,
+  options: ReplaceOptions = {}
 ): ReplacePlan {
   const html = isHtmlDocumentPath(filePath)
   const model = html ? htmlTextModel(raw) : plainTextModel(raw)
   const { matches } = findInTextModel(model, matcher)
-  const insert = html ? escapeHtmlText(replacement) : replacement
   const edits: Edit[] = []
+  const applied: boolean[] = []
   let replaced = 0
-  for (const match of matches) {
-    if (match.blocked) continue
-    const forMatch = editsForMatch(model, match, insert)
-    if (forMatch.length === 0) continue
+  matches.forEach((match, index) => {
+    applied.push(false)
+    if (match.blocked || options.skip?.has(index)) return
+    const text = replacementFor(match, replacement, options)
+    const forMatch = editsForMatch(model, match, html ? escapeHtmlText(text) : text)
+    if (forMatch.length === 0) return
     edits.push(...forMatch)
+    applied[index] = true
     replaced += 1
-  }
+  })
   edits.sort((a, b) => b.start - a.start)
   let output = raw
   for (const edit of edits) {
     output = output.slice(0, edit.start) + edit.insert + output.slice(edit.end)
   }
-  return { output, matches, replaced }
+  return { output, matches, applied, replaced }
 }

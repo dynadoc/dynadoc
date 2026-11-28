@@ -210,6 +210,35 @@ try {
     'X\r\n[X](https://X.example)\r\n'
   )
 
+  log('regular expressions')
+  const regexReplace = (html, query, replacement) =>
+    planReplace('doc.html', html, createSearchRegExp(query, { isRegex: true }), replacement, {
+      expand: true
+    }).output
+  check(
+    '$1 and $2 refer to the groups in regex mode',
+    regexReplace('<p>Due 2026-11 and 2027-<b>01</b></p>', '(\\d{4})-(\\d{2})', '$2/$1'),
+    '<p>Due 11/2026 and 01/2027<b></b></p>'
+  )
+  check(
+    '$&, $$ and named groups',
+    regexReplace('<p>R&amp;D</p>', '(?<a>R)&(?<b>D)', '$<b>$$$&'),
+    '<p>D$R&amp;D</p>'
+  )
+  check(
+    'without expansion the replacement is literal',
+    planReplace('doc.html', '<p>2026-11</p>', createSearchRegExp('(\\d+)', { isRegex: true }), '$1')
+      .output,
+    '<p>$1-$1</p>'
+  )
+  check(
+    'unticked matches are left as they are',
+    planReplace('doc.html', '<p>a a a</p>', createSearchRegExp('a', {}), 'b', {
+      skip: new Set([1])
+    }).output,
+    '<p>b a b</p>'
+  )
+
   log('files: search, preview, apply, backup, log, restore')
   const root = path.join(work, 'drive')
   const docDir = path.join(root, 'Contract')
@@ -219,6 +248,8 @@ try {
     '<p>Acme <b>Corp</b> signs with <a href="https://acme.example">Acme Corp</a>.</p>' +
     '<p><span data-variable="acme">{acme}</span></p>'
   writeFileSync(docPath, original)
+  const varsPath = path.join(docDir, 'vars.json')
+  writeFileSync(varsPath, '{"client":"Acme Corp"}')
   const otherPath = path.join(root, 'other.html')
   writeFileSync(otherPath, '<p>Nothing here</p>')
   const outside = path.join(work, 'outside.html')
@@ -309,6 +340,12 @@ try {
     [2, 2, 'Globex Inc signs with Globex Inc.']
   )
 
+  check(
+    'a file outside the include pattern is not touched',
+    readFileSync(varsPath, 'utf8'),
+    '{"client":"Acme Corp"}'
+  )
+
   const restored = await restoreReplaceBackup(applied.backupId, backupRoot)
   check(
     'restore: the file is back',
@@ -335,6 +372,24 @@ try {
     'restore never overwrites a file edited after the replace',
     refused.skippedFiles.map((f) => f.reason),
     ['changed since the replace']
+  )
+  writeFileSync(docPath, original)
+  const partial = await previewReplaceInFiles({ ...base, replaceText: 'P' })
+  const partialApplied = await applyReplaceInFiles(
+    {
+      ...base,
+      replaceText: 'P',
+      files: [{ path: docPath, hash: partial.files[0].hash, exclude: [0] }]
+    },
+    backupRoot
+  )
+  check(
+    'apply honours the unticked changes of the preview',
+    [
+      partialApplied.replacements,
+      readFileSync(docPath, 'utf8').includes('<p>Acme <b>Corp</b> signs')
+    ],
+    [1, true]
   )
   check(
     'restore refuses an id that is not a backup',
