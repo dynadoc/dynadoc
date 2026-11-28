@@ -112,8 +112,8 @@ export const ALLOWED_STUB_FAILURES: Array<{
     arg: /(^|\/)assets\/sheet\/sheet\.json$/,
     error: /write payload that is not a string/,
     why:
-      'KNOWN BUG, not harmless: the spreadsheet saves its sheet data as an object, relative to ' +
-      'the drive root. The stub refuses it; the real bridge stringifies it to "[object Object]". ' +
+      'KNOWN BUG, not harmless: the spreadsheet saves its sheet data as an object ' +
+      '(#155). The stub refuses it; the real bridge stringifies it to "[object Object]". ' +
       'Listed so the suite can run the sheet scenarios; remove this entry once the save is fixed.'
   },
   {
