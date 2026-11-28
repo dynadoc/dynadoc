@@ -3170,7 +3170,11 @@ app.whenReady().then(async () => {
 
   // Multi-file search and replace: src/main/search/fileSearch.ts, shared with
   // the stub bridge. Replace is preview, then apply with a backup (#137).
-  const searchReplaceBackupRoot = () => getCacheDirPath('search-replace-backups')
+  // In userData itself, which is not a root of the renderer's filesystem
+  // policy (like the grants file): the renderer cannot write a manifest there,
+  // so restore only ever puts back what an apply wrote.
+  const searchReplaceBackupRoot = () =>
+    path.join(app.getPath('userData'), 'search-replace-backups')
 
   ipcMain.handle('search:files', async (_event, payload: SearchFsPayload) => {
     try {

@@ -1770,5 +1770,6 @@
   "Open in an editor: close it to replace in this file.": "Open in an editor: close it to replace in this file.",
   "variable, not replaced": "variable, not replaced",
   "spans an object, not replaced": "spans an object, not replaced",
-  "Replace failed": "Replace failed"
+  "Replace failed": "Replace failed",
+  "Close {list} to undo the replace.": "Close {list} to undo the replace."
 }
