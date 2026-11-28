@@ -139,6 +139,8 @@
   import MeetingWindowWidget from './components/sideBar/secondarySideBar/components/MeetingWindowWidget.svelte'
   import SplitPane from './components/common/layout/splitPane/SplitPane.svelte'
   import ConfirmModal from './components/common/modal/ConfirmModal.svelte'
+  import OrgVariableConflictDialog from './extensions/tiptap/CustomVarExtension/components/OrgVariableConflictDialog.svelte'
+  import { followSession } from './extensions/tiptap/CustomVarExtension/stores/scopes/organizationScope'
   import AlertModal from './components/common/modal/AlertModal.svelte'
   import StepUpModal from './components/common/modal/StepUpModal.svelte'
   import SealOptionsModal from './components/common/modal/SealOptionsModal.svelte'
@@ -297,6 +299,10 @@
       appCloseFlowPending = false
     }
   }
+
+  // The Organization variable scope shows and sends only the signed-in
+  // user's copy, for the session's organization.
+  onMount(() => followSession(authStore))
 
   onMount(() => {
     themeCleanup = initializeThemeStore()
@@ -1299,6 +1305,7 @@
 <TextInputModal />
 <ConfirmModal />
 <AlertModal />
+<OrgVariableConflictDialog />
 <StepUpModal />
 <SealOptionsModal />
 <ShareModal />

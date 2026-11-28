@@ -2,11 +2,19 @@
 // No imports on purpose: tests/smoke/sheet-variables.test.mjs compiles this
 // file on its own with esbuild.
 
-/** Visibilities whose variables live in the app-wide store, not in vars.json. */
-export const GLOBAL_VISIBILITIES = ['desktop', 'cloud']
+/**
+ * Visibilities whose variables live outside vars.json: in the Desktop scope
+ * (desktop, cloud) or in the Organization scope served by the API bridge.
+ */
+export const GLOBAL_VISIBILITIES = ['desktop', 'cloud', 'organization']
 
 export function isGlobalVisibility(visibility: unknown): boolean {
   return GLOBAL_VISIBILITIES.includes(String(visibility || '').toLowerCase())
+}
+
+/** True for a variable of the Organization scope. */
+export function isOrganizationVisibility(visibility: unknown): boolean {
+  return String(visibility || '').toLowerCase() === 'organization'
 }
 
 type NamedVariable = { name?: string; aliases?: string[]; visibility?: string }
@@ -38,6 +46,29 @@ export function selectVisibleGlobals<T extends NamedVariable>(
     visible[id] = value
   }
   return visible
+}
+
+/**
+ * The Desktop and Organization variables together, Desktop first: an
+ * organization variable sharing a name (or alias) with one of this
+ * computer's is left out, so a personal value wins over the shared one, as a
+ * document's own wins over both (selectVisibleGlobals).
+ */
+export function layerGlobals<T extends NamedVariable>(
+  desktopVars: Record<string, T>,
+  organizationVars: Record<string, T>
+): Record<string, T> {
+  const taken = new Set<string>()
+  for (const value of Object.values(desktopVars || {})) {
+    variableNames(value).forEach((name) => taken.add(name))
+  }
+  const layered: Record<string, T> = { ...(desktopVars || {}) }
+  for (const [id, value] of Object.entries(organizationVars || {})) {
+    if (!value || id in layered) continue
+    if (variableNames(value).some((name) => taken.has(name))) continue
+    layered[id] = value
+  }
+  return layered
 }
 
 /** True for a single cell ref like `A1`, false for a range like `A1:B2`. */

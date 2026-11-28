@@ -654,6 +654,28 @@ const server = {
       return ipcRenderer.invoke('drive:sync-doc', payload)
     }
   },
+  // Organization variables: the main process forwards the vars:org:*
+  // channels to the API bridge. Each answer is { status, body };
+  // docs/organization-variables.md.
+  variables: {
+    organization: {
+      list(payload?: { since?: number }) {
+        return ipcRenderer.invoke('vars:org:list', payload || {})
+      },
+      get(payload: { id: string }) {
+        return ipcRenderer.invoke('vars:org:get', payload)
+      },
+      set(payload: { id: string; value: Record<string, unknown>; baseRevision: number | null }) {
+        return ipcRenderer.invoke('vars:org:set', payload)
+      },
+      delete(payload: { id: string; baseRevision: number }) {
+        return ipcRenderer.invoke('vars:org:delete', payload)
+      },
+      history(payload: { id: string; limit?: number }) {
+        return ipcRenderer.invoke('vars:org:history', payload)
+      }
+    }
+  },
   share: {
     resolve(payload: { shareId?: string; docUuid?: string; name?: string; password?: string }) {
       return ipcRenderer.invoke('share:resolve', payload)

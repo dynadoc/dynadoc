@@ -4411,7 +4411,22 @@ app.whenReady().then(async () => {
     return { ok: true, url: authUrl }
   }
 
+  // The token organization variable calls use (orgVariablesCall), kept
+  // between calls: reading it spawns the middleware, which is not worth doing
+  // for every read of the scope. Read again after a 401, and dropped on every
+  // sign-in, sign-out and change of organization, so it is never another
+  // account's.
+  let orgVariablesToken = ''
+  // Bumped each time the token is dropped: a session read that started before
+  // (during a switch of organization, say) does not store its token after.
+  let orgVariablesTokenGeneration = 0
+  const dropOrgVariablesToken = (): void => {
+    orgVariablesToken = ''
+    orgVariablesTokenGeneration++
+  }
+
   async function completeAuthWithDeepLink(rawUrl: string, debug?: boolean) {
+    dropOrgVariablesToken()
     if (!rawUrl) return false
 
     let deepLinkUrl: URL
@@ -4467,12 +4482,16 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:set-active-org', async (_event, payload) => {
+    dropOrgVariablesToken()
     const output = await runDdocServerJson('auth:set-active-org', {
       org: payload?.org,
       // debug: payload?.debug === true
       // debug: debug === true
       debug: payload?.debug
     })
+    // Again once switched: a call made during the switch may have read the
+    // previous organization's session.
+    dropOrgVariablesToken()
     return parseJsonSafely(output) || {}
   })
 
@@ -4506,6 +4525,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:logout', async (_event, payload) => {
+    dropOrgVariablesToken()
     const output = await runDdocServerJson('auth:logout', {
       protocol: AUTH_PROTOCOL,
       redirectUri: AUTH_CALLBACK_URI,
@@ -4714,6 +4734,71 @@ app.whenReady().then(async () => {
     }
 
     return payload
+  }
+
+  // Organization variables (docs/organization-variables.md): the same
+  // vars:org:* channels the web client sends, forwarded to the bridge's
+  // /api/ipc/invoke with the session's token. The renderer needs the HTTP
+  // status to tell a conflict (409) from a refusal and from no answer at all
+  // (status 0), so the answer is passed through as { status, body } rather
+  // than thrown.
+  async function orgVariablesCall(
+    channel: string,
+    payload: unknown
+  ): Promise<{ status: number; body: unknown }> {
+    const send = async (token: string): Promise<Response> =>
+      fetchWithHttpFallback(new URL('/api/ipc/invoke', AUTH_SERVER_BASE_URL), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel, args: [payload ?? {}] })
+      })
+    try {
+      const readToken = async (): Promise<string> => {
+        const generation = orgVariablesTokenGeneration
+        const read = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
+        if (generation === orgVariablesTokenGeneration) orgVariablesToken = read
+        return read
+      }
+      let fresh = false
+      let token = orgVariablesToken
+      if (!token) {
+        token = await readToken()
+        fresh = true
+      }
+      // No token: signed out, or the session could not be read (offline, the
+      // middleware missing). The renderer knows from the auth store whether
+      // someone is signed in, so this is "not reached", not "refused".
+      if (!token) {
+        return {
+          status: 0,
+          body: { error: 'no_session', message: 'No session to call the bridge with.' }
+        }
+      }
+      let response = await send(token)
+      if (response.status === 401 && !fresh) {
+        token = await readToken()
+        if (token) response = await send(token)
+      }
+      if (response.status === 401) dropOrgVariablesToken()
+      const body = await response.json().catch(() => null)
+      if (response.ok) return { status: response.status, body: body?.data ?? null }
+      return { status: response.status, body }
+    } catch (error) {
+      return {
+        status: 0,
+        body: { error: 'offline', message: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  }
+
+  for (const channel of [
+    'vars:org:list',
+    'vars:org:get',
+    'vars:org:set',
+    'vars:org:delete',
+    'vars:org:history'
+  ]) {
+    ipcMain.handle(channel, (_event, payload) => orgVariablesCall(channel, payload))
   }
 
   async function translateWithServer(payload: TranslatePayload) {

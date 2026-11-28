@@ -9,7 +9,8 @@
  * The UI settings store (`<root>.settings.json`) is seeded with the two
  * onboarding tours marked as seen: they are modal and sit over the buttons
  * every spec starts from. The fixtures write the same seed before every test,
- * so a test never inherits the tabs another test left open.
+ * so a test never inherits the tabs another test left open. The organization
+ * variable store (`<root>.org-variables.json`) starts empty.
  *
  * Environment: E2E_STUB_PORT (default 7071), E2E_STUB_ROOT.
  */
@@ -21,6 +22,8 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(process.env.E2E_STUB_ROOT || path.join(here, '.stub-root', 'drive'))
 
 rmSync(root, { recursive: true, force: true })
+// The organization variable store lives beside the drive, like the settings.
+rmSync(`${root}.org-variables.json`, { force: true })
 mkdirSync(root, { recursive: true })
 copyFileSync(path.join(here, 'support', 'settings.seed.json'), `${root}.settings.json`)
 

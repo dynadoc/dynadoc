@@ -6,7 +6,8 @@ import {
   on,
   emit,
   invokeWatcher,
-  notifyFsMutated
+  notifyFsMutated,
+  RpcError
 } from '../web/rpc'
 import { resolveApiBaseUrl } from '../shared/baseUrl'
 import { CALLBACK_NONCE_PARAM, issueCallbackNonce } from '../web/authCallbackNonce'
@@ -186,6 +187,30 @@ const fetchJson = async (path: string, options: RequestInit = {}) => {
     return { ok: false, ...(payload || {}), status: res.status }
   }
   return payload
+}
+
+// An organization variable channel (docs/organization-variables.md). The
+// scope needs the HTTP status to tell a conflict (409) from a refusal and
+// from no answer at all (status 0), so the answer is { status, body } with
+// the channel's data or the bridge's error body, never a throw.
+const orgVariablesCall = async (
+  channel: string,
+  payload: Record<string, unknown>
+): Promise<{ status: number; body: unknown }> => {
+  try {
+    return { status: 200, body: await invoke(channel, { asResponse: false }, payload) }
+  } catch (error) {
+    if (error instanceof RpcError && error.status) {
+      let body: unknown = null
+      try {
+        body = JSON.parse(error.body || 'null')
+      } catch {
+        body = { error: error.body || error.message }
+      }
+      return { status: error.status, body }
+    }
+    return { status: 0, body: { error: 'offline', message: String(error) } }
+  }
 }
 
 const downloadUrlWithAuth = async (
@@ -1167,6 +1192,21 @@ export const WebDriver = {
       },
       syncDoc: async (payload: any) =>
         syncDocFolderWeb(payload?.cachePath || payload?.cacheRoot || '')
+    },
+    variables: {
+      organization: {
+        list: (payload?: { since?: number }) => orgVariablesCall('vars:org:list', payload || {}),
+        get: (payload: { id: string }) => orgVariablesCall('vars:org:get', payload),
+        set: (payload: {
+          id: string
+          value: Record<string, unknown>
+          baseRevision: number | null
+        }) => orgVariablesCall('vars:org:set', payload),
+        delete: (payload: { id: string; baseRevision: number }) =>
+          orgVariablesCall('vars:org:delete', payload),
+        history: (payload: { id: string; limit?: number }) =>
+          orgVariablesCall('vars:org:history', payload)
+      }
     },
     share: {
       resolve: (payload: any) => {

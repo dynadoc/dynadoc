@@ -15,15 +15,20 @@ import type { DocumentEditorModel } from '../../../../models/Document'
 import EditorHelpers from '../../../../utils/EditorHelpers'
 import { CustomVarExtensionProps } from '../utils/common.utils'
 import { v4 as uuidv4 } from 'uuid'
+import { _ as translate } from 'svelte-i18n'
+import { openAlertModal } from '../../../../stores/alertModal.store'
 import {
+  canStoreGlobal,
   deleteGlobalVariable,
   getGlobalVariables,
   loadGlobalVariables,
   onGlobalVariablesChange,
   setGlobalVariable
-} from './globalVariables'
+} from './scopes/globalScopes'
+import type { StoredVariable, VariableScopeDriver } from './scopes/types'
 import {
   isGlobalVisibility,
+  isOrganizationVisibility,
   plainTextValue,
   reduceRefValues,
   SHEET_REF_LOADING,
@@ -701,6 +706,37 @@ const getVarsForEditor = async (
   const yjsStore = getYjsVarStore(editor)
   if (yjsStore?.all) return yjsStore.all as Record<string, VariableValue>
   return ((await editor?.document?.getVars?.()) || {}) as Record<string, VariableValue>
+}
+
+/**
+ * The Document scope behind the interface every scope shares: the document's
+ * Yjs map while it is collaborative, its vars.json otherwise. A write saves
+ * the document's whole map, as every save of this scope does, so Desktop and
+ * Organization copies left in vars.json are dropped on the way. The
+ * document's own changes reach it through its editor: onChange has nothing
+ * to add.
+ */
+export function documentScope(editor: DocumentEditorModel | null): VariableScopeDriver {
+  const own = (): Record<string, StoredVariable> => {
+    const map = _variableMaps.get(getDocumentId(editor))
+    const vars = map ? serializeVariables(map) : {}
+    return Object.fromEntries(Object.entries(vars).filter(([, value]) => value !== undefined))
+  }
+  const save = (id: string, value: StoredVariable | undefined): void => {
+    const varStorePath = editor?.document?.getVarsFilePath()
+    const map = _variableMaps.get(getDocumentId(editor))
+    if (!varStorePath || !map) return
+    saveVarsToFile(varStorePath, { ...serializeVariables(map), [id]: value })
+  }
+  return {
+    scope: 'document',
+    load: async () => (await getVarsForEditor(editor)) as Record<string, StoredVariable>,
+    list: own,
+    set: (id, value) => save(id, value),
+    remove: (id) => save(id, undefined),
+    onChange: () => () => {},
+    status: () => ({ state: 'local', syncedAt: null, pending: 0, conflicts: 0 })
+  }
 }
 
 export function ensureVariableGroup(nodeId: string, documentEditor: DocumentEditorModel | string) {
@@ -2119,7 +2155,7 @@ export async function loadAndDefineVariables(
   // Load initial variables
 
   activeEditor = resolveDocumentEditor(activeEditor)
-  const vars = await getVarsForEditor(activeEditor)
+  const vars = (await documentScope(activeEditor).load()) as Record<string, VariableValue>
   // const vars = get(_$_activeDocumentVars)
   try {
     if (typeof window !== 'undefined' && (window as any).__DDOC_VARS_DEBUG__ === true) {
@@ -2174,9 +2210,14 @@ export async function loadAndDefineVariables(
 
       // Desktop/Cloud variables saved in vars.json before they had a store of
       // their own move there; then every global variable this document can
-      // see joins its map.
+      // see joins its map. Organization variables were never saved here: a
+      // copy is not written back to the bridge over what it holds.
       for (const [id, value] of Object.entries(migratedVars)) {
-        if (isGlobalVisibility(value?.visibility) && !getGlobalVariables()[id]) {
+        if (
+          isGlobalVisibility(value?.visibility) &&
+          !isOrganizationVisibility(value?.visibility) &&
+          !getGlobalVariables()[id]
+        ) {
           setGlobalVariable(id, value)
         }
       }
@@ -2328,6 +2369,27 @@ export function defineVariable(
     )
   }
 
+  // The Organization scope cannot keep a value now (nobody signed in, the
+  // session not known yet, or a bridge without the scope): the variable
+  // stays where it was, rather than leave the document for a scope that
+  // drops it, and the user is told.
+  if (persist && !canStoreGlobal(normalizedValue)) {
+    const previous = (existingCell?.rawValue as VariableValue)?.visibility
+    normalizedValue.visibility = isOrganizationVisibility(previous) ? 'package' : previous
+    try {
+      const t = get(translate)
+      openAlertModal({
+        title: t('Organization variable'),
+        message: t(
+          'Organization variables are not available right now: @{name} stays where it was.',
+          { values: { name: normalizedValue.name } }
+        )
+      })
+    } catch {
+      // No UI (tests): the value is kept all the same.
+    }
+  }
+
   const nextRow = existingCell?.row ?? 0
   const nextCol = existingCell?.col ?? variableMap.size
 
@@ -2352,17 +2414,17 @@ export function defineVariable(
   notifyValueChange(resolvedEditor, affectedIds.length ? affectedIds : variableId)
 
   if (persist) {
-    if (isGlobalVisibility(normalizedValue.visibility)) {
+    const isGlobal = isGlobalVisibility(normalizedValue.visibility)
+    if (isGlobal) {
       setGlobalVariable(variableId, normalizedValue)
       spreadGlobalVariable(variableId, normalizedValue, documentId)
     } else if (isGlobalVisibility((existingCell?.rawValue as VariableValue)?.visibility)) {
       deleteGlobalVariable(variableId)
       spreadGlobalVariable(variableId, null, documentId)
     }
-    const varStorePath = resolvedEditor?.document?.getVarsFilePath()
-    if (varStorePath) {
-      saveVarsToFile(varStorePath, serializeVariables(variableMap))
-    }
+    const scope = documentScope(resolvedEditor)
+    if (isGlobal) scope.remove(variableId)
+    else scope.set(variableId, normalizedValue as StoredVariable)
   }
 
   onComplete?.()
@@ -2647,7 +2709,7 @@ export function onVariableChange(fn) {
   return () => listeners.delete(fn)
 }
 
-// --- Desktop/Cloud variables -------------------------------------------------
+// --- Desktop, Cloud and Organization variables --------------------------------
 
 // Each open document holds its own copy of the global variables it can see,
 // so formulas, chips and lookups treat them like its own variables.
@@ -2675,7 +2737,8 @@ function spreadGlobalVariable(
   }
 }
 
-// Changes from other windows, or found re-reading the store file.
+// Changes from other windows, found re-reading the store file, or read from
+// the API bridge (Organization).
 onGlobalVariablesChange((changes) => {
   for (const { id, value } of changes) {
     spreadGlobalVariable(id, value as VariableValue | null)

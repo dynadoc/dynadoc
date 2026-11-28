@@ -3,7 +3,7 @@
 // menu is a bottom sheet. Imports only the pure sheet helpers on purpose:
 // tests/smoke/variable-menu.test.mjs compiles this file on its own.
 
-import { isGlobalVisibility } from './sheetVariables.utils'
+import { isGlobalVisibility, isOrganizationVisibility } from './sheetVariables.utils'
 
 export type MenuCandidate = {
   name?: string
@@ -98,15 +98,21 @@ export function splitMatch(
   return { before: text, match: '', after: '' }
 }
 
-export type VariableScope = 'desktop' | 'doc'
+export type VariableScope = 'org' | 'desktop' | 'doc'
 
-/** Desktop: a global variable, seen by every file. Doc: this document's own. */
+/**
+ * Org: shared by the organization, served by the API bridge. Desktop: a
+ * global variable, seen by every file on this computer. Doc: this document's
+ * own.
+ */
 export function variableScope(raw: { visibility?: unknown } | null | undefined): VariableScope {
+  if (isOrganizationVisibility(raw?.visibility)) return 'org'
   return isGlobalVisibility(raw?.visibility) ? 'desktop' : 'doc'
 }
 
 /** The visibility a variable created from the menu is saved with. */
 export function scopeVisibility(scope: VariableScope): string {
+  if (scope === 'org') return 'organization'
   return scope === 'desktop' ? 'desktop' : 'package'
 }
 
