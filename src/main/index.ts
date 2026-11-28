@@ -60,8 +60,18 @@ import * as yauzl from 'yauzl'
 import * as mkdirp from 'mkdirp'
 
 import Utils from './utils/Utils'
-import { officeKindOf } from './search/officeText'
-import { searchOfficeFile } from './search/officeSearch'
+import {
+  applyReplaceInFiles,
+  compilePatternList,
+  matchesAnyPatternForFile,
+  normalizeSearchPath,
+  previewReplaceInFiles,
+  restoreReplaceBackup,
+  searchInFiles,
+  type ApplyReplacePayload,
+  type ReplacePayload,
+  type SearchFsPayload
+} from './search/fileSearch'
 import { loadNodePty } from './utils/optionalNative'
 
 import { spawn, execFile, exec } from 'child_process'
@@ -3158,494 +3168,9 @@ app.whenReady().then(async () => {
     return true
   })
 
-  type SearchFsPayload = {
-    rootPath: string
-    query: string
-    isRegex?: boolean
-    caseSensitive?: boolean
-    wholeWord?: boolean
-    includePattern?: string
-    excludePattern?: string
-    maxResults?: number
-    maxMatchesPerFile?: number
-    restrictToPaths?: string[]
-    replaceText?: string
-  }
-
-  type SearchFsMatch = {
-    line: number
-    column: number
-    length: number
-    preview: string
-    before: string
-    match: string
-    after: string
-    /** Inside a .docx or .xlsx: the package part and where in it (#136). */
-    location?: { part: string; label: string }
-  }
-
-  type SearchFsFileResult = {
-    file: string
-    path: string
-    relativePath: string
-    matches: number
-    items: SearchFsMatch[]
-  }
-
-  const SEARCH_TEXT_EXTENSIONS = new Set([
-    '.txt',
-    '.md',
-    '.markdown',
-    '.json',
-    '.yaml',
-    '.yml',
-    '.toml',
-    '.ini',
-    '.cfg',
-    '.html',
-    '.htm',
-    '.css',
-    '.scss',
-    '.sass',
-    '.less',
-    '.xml',
-    '.csv',
-    '.js',
-    '.jsx',
-    '.ts',
-    '.tsx',
-    '.mjs',
-    '.cjs',
-    '.svelte',
-    '.vue',
-    '.go',
-    '.rs',
-    '.py',
-    '.java',
-    '.kt',
-    '.swift',
-    '.c',
-    '.cc',
-    '.cpp',
-    '.h',
-    '.hpp',
-    '.sql',
-    '.graphql',
-    '.gql',
-    '.sh',
-    '.bash',
-    '.zsh',
-    '.ps1',
-    '.xddoc',
-    '.sddoc'
-  ])
-
-  function normalizeSearchPath(inputPath: string): string {
-    return String(inputPath || '')
-      .trim()
-      .replace(/\\/g, '/')
-  }
-
-  function escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  }
-
-  function parseCsvPatterns(value: string): string[] {
-    return String(value || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-  }
-
-  function globToRegex(glob: string): RegExp {
-    const normalized = normalizeSearchPath(glob)
-    let out = '^'
-    for (let index = 0; index < normalized.length; index += 1) {
-      const char = normalized[index]
-      const next = normalized[index + 1]
-
-      if (char === '*') {
-        if (next === '*') {
-          out += '.*'
-          index += 1
-        } else {
-          out += '[^/]*'
-        }
-        continue
-      }
-
-      if (char === '?') {
-        out += '.'
-        continue
-      }
-
-      out += escapeRegex(char)
-    }
-    out += '$'
-    return new RegExp(out, 'i')
-  }
-
-  function compilePatternList(value: string): RegExp[] {
-    return parseCsvPatterns(value).map(globToRegex)
-  }
-
-  function matchesAnyPatternForFile(
-    filePath: string,
-    rootPath: string,
-    patterns: RegExp[]
-  ): boolean {
-    if (!patterns.length) return false
-    const normalizedFull = normalizeSearchPath(filePath)
-    const normalizedRelative = normalizeSearchPath(path.relative(rootPath, filePath))
-    const baseName = path.basename(filePath)
-    return patterns.some(
-      (pattern) =>
-        pattern.test(normalizedFull) || pattern.test(normalizedRelative) || pattern.test(baseName)
-    )
-  }
-
-  function isLikelyTextFile(filePath: string): boolean {
-    const ext = path.extname(filePath).toLowerCase()
-    if (SEARCH_TEXT_EXTENSIONS.has(ext)) return true
-    return !ext
-  }
-
-  function hasBinaryContent(buffer: Buffer): boolean {
-    const threshold = Math.min(buffer.length, 2048)
-    for (let index = 0; index < threshold; index += 1) {
-      if (buffer[index] === 0) return true
-    }
-    return false
-  }
-
-  function createSearchRegExp(query: string, options: SearchFsPayload): RegExp {
-    const source = options.isRegex ? query : escapeRegex(query)
-    const wrapped = options.wholeWord ? `\\b(?:${source})\\b` : source
-    const flags = options.caseSensitive ? 'g' : 'gi'
-    return new RegExp(wrapped, flags)
-  }
-
-  async function collectSearchFiles(
-    rootPath: string,
-    includeMatchers: RegExp[],
-    excludeMatchers: RegExp[],
-    restrictToPaths: string[] = [],
-    maxFiles: number = 6000
-  ): Promise<string[]> {
-    if (restrictToPaths.length > 0) {
-      return restrictToPaths
-        .filter((item) => item && fs.existsSync(item))
-        .filter(
-          (item) =>
-            !excludeMatchers.length || !matchesAnyPatternForFile(item, rootPath, excludeMatchers)
-        )
-        .filter(
-          (item) =>
-            !includeMatchers.length || matchesAnyPatternForFile(item, rootPath, includeMatchers)
-        )
-    }
-
-    const output: string[] = []
-    const stack: string[] = [rootPath]
-
-    while (stack.length > 0 && output.length < maxFiles) {
-      const currentDir = stack.pop() as string
-      let entries: fs.Dirent[] = []
-      try {
-        entries = await fsp.readdir(currentDir, { withFileTypes: true })
-      } catch {
-        entries = []
-      }
-
-      for (const entry of entries) {
-        const fullPath = path.join(currentDir, entry.name)
-        if (excludeMatchers.length && matchesAnyPatternForFile(fullPath, rootPath, excludeMatchers))
-          continue
-
-        if (entry.isDirectory()) {
-          stack.push(fullPath)
-          continue
-        }
-
-        if (!entry.isFile()) continue
-        if (
-          includeMatchers.length &&
-          !matchesAnyPatternForFile(fullPath, rootPath, includeMatchers)
-        )
-          continue
-
-        output.push(fullPath)
-      }
-    }
-
-    return output
-  }
-
-  function stripHtmlForSearch(html: string): string {
-    return html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<\/p>|<\/div>|<\/li>|<\/h[1-6]>|<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&#x[0-9a-f]+;/gi, ' ')
-      .replace(/&[a-z]+;/gi, ' ')
-  }
-
-  async function searchInFiles(payload: SearchFsPayload) {
-    const rootPath = String(payload?.rootPath || '').trim()
-    const query = String(payload?.query || '')
-    if (!rootPath || !query) {
-      return { ok: true, files: [], totalMatches: 0, scannedFiles: 0, truncated: false }
-    }
-    if (!fs.existsSync(rootPath)) {
-      return {
-        ok: false,
-        files: [],
-        totalMatches: 0,
-        scannedFiles: 0,
-        truncated: false,
-        error: 'Search root does not exist'
-      }
-    }
-
-    const includeMatchers = compilePatternList(payload.includePattern || '')
-    const excludeMatchers = compilePatternList(payload.excludePattern || '')
-    const maxResults = Math.max(1, Number(payload.maxResults || 2000))
-    const maxMatchesPerFile = Math.max(1, Number(payload.maxMatchesPerFile || 200))
-    const restrictToPaths = Array.isArray(payload.restrictToPaths) ? payload.restrictToPaths : []
-
-    let matcher: RegExp
-    try {
-      matcher = createSearchRegExp(query, payload)
-    } catch {
-      return {
-        ok: false,
-        files: [],
-        totalMatches: 0,
-        scannedFiles: 0,
-        truncated: false,
-        error: 'Invalid regular expression'
-      }
-    }
-
-    const files = await collectSearchFiles(
-      rootPath,
-      includeMatchers,
-      excludeMatchers,
-      restrictToPaths
-    )
-    const grouped: SearchFsFileResult[] = []
-    const skippedFiles: Array<{ path: string; reason: string }> = []
-    let totalMatches = 0
-    let truncated = false
-    // Files actually read: a file skipped by type, size or content is not "scanned".
-    let scannedFiles = 0
-
-    for (const filePath of files) {
-      // Word and Excel packages: the text of every part, with a location (#136).
-      if (officeKindOf(filePath)) {
-        let bytes: Buffer
-        try {
-          bytes = await fsp.readFile(filePath)
-        } catch (err) {
-          console.warn('[searchInFiles] skipping file:', filePath, err)
-          continue
-        }
-        if (bytes.byteLength > 10 * 1024 * 1024) {
-          skippedFiles.push({ path: filePath, reason: 'larger than 10 MB' })
-          continue
-        }
-        const limit = Math.min(maxMatchesPerFile, maxResults - totalMatches)
-        const office = searchOfficeFile(filePath, bytes, matcher, limit)
-        if (office.skipped) {
-          console.warn('[searchInFiles] skipping package:', filePath, office.skipped)
-          skippedFiles.push({ path: filePath, reason: office.skipped })
-          continue
-        }
-        scannedFiles += 1
-        totalMatches += office.matches.length
-        if (office.truncated) truncated = true
-        if (office.matches.length > 0) {
-          grouped.push({
-            file: path.basename(filePath),
-            path: filePath,
-            relativePath: path.relative(rootPath, filePath),
-            matches: office.matches.length,
-            items: office.matches
-          })
-        }
-        if (truncated || totalMatches >= maxResults) {
-          truncated = true
-          break
-        }
-        continue
-      }
-
-      if (!isLikelyTextFile(filePath)) continue
-
-      let buffer: Buffer
-      try {
-        buffer = await fsp.readFile(filePath)
-      } catch (err) {
-        console.warn('[searchInFiles] skipping file:', filePath, err)
-        continue
-      }
-      // Skip files > 10 MB to avoid blocking the event loop
-      if (buffer.byteLength > 10 * 1024 * 1024) continue
-      if (hasBinaryContent(buffer)) continue
-      scannedFiles += 1
-
-      const rawContent = buffer.toString('utf-8')
-      const lowerPath = filePath.toLowerCase()
-      const isHtml = lowerPath.endsWith('.html') || lowerPath.endsWith('.sddoc')
-      const content = isHtml ? stripHtmlForSearch(rawContent) : rawContent
-      const lines = content.split(/\r?\n/)
-      const items: SearchFsMatch[] = []
-
-      for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-        const lineText = lines[lineIndex]
-        matcher.lastIndex = 0
-        let found: RegExpExecArray | null = null
-
-        while ((found = matcher.exec(lineText)) !== null) {
-          const matched = found[0] || ''
-          const start = found.index
-          const end = start + matched.length
-
-          items.push({
-            line: lineIndex + 1,
-            column: start + 1,
-            length: Math.max(1, matched.length),
-            preview: lineText.trim(),
-            before: lineText.slice(0, start),
-            match: matched || lineText.slice(start, end),
-            after: lineText.slice(end)
-          })
-          totalMatches += 1
-
-          if (matched.length === 0) {
-            matcher.lastIndex += 1
-          }
-
-          if (items.length >= maxMatchesPerFile || totalMatches >= maxResults) {
-            truncated = true
-            break
-          }
-        }
-
-        if (truncated) break
-      }
-
-      if (items.length > 0) {
-        grouped.push({
-          file: path.basename(filePath),
-          path: filePath,
-          relativePath: path.relative(rootPath, filePath),
-          matches: items.length,
-          items
-        })
-      }
-
-      if (truncated) break
-    }
-
-    return {
-      ok: true,
-      files: grouped,
-      totalMatches,
-      scannedFiles,
-      skippedFiles,
-      truncated
-    }
-  }
-
-  async function replaceInFiles(payload: SearchFsPayload & { replaceText: string }) {
-    const rootPath = String(payload?.rootPath || '').trim()
-    const query = String(payload?.query || '')
-    const replaceText = String(payload?.replaceText ?? '')
-
-    if (!rootPath || !query) {
-      return { ok: true, changedFiles: 0, replacements: 0, files: [] as string[] }
-    }
-    if (!fs.existsSync(rootPath)) {
-      return {
-        ok: false,
-        changedFiles: 0,
-        replacements: 0,
-        files: [] as string[],
-        error: 'Search root does not exist'
-      }
-    }
-
-    let matcher: RegExp
-    try {
-      matcher = createSearchRegExp(query, payload)
-    } catch {
-      return {
-        ok: false,
-        changedFiles: 0,
-        replacements: 0,
-        files: [] as string[],
-        error: 'Invalid regular expression'
-      }
-    }
-
-    const includeMatchers = compilePatternList(payload.includePattern || '')
-    const excludeMatchers = compilePatternList(payload.excludePattern || '')
-    const restrictToPaths = Array.isArray(payload.restrictToPaths) ? payload.restrictToPaths : []
-    const files = await collectSearchFiles(
-      rootPath,
-      includeMatchers,
-      excludeMatchers,
-      restrictToPaths
-    )
-
-    let changedFiles = 0
-    let replacements = 0
-    const changedPaths: string[] = []
-
-    for (const filePath of files) {
-      if (!isLikelyTextFile(filePath)) continue
-
-      let buffer: Buffer
-      try {
-        buffer = await fsp.readFile(filePath)
-      } catch (err) {
-        console.warn('[searchInFiles] skipping file:', filePath, err)
-        continue
-      }
-      if (hasBinaryContent(buffer)) continue
-
-      const content = buffer.toString('utf-8')
-      matcher.lastIndex = 0
-
-      let localCount = 0
-      const updated = content.replace(matcher, () => {
-        localCount += 1
-        return replaceText
-      })
-
-      if (localCount === 0) continue
-
-      try {
-        await fsp.writeFile(filePath, updated, 'utf-8')
-      } catch {
-        continue
-      }
-
-      changedFiles += 1
-      replacements += localCount
-      changedPaths.push(filePath)
-    }
-
-    return { ok: true, changedFiles, replacements, files: changedPaths }
-  }
+  // Multi-file search and replace: src/main/search/fileSearch.ts, shared with
+  // the stub bridge. Replace is preview, then apply with a backup (#137).
+  const searchReplaceBackupRoot = () => getCacheDirPath('search-replace-backups')
 
   ipcMain.handle('search:files', async (_event, payload: SearchFsPayload) => {
     try {
@@ -3663,17 +3188,49 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle(
-    'search:replace-in-files',
-    async (_event, payload: SearchFsPayload & { replaceText: string }) => {
-      try {
-        return await replaceInFiles(payload || ({} as SearchFsPayload & { replaceText: string }))
-      } catch (error) {
-        console.error('search:replace-in-files error', error)
-        return { ok: false, changedFiles: 0, replacements: 0, files: [], error: 'Replace failed' }
+  ipcMain.handle('search:replace-preview', async (_event, payload: ReplacePayload) => {
+    try {
+      return await previewReplaceInFiles(payload || ({} as ReplacePayload))
+    } catch (error) {
+      console.error('search:replace-preview error', error)
+      return {
+        ok: false,
+        files: [],
+        replacements: 0,
+        skipped: 0,
+        changedFiles: 0,
+        error: 'Preview failed'
       }
     }
-  )
+  })
+
+  ipcMain.handle('search:replace-apply', async (_event, payload: ApplyReplacePayload) => {
+    try {
+      return await applyReplaceInFiles(
+        payload || ({} as ApplyReplacePayload),
+        searchReplaceBackupRoot()
+      )
+    } catch (error) {
+      console.error('search:replace-apply error', error)
+      return {
+        ok: false,
+        changedFiles: 0,
+        replacements: 0,
+        files: [],
+        skippedFiles: [],
+        error: 'Replace failed'
+      }
+    }
+  })
+
+  ipcMain.handle('search:replace-restore', async (_event, payload: { backupId: string }) => {
+    try {
+      return await restoreReplaceBackup(String(payload?.backupId || ''), searchReplaceBackupRoot())
+    } catch (error) {
+      console.error('search:replace-restore error', error)
+      return { ok: false, restored: [], skippedFiles: [], error: 'Restore failed' }
+    }
+  })
 
   type SearchFileNamesPayload = {
     rootPath: string

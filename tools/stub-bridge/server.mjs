@@ -47,6 +47,7 @@ import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(process.env.DYNADOC_STUB_ROOT || path.join(os.homedir(), '.dynadoc-stub'))
 const PORT = Number(process.env.DYNADOC_STUB_PORT || 7070)
@@ -582,6 +583,112 @@ const channels = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Search and replace across files
+// ---------------------------------------------------------------------------
+
+/**
+ * The search channels run src/main/search, the module the desktop main
+ * process uses, over the drive. It is TypeScript, so it is bundled with
+ * esbuild (a dev dependency, like the stub itself) on first use.
+ *
+ * This is the client's own search, not a copy of the bridge's: the bridge has
+ * its own implementation, which is not in this repository. What the stub
+ * guarantees is that the web build calls the same contract as the desktop
+ * build, and that the Search panel can be exercised end to end against it.
+ * Paths cross the wire in the drive's form and are mapped to the stub root on
+ * the way in and back on the way out. Backups and the replace log go to
+ * `cache/search-replace-backups`.
+ */
+/* eslint-disable @typescript-eslint/explicit-function-return-type --
+   plain .mjs: there is no type annotation syntax to satisfy this rule here. */
+let searchModule = null
+
+async function loadSearchModule() {
+  if (searchModule) return searchModule
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const entry = path.resolve(here, '..', '..', 'src', 'main', 'search', 'index.ts')
+  const esbuild = await import('esbuild')
+  const out = path.join(os.tmpdir(), `dynadoc-stub-search-${process.pid}.mjs`)
+  await esbuild.build({
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    outfile: out,
+    logLevel: 'silent'
+  })
+  searchModule = await import(pathToFileURL(out).href)
+  return searchModule
+}
+
+const SEARCH_BACKUP_ROOT = () => path.join(ROOT, 'cache', 'search-replace-backups')
+
+function remotePathOf(local) {
+  return path.relative(ROOT, local).split(path.sep).join('/')
+}
+
+function searchPayload(args) {
+  const payload = args[0] && typeof args[0] === 'object' ? { ...args[0] } : {}
+  if (typeof payload.rootPath === 'string' && payload.rootPath) {
+    payload.rootPath = localPath(payload.rootPath)
+  }
+  if (Array.isArray(payload.restrictToPaths)) {
+    payload.restrictToPaths = payload.restrictToPaths.map((item) => localPath(item))
+  }
+  if (Array.isArray(payload.files)) {
+    payload.files = payload.files.map((file) => ({ ...file, path: localPath(file?.path) }))
+  }
+  return payload
+}
+
+function remoteFiles(files) {
+  return (files || []).map((file) => ({ ...file, path: remotePathOf(file.path) }))
+}
+
+Object.assign(channels, {
+  'search:files': async (args) => {
+    const { searchInFiles } = await loadSearchModule()
+    const result = await searchInFiles(searchPayload(args))
+    return {
+      ...result,
+      files: remoteFiles(result.files),
+      skippedFiles: remoteFiles(result.skippedFiles)
+    }
+  },
+
+  'search:replace-preview': async (args) => {
+    const { previewReplaceInFiles } = await loadSearchModule()
+    const result = await previewReplaceInFiles(searchPayload(args))
+    return { ...result, files: remoteFiles(result.files) }
+  },
+
+  'search:replace-apply': async (args) => {
+    const { applyReplaceInFiles } = await loadSearchModule()
+    const result = await applyReplaceInFiles(searchPayload(args), SEARCH_BACKUP_ROOT())
+    return {
+      ...result,
+      files: (result.files || []).map(remotePathOf),
+      skippedFiles: remoteFiles(result.skippedFiles),
+      ...(result.backupDir ? { backupDir: remotePathOf(result.backupDir) } : {}),
+      ...(result.logPath ? { logPath: remotePathOf(result.logPath) } : {})
+    }
+  },
+
+  'search:replace-restore': async (args) => {
+    const { restoreReplaceBackup } = await loadSearchModule()
+    const payload = args[0] && typeof args[0] === 'object' ? args[0] : {}
+    const result = await restoreReplaceBackup(String(payload.backupId || ''), SEARCH_BACKUP_ROOT())
+    return {
+      ...result,
+      restored: (result.restored || []).map(remotePathOf),
+      skippedFiles: remoteFiles(result.skippedFiles)
+    }
+  }
+})
+
+/* eslint-enable @typescript-eslint/explicit-function-return-type */
+
 // Aliases, exactly as the bridge groups them in one case each.
 channels['read-file'] = channels['fs:readFile']
 channels['read-file-content'] = channels['fs:readFile']
@@ -640,8 +747,9 @@ function unsupportedChannel(channel) {
   }
   return refusal(
     `channel "${channel}" is not implemented. The stub answers the filesystem channels ` +
-      `against ${ROOT}, the boot path constants, the preference store and the two drive ` +
-      'channels that are the filesystem under another name. Everything else needs the ' +
+      `against ${ROOT}, the boot path constants, the preference store, the two drive ` +
+      'channels that are the filesystem under another name and the search channels. ' +
+      'Everything else needs the ' +
       'full Dynadoc bridge, which is not part of the open core client. The stub refuses ' +
       'rather than return an empty or successful answer it cannot stand behind. ' +
       'See tools/stub-bridge/README.md.'

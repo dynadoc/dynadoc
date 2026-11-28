@@ -252,7 +252,12 @@ const api: AppPlatformAPI & Record<string, any> = {
   deleteFile: (filePath: string) => invoke('delete-file', filePath),
 
   searchFiles: (payload: any) => invoke('search:files', payload),
-  replaceInFiles: (payload: any) => invoke('search:replace-in-files', payload),
+  // Replace across files: preview, then apply with a backup (#137). A bridge
+  // without these channels refuses them and the Search panel says so, rather
+  // than replacing in the raw HTML as the old single-step channel did.
+  previewReplaceInFiles: (payload: unknown) => invoke('search:replace-preview', payload),
+  applyReplaceInFiles: (payload: unknown) => invoke('search:replace-apply', payload),
+  restoreReplaceBackup: (payload: unknown) => invoke('search:replace-restore', payload),
   searchFileNames: (payload: any) => invoke('search:file-names', payload),
   translateText: (payload: any) => invoke('translate:text', payload),
 

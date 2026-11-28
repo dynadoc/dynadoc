@@ -123,7 +123,8 @@ UI preferences are kept in `<stub root>.settings.json`, deliberately beside
 the drive rather than inside it, so a file belonging to the stub never shows
 up as one of your documents.
 
-It needs nothing but Node. No dependencies, no build step, no Go toolchain.
+It needs nothing but Node: no dependencies, no build step, no Go toolchain,
+except for the search channels (see below), which bundle a module with esbuild.
 
 ## It never pretends
 
@@ -150,19 +151,19 @@ oversight to tidy up.
 
 All fourteen filesystem channels, against real files:
 
-| Channel                        | Behaviour                                                         |
-| ------------------------------ | ----------------------------------------------------------------- |
-| `fs:readFile`                  | reads the file and returns it as a string                          |
-| `fs:writeFile`, `writeFileSync`| writes, creating parent directories                                |
-| `fs:existsSync`                | `true` or `false`                                                  |
-| `fs:statSync`, `fs:lstatSync`  | one drive entry                                                    |
-| `fs:readdir`, `fs:readdirSync` | a list of drive entries                                            |
-| `fs:mkdirSync`                 | creates the directory and its parents                              |
-| `fs:open`                      | echoes the path back, which is all the bridge does over HTTP       |
-| `fs:unlinkSync`                | deletes                                                            |
-| `fs:move`                      | renames, and answers with `from` and `to` at the top level         |
-| `fs:copy`                      | copies, directories included                                       |
-| `fs:serveAsset`                | streams the file with a content type, for the asset loader         |
+| Channel                         | Behaviour                                                    |
+| ------------------------------- | ------------------------------------------------------------ |
+| `fs:readFile`                   | reads the file and returns it as a string                    |
+| `fs:writeFile`, `writeFileSync` | writes, creating parent directories                          |
+| `fs:existsSync`                 | `true` or `false`                                            |
+| `fs:statSync`, `fs:lstatSync`   | one drive entry                                              |
+| `fs:readdir`, `fs:readdirSync`  | a list of drive entries                                      |
+| `fs:mkdirSync`                  | creates the directory and its parents                        |
+| `fs:open`                       | echoes the path back, which is all the bridge does over HTTP |
+| `fs:unlinkSync`                 | deletes                                                      |
+| `fs:move`                       | renames, and answers with `from` and `to` at the top level   |
+| `fs:copy`                       | copies, directories included                                 |
+| `fs:serveAsset`                 | streams the file with a content type, for the asset loader   |
 
 Plus the constants the client asks for at boot, which are paths and nothing
 else: `os:homedir`, `os:tmpdir`, `get-storage-dir`, `get-temp-dir`,
@@ -180,6 +181,24 @@ Plus three more that are local despite their names:
   `drive:get-root` is the constant `"/"`. Only the argument shape differs: a
   `{ path }` map instead of a bare string. Answering `fs:readdir` while
   refusing its twin would have been the arbitrary choice.
+
+And the search channels of the Search sidebar, which work on the drive like
+the filesystem channels do:
+
+| Channel                  | Behaviour                                                      |
+| ------------------------ | -------------------------------------------------------------- |
+| `search:files`           | searches the visible text of the files under a folder          |
+| `search:replace-preview` | lists every change a replace would make, writes nothing        |
+| `search:replace-apply`   | writes the previewed changes, after a backup copy of each file |
+| `search:replace-restore` | puts the backup copies of one replace back                     |
+
+They run `src/main/search`, the module the desktop main process uses, bundled
+with esbuild (a dev dependency) on first use, so they need `npm ci` to have
+run, unlike the rest of the stub. This is the client's own implementation,
+not a copy of the bridge's, which is not in this repository: it gives the web
+build the same contract as the desktop build and lets the e2e suite drive the
+Search sidebar. Paths stay inside the drive; backups and the replace log go to
+`cache/search-replace-backups`.
 
 Two quirks worth knowing before you write code against the filesystem channels,
 both mirrored from the real bridge:
@@ -222,7 +241,7 @@ Every other `auth:` channel refuses.
 A bridge that works is the easy case. The failures that have actually cost
 documents are a bridge that refuses a call, and a bridge that answers a wrong
 negative, and neither is reachable by running the stub normally. The stub can
-produce both, by rule, so that a change can be *shown* to survive them.
+produce both, by rule, so that a change can be _shown_ to survive them.
 
 ```sh
 # the bridge refuses one read, the way it did in production
