@@ -29,7 +29,12 @@ export type ImportFidelityEntry = {
   notes: string[]
 }
 
+/** Bumped when the shape changes, so a stored report or one written by
+ * another converter (the DocxToHtml binary for #142) can be read safely. */
+export const IMPORT_FIDELITY_REPORT_VERSION = 1
+
 export type ImportFidelityReport = {
+  version: typeof IMPORT_FIDELITY_REPORT_VERSION
   source: 'xlsx' | 'docx'
   fileName: string
   /** In the order of KIND_ORDER, only the kinds that were met. */
@@ -85,7 +90,7 @@ export function createImportFidelityCollector(
         const entry = byKind.get(kind) as ImportFidelityEntry
         return { ...entry, notes: [...entry.notes] }
       })
-      return { source, fileName, entries }
+      return { version: IMPORT_FIDELITY_REPORT_VERSION, source, fileName, entries }
     }
   }
 }
