@@ -62,7 +62,11 @@ export interface OrgBridge {
   history(payload: { id: string; limit?: number }): Promise<BridgeResponse>
 }
 
-type Pending = { value: StoredVariable | null; baseRevision: number | null }
+/**
+ * A write not accepted yet. `org` is the organization it was made in (null:
+ * before the first list answered), so it is never sent to another one.
+ */
+type Pending = { value: StoredVariable | null; baseRevision: number | null; org: string | null }
 
 /** A write the bridge refused: `theirs` is what it holds now (null: deleted). */
 export type OrgConflict = {
@@ -83,9 +87,10 @@ export type OrgCacheSnapshot = {
   conflicts: Record<string, OrgConflict>
 }
 
+/** The offline copy, one per identity (user and organization of the session). */
 export interface OrgCache {
-  read(): OrgCacheSnapshot | null
-  write(snapshot: OrgCacheSnapshot | null): void
+  read(identity: string): OrgCacheSnapshot | null
+  write(identity: string, snapshot: OrgCacheSnapshot): void
 }
 
 export type OrganizationScopeOptions = {
@@ -121,8 +126,13 @@ export interface OrganizationScope extends VariableScopeDriver {
   resolveConflict(id: string, keep: 'mine' | 'theirs'): Promise<void>
   onStatus(fn: (status: OrgStatus) => void): () => void
   status(): OrgStatus
-  /** Forgets everything, cache included (another account signed in). */
-  reset(): void
+  /**
+   * Who is signed in, and in which organization: the scope shows, sends and
+   * caches only that identity's copy. `null`: nobody is signed in. Until it is
+   * first called nothing is shown or sent. A token renewal is not a change of
+   * identity.
+   */
+  setIdentity(identity: string | null): void
 }
 
 /** JSON with object keys sorted, so two equal values compare equal whatever their key order. */
@@ -221,14 +231,22 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   const clearTimer =
     options.clearTimer || ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
 
+  // undefined: not known yet; null: nobody signed in.
+  let identity: string | null | undefined = undefined
+  // Bumped on every change of identity: an answer to a call made for the
+  // previous identity is dropped.
+  let epoch = 0
+
   let org: string | null = null
   let records = new Map<string, OrgVariableRecord>()
   let pending = new Map<string, Pending>()
   let conflicts = new Map<string, OrgConflict>()
+  // Ids this window has settled (sent, refused, resolved) since it read the
+  // cache: another window's copy of them is not merged back in.
+  let settled = new Set<string>()
   let revision = 0
   let syncedAt: number | null = null
   let hasFullList = false
-  let hydrated = false
   let unavailable = false
   let offline = false
   let reason: ScopeStatus['reason'] | undefined
@@ -238,28 +256,56 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   let refreshing: Promise<void> | null = null
   let flushing: Promise<void> | null = null
   let flushTimer: unknown = null
+  let waitIdentity: (() => void) | null = null
 
   const changeHandlers = new Set<(changes: ScopeChange[]) => void>()
   const statusHandlers = new Set<(status: OrgStatus) => void>()
 
-  function hydrate(): void {
-    if (hydrated) return
-    hydrated = true
-    let snapshot: OrgCacheSnapshot | null = null
+  function readCache(key: string): OrgCacheSnapshot | null {
     try {
-      snapshot = options.cache?.read() || null
+      return options.cache?.read(key) || null
     } catch {
-      snapshot = null
+      return null
     }
+  }
+
+  const toPending = (entry: unknown): Pending | null => {
+    if (!isObject(entry)) return null
+    const base = entry.baseRevision
+    if (base !== null && !Number.isInteger(base)) return null
+    return {
+      value: isObject(entry.value) ? (entry.value as StoredVariable) : null,
+      baseRevision: base as number | null,
+      org: typeof entry.org === 'string' ? entry.org : null
+    }
+  }
+
+  // Loads the copy of the current identity, or nothing.
+  function loadState(): void {
+    org = null
+    records = new Map()
+    pending = new Map()
+    conflicts = new Map()
+    settled = new Set()
+    revision = 0
+    syncedAt = null
+    hasFullList = false
+    unavailable = false
+    offline = false
+    reason = undefined
+    lastWriteError = null
+    listCache = null
+    loading = null
+    if (!identity) return
+    const snapshot = readCache(identity)
     if (!snapshot) return
     for (const raw of Object.values(snapshot.records || {})) {
       const record = toRecord(raw)
       if (record) records.set(record.id, record)
     }
     for (const [id, entry] of Object.entries(snapshot.pending || {})) {
-      if (entry && (entry.baseRevision === null || Number.isInteger(entry.baseRevision))) {
-        pending.set(id, entry)
-      }
+      const parsed = toPending(entry)
+      if (parsed) pending.set(id, parsed)
     }
     for (const [id, entry] of Object.entries(snapshot.conflicts || {})) {
       if (entry) conflicts.set(id, { id, mine: entry.mine ?? null, theirs: toRecord(entry.theirs) })
@@ -268,17 +314,26 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     revision = Number.isInteger(snapshot.revision) ? snapshot.revision : 0
     syncedAt = typeof snapshot.syncedAt === 'number' ? snapshot.syncedAt : null
     hasFullList = syncedAt !== null
-    listCache = null
   }
 
+  // Writes this window's copy. Pending writes another window made in the
+  // meantime are kept, unless this window settled the same id since.
   function persist(): void {
+    if (!identity || !options.cache) return
     try {
-      options.cache?.write({
+      const stored = readCache(identity)
+      const queue: Record<string, Pending> = {}
+      for (const [id, entry] of Object.entries(stored?.pending || {})) {
+        const parsed = toPending(entry)
+        if (parsed && !pending.has(id) && !settled.has(id)) queue[id] = parsed
+      }
+      for (const [id, entry] of pending) queue[id] = entry
+      options.cache.write(identity, {
         org,
         revision,
         syncedAt,
         records: Object.fromEntries(records),
-        pending: Object.fromEntries(pending),
+        pending: queue,
         conflicts: Object.fromEntries(conflicts)
       })
     } catch {
@@ -300,6 +355,8 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       conflicts: conflicts.size,
       lastWriteError
     }
+    if (identity === undefined) return { ...base, state: 'loading' }
+    if (identity === null) return { ...base, state: 'unavailable', reason: 'unauthorized' }
     if (unavailable) return { ...base, state: 'unavailable', ...(reason ? { reason } : {}) }
     if (offline) return { ...base, state: 'offline' }
     if (reason) return { ...base, state: syncedAt ? 'stale' : 'loading', reason }
@@ -331,37 +388,12 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     })
   }
 
-  // Updates records and reports the ids whose value, as this client shows
-  // it, changed.
-  function applyList(
-    next: OrgVariableRecord[],
-    deleted: { id: string; revision: number }[],
-    full: boolean
-  ): ScopeChange[] {
+  // Runs `change` and reports the ids whose value, as this client shows it,
+  // changed.
+  function tracked(ids: Iterable<string>, change: () => void): ScopeChange[] {
     const before = new Map<string, string>()
-    const remember = (id: string): void => {
-      if (!before.has(id)) before.set(id, stableJson(effective(id)))
-    }
-    if (full) {
-      const ids = new Set(next.map((record) => record.id))
-      for (const id of [...records.keys()]) {
-        if (ids.has(id)) continue
-        remember(id)
-        records.delete(id)
-      }
-    }
-    for (const { id, revision: at } of deleted) {
-      const current = records.get(id)
-      if (current && current.revision > at) continue
-      remember(id)
-      records.delete(id)
-    }
-    for (const record of next) {
-      const current = records.get(record.id)
-      if (current && current.revision > record.revision) continue
-      remember(record.id)
-      records.set(record.id, record)
-    }
+    for (const id of ids) before.set(id, stableJson(effective(id)))
+    change()
     listCache = null
     const changes: ScopeChange[] = []
     for (const [id, was] of before) {
@@ -371,21 +403,56 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     return changes
   }
 
-  // Another organization than the cached one: nothing of it applies here.
-  function forgetOrganization(): ScopeChange[] {
-    const gone = Object.keys(listValues()).map((id) => ({ id, value: null }))
-    records = new Map()
-    pending = new Map()
-    conflicts = new Map()
-    revision = 0
-    hasFullList = false
-    listCache = null
-    return gone
+  function applyList(
+    next: OrgVariableRecord[],
+    deleted: { id: string; revision: number }[],
+    full: boolean
+  ): ScopeChange[] {
+    const ids = new Set([...next.map((r) => r.id), ...deleted.map((d) => d.id)])
+    if (full) records.forEach((_, id) => ids.add(id))
+    return tracked(ids, () => {
+      if (full) {
+        const listed = new Set(next.map((record) => record.id))
+        for (const id of [...records.keys()]) if (!listed.has(id)) records.delete(id)
+      }
+      for (const { id, revision: at } of deleted) {
+        const current = records.get(id)
+        if (current && current.revision > at) continue
+        records.delete(id)
+        const conflict = conflicts.get(id)
+        if (conflict) conflict.theirs = null
+      }
+      for (const record of next) {
+        const current = records.get(record.id)
+        if (current && current.revision > record.revision) continue
+        records.set(record.id, record)
+        // An open conflict is decided against what the bridge holds now.
+        const conflict = conflicts.get(record.id)
+        if (conflict) conflict.theirs = record
+      }
+    })
+  }
+
+  // The bridge's copy of another organization, or of an organization this
+  // user left: nothing of it applies any more. Pending writes made in another
+  // organization stay queued (and are never sent here).
+  function forgetRecords(): ScopeChange[] {
+    const ids = new Set([...records.keys(), ...conflicts.keys()])
+    return tracked(ids, () => {
+      records = new Map()
+      conflicts = new Map()
+      revision = 0
+      hasFullList = false
+    })
   }
 
   async function doRefresh(): Promise<void> {
-    hydrate()
+    const at = epoch
     const bridge = options.bridge()
+    if (!identity) {
+      notifyStatus()
+      return
+    }
     if (!bridge) {
       unavailable = true
       notifyStatus()
@@ -393,6 +460,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     }
     let since = hasFullList ? revision : undefined
     let response = await call(() => bridge.list(since === undefined ? {} : { since }))
+    if (at !== epoch) return
     let dropped: ScopeChange[] = []
     if (
       response.status === 200 &&
@@ -400,9 +468,10 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       org !== null &&
       response.body.org !== org
     ) {
-      dropped = forgetOrganization()
+      dropped = forgetRecords()
       since = undefined
       response = await call(() => bridge.list({}))
+      if (at !== epoch) return
     }
     if (response.status === 200 && Array.isArray(response.body?.variables)) {
       const list = (response.body.variables as unknown[])
@@ -434,8 +503,14 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     else if (response.status === 401) {
       unavailable = true
       reason = 'unauthorized'
-    } else if (response.status === 403) reason = 'unauthorized'
-    else if (response.status === 0 || response.status >= 500) offline = true
+    } else if (response.status === 403) {
+      // Not a member (any more): its copy is not this user's to keep.
+      emit(forgetRecords())
+      syncedAt = null
+      unavailable = true
+      reason = 'unauthorized'
+      persist()
+    } else if (response.status === 0 || response.status >= 500) offline = true
     else reason = 'error'
     notifyStatus()
   }
@@ -457,22 +532,33 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     }, flushDelayMs)
   }
 
+  // A write goes only to the organization it was made in; one made before
+  // the first list belongs to the first organization that answers.
+  const sendable = (entry: Pending): boolean =>
+    org !== null && (entry.org === null || entry.org === org)
+
+  function settle(id: string): void {
+    pending.delete(id)
+    settled.add(id)
+  }
+
   // One write. Returns false when the bridge cannot take writes now, so the
   // loop stops and the rest waits for the next refresh.
   async function send(bridge: OrgBridge, id: string, entry: Pending): Promise<boolean> {
     if (entry.value === null && entry.baseRevision === null) {
       // Created and deleted before the bridge heard of it.
-      pending.delete(id)
+      settle(id)
       return true
     }
+    const at = epoch
     const response = await call(() =>
       entry.value === null
         ? bridge.delete({ id, baseRevision: entry.baseRevision as number })
-        : bridge.set({ id, value: toOrgValue(entry.value), baseRevision: entry.baseRevision })
+        : bridge.set({ id, value: entry.value, baseRevision: entry.baseRevision })
     )
+    if (at !== epoch) return false
     const unchanged = pending.get(id) === entry
-    const accepted =
-      response.status === 200 || (entry.value === null && response.status === 404 && !offline)
+    const accepted = response.status === 200 || (entry.value === null && response.status === 404)
     if (accepted) {
       let written: number | null = null
       if (entry.value === null) {
@@ -485,7 +571,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
           written = record.revision
         }
       }
-      if (unchanged) pending.delete(id)
+      if (unchanged) settle(id)
       else if (pending.has(id)) pending.get(id)!.baseRevision = written
       lastWriteError = null
       listCache = null
@@ -496,7 +582,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       if (theirs) records.set(id, theirs)
       else records.delete(id)
       const mine = pending.get(id)?.value ?? entry.value
-      pending.delete(id)
+      settle(id)
       listCache = null
       // Both sides made the same change: nothing to decide.
       if (stableJson(mine) !== stableJson(theirs?.value ?? null)) {
@@ -513,7 +599,8 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       return false
     }
     // Refused for good (no permission, invalid value, a name already taken):
-    // the local change is dropped and the bridge's value shown again.
+    // the local change is dropped and the bridge's value shown again. A
+    // refused deletion shows nothing again: the variable has moved on here.
     lastWriteError = {
       id,
       status: response.status,
@@ -521,19 +608,20 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       message: errorMessage(response)
     }
     if (unchanged) {
-      pending.delete(id)
+      settle(id)
       listCache = null
-      emit([{ id, value: effective(id) }])
+      if (entry.value !== null) emit([{ id, value: effective(id) }])
     }
     return true
   }
 
   async function doFlush(): Promise<void> {
     const bridge = options.bridge()
-    if (!bridge) return
-    while (pending.size) {
-      const [id, entry] = pending.entries().next().value as [string, Pending]
-      const reached = await send(bridge, id, entry)
+    if (!bridge || !identity) return
+    for (;;) {
+      const next = [...pending].find(([, entry]) => sendable(entry))
+      if (!next) break
+      const reached = await send(bridge, next[0], next[1])
       persist()
       if (!reached) break
     }
@@ -545,7 +633,6 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       clearTimer(flushTimer)
       flushTimer = null
     }
-    hydrate()
     // A write queued while one is in flight goes out right after it.
     while (flushing) await flushing
     if (!pending.size) return
@@ -556,17 +643,19 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   }
 
   function queue(id: string, value: StoredVariable | null): void {
-    hydrate()
+    if (!identity) return
     if (stableJson(effective(id)) === stableJson(value)) return
     const conflict = conflicts.get(id)
     if (conflict) {
       // Still to be decided: the new local value is what "keep mine" keeps.
       conflict.mine = value
     } else if (pending.has(id)) {
-      pending.set(id, { value, baseRevision: pending.get(id)!.baseRevision })
+      const entry = pending.get(id)!
+      pending.set(id, { value, baseRevision: entry.baseRevision, org: entry.org })
     } else {
-      pending.set(id, { value, baseRevision: records.get(id)?.revision ?? null })
+      pending.set(id, { value, baseRevision: records.get(id)?.revision ?? null, org })
     }
+    settled.delete(id)
     listCache = null
     persist()
     notifyStatus()
@@ -574,26 +663,55 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   }
 
   function listValues(): Record<string, StoredVariable> {
-    hydrate()
     if (listCache) return listCache
-    const ids = new Set([...records.keys(), ...pending.keys(), ...conflicts.keys()])
     const out: Record<string, StoredVariable> = {}
-    for (const id of ids) {
-      const value = effective(id)
-      if (value) out[id] = value
+    if (identity) {
+      const ids = new Set([...records.keys(), ...pending.keys(), ...conflicts.keys()])
+      for (const id of ids) {
+        // A write queued in another organization is not shown in this one.
+        const entry = pending.get(id)
+        if (entry && org !== null && entry.org !== null && entry.org !== org) continue
+        const value = effective(id)
+        if (value) out[id] = value
+      }
     }
     listCache = out
     return out
+  }
+
+  function setIdentity(next: string | null): void {
+    if (next === identity) return
+    const before = listValues()
+    identity = next
+    epoch++
+    loadState()
+    listCache = null
+    const after = listValues()
+    const changes: ScopeChange[] = []
+    for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (stableJson(before[id] ?? null) !== stableJson(after[id] ?? null)) {
+        changes.push({ id, value: after[id] ?? null })
+      }
+    }
+    emit(changes)
+    notifyStatus()
+    waitIdentity?.()
+    waitIdentity = null
+    if (identity) void refresh()
   }
 
   return {
     scope: 'organization',
 
     async load(force = false) {
-      hydrate()
       if (!loading || force) {
         const first = !loading
-        loading = refresh()
+        // Not known yet: the first load waits for it (within the same delay).
+        const known =
+          identity !== undefined
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => (waitIdentity = resolve))
+        loading = known.then(() => refresh())
         if (first) {
           let timer: unknown = null
           await Promise.race([
@@ -614,7 +732,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
 
     set(id, value) {
       if (!id || !value) return
-      queue(id, JSON.parse(JSON.stringify(value)))
+      queue(id, toOrgValue(JSON.parse(JSON.stringify(value))))
     },
 
     remove(id) {
@@ -639,15 +757,15 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     status,
     refresh,
     flush,
+    setIdentity,
 
     meta(id) {
-      hydrate()
-      return records.get(id) || null
+      return identity ? records.get(id) || null : null
     },
 
     async history(id, limit) {
       const bridge = options.bridge()
-      if (!bridge || !id) return null
+      if (!bridge || !id || !identity) return null
       const response = await call(() => bridge.history(limit ? { id, limit } : { id }))
       if (response.status !== 200 || !Array.isArray(response.body)) return null
       return (response.body as unknown[])
@@ -656,8 +774,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     },
 
     conflicts() {
-      hydrate()
-      return [...conflicts.values()]
+      return identity ? [...conflicts.values()] : []
     },
 
     async resolveConflict(id, keep) {
@@ -666,34 +783,22 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       conflicts.delete(id)
       listCache = null
       if (keep === 'mine') {
-        pending.set(id, { value: conflict.mine, baseRevision: conflict.theirs?.revision ?? null })
+        pending.set(id, {
+          value: conflict.mine,
+          baseRevision: conflict.theirs?.revision ?? null,
+          org
+        })
+        settled.delete(id)
         persist()
         notifyStatus()
         await flush()
         return
       }
+      settled.add(id)
       persist()
       if (stableJson(conflict.mine) !== stableJson(effective(id))) {
         emit([{ id, value: effective(id) }])
       }
-      notifyStatus()
-    },
-
-    reset() {
-      const gone = forgetOrganization()
-      org = null
-      syncedAt = null
-      unavailable = false
-      offline = false
-      reason = undefined
-      lastWriteError = null
-      loading = null
-      try {
-        options.cache?.write(null)
-      } catch {
-        // ignore
-      }
-      emit(gone)
       notifyStatus()
     }
   }

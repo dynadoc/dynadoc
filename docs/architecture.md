@@ -148,10 +148,20 @@ narrow or touch screens it becomes a pill and a bottom sheet.
 
 `src/renderer/src/extensions/tiptap/CustomVarExtension/`
 
-- **Scopes**: a variable belongs to the document, or is a Desktop variable
-  visible in every file. Desktop variables are stored in
-  `<userData>/storage/global-vars.json` (`stores/globalVariables.ts`) and
-  broadcast to other tabs and windows on the `dynadoc-vars` BroadcastChannel.
+- **Scopes**: a variable belongs to the document, is a Desktop variable
+  visible in every file, or is an Organization variable shared by everyone in
+  the organization. Each scope has a store driver with the same interface
+  (`stores/scopes/types.ts`); `stores/scopes/globalScopes.ts` routes a
+  variable to the Desktop or the Organization scope by its visibility. On a
+  name clash the document wins, then Desktop, then Organization.
+  - Desktop variables are stored in `<userData>/storage/global-vars.json`
+    (`stores/globalVariables.ts`) and broadcast to other tabs and windows on
+    the `dynadoc-vars` BroadcastChannel.
+  - Organization variables are read from and written to the API bridge through
+    the `vars:org:*` channels, versioned by a per-organization revision, with
+    an offline copy, a stale indicator and conflicts the user resolves
+    (`stores/scopes/organizationScope.core.ts`). The contract is in
+    [organization-variables.md](organization-variables.md).
 - **One value everywhere**: text chips, spreadsheet cells (`@name` or inside a
   formula such as `=B2*@rate`), slide text boxes and the slideshow read the
   same value; changing it updates every place.

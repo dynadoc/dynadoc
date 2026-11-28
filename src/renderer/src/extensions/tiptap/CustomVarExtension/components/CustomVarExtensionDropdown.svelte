@@ -37,6 +37,13 @@
     variableScope
   } from '../utils/variableMenu.utils'
   import { formatSpreadsheetRefName } from '../utils/utils'
+  import {
+    organizationScope,
+    organizationStatus,
+    type OrgStatus
+  } from '../stores/scopes/organizationScope'
+  import { orgStatusLine, orgChangeLine } from '../utils/organizationDisplay.utils'
+  import { confirmLeavingOrganization } from '../utils/organizationGuard'
   import { nodeApi } from '../../../../utils/shims/node'
 
   // The `@` variable menu. What is typed stays in the field (document,
@@ -313,7 +320,7 @@
     recent = recentHistory
   }
 
-  function submitForm(): void {
+  async function submitForm(): Promise<void> {
     const name = normalizeVariableName(newVarName)
     const input = String(newVarValue || '').trim()
     if (!name) {
@@ -340,6 +347,13 @@
     if (requiresValue(selectedType) && !input) {
       nameError = $_('Enter a value.')
       valueInput?.focus({ preventScroll: true })
+      return
+    }
+
+    if (
+      existingVar &&
+      !(await confirmLeavingOrganization(existingVar.name, existingVar.rawValue, advVisibility))
+    ) {
       return
     }
 
@@ -509,7 +523,29 @@
     if (event.detail === 0) activate(index)
   }
 
-  const isDocScope = (): boolean => variableScope({ visibility: advVisibility }) === 'doc'
+  const SCOPES = [
+    { scope: 'doc', label: 'This document' },
+    { scope: 'desktop', label: 'All my files' },
+    { scope: 'org', label: 'Organization' }
+  ] as const
+  let formScope = $derived(variableScope({ visibility: advVisibility }))
+  let listHasOrg = $derived(items.some((item) => variableScope(item.rawValue) === 'org'))
+
+  // What the Organization scope's copy is worth now (stale, offline...), in
+  // the list when it shows organization variables and in the form when the
+  // variable is one; null when there is nothing to say.
+  const orgNotice = (status: OrgStatus): string | null => {
+    const line = orgStatusLine(status)
+    return line ? $_(line.key, { values: line.values }) : null
+  }
+  // Who changed the organization variable being edited, when, and its value
+  // before.
+  let orgMeta = $derived(
+    mode === 'form' && formScope === 'org' && editingOriginalName
+      ? organizationScope.meta(editingOriginalName)
+      : null
+  )
+  let orgChange = $derived(orgMeta ? orgChangeLine(orgMeta) : null)
 
   let sheetStyle = $derived(
     compact
@@ -600,8 +636,12 @@
             {#if isAiItem(item)}
               <span class="var-menu__badge var-menu__badge--ai">{$_('AI')}</span>
             {/if}
-            <span class="var-menu__badge" class:is-global={scope === 'desktop'}>
-              {scope === 'desktop' ? $_('Desktop') : $_('Doc')}
+            <span
+              class="var-menu__badge"
+              class:is-global={scope !== 'doc'}
+              class:is-org={scope === 'org'}
+            >
+              {scope === 'org' ? $_('Org') : scope === 'desktop' ? $_('Desktop') : $_('Doc')}
             </span>
           </button>
           <button
@@ -617,6 +657,10 @@
           </button>
         </div>
       {/each}
+
+      {#if listHasOrg && orgNotice($organizationStatus)}
+        <div class="var-menu__notice" role="status">{orgNotice($organizationStatus)}</div>
+      {/if}
 
       {#if !items.length}
         <div class="var-menu__empty">
@@ -702,7 +746,7 @@
       class="var-menu__form"
       onsubmit={(e) => {
         e.preventDefault()
-        submitForm()
+        void submitForm()
       }}
     >
       <div class="var-menu__form-title">
@@ -810,23 +854,38 @@
       {/if}
 
       <div class="var-menu__scopes" role="group" aria-label={$_('Scope')}>
-        <button
-          type="button"
-          class="var-menu__scope-btn"
-          aria-pressed={isDocScope()}
-          onclick={() => {
-            if (!isDocScope()) advVisibility = scopeVisibility('doc')
-          }}>{$_('This document')}</button
-        >
-        <button
-          type="button"
-          class="var-menu__scope-btn"
-          aria-pressed={!isDocScope()}
-          onclick={() => {
-            if (isDocScope()) advVisibility = scopeVisibility('desktop')
-          }}>{$_('All my files')}</button
-        >
+        {#each SCOPES as option (option.scope)}
+          <button
+            type="button"
+            class="var-menu__scope-btn"
+            aria-pressed={formScope === option.scope}
+            disabled={option.scope === 'org' &&
+              formScope !== 'org' &&
+              $organizationStatus.state === 'unavailable'}
+            title={option.scope === 'org' && $organizationStatus.state === 'unavailable'
+              ? $_('Organization variables are not available here')
+              : undefined}
+            onclick={() => {
+              if (formScope !== option.scope) advVisibility = scopeVisibility(option.scope)
+            }}
+          >
+            {$_(option.label)}
+          </button>
+        {/each}
       </div>
+      {#if formScope === 'org'}
+        {#if orgNotice($organizationStatus)}
+          <div class="var-menu__notice" role="status">{orgNotice($organizationStatus)}</div>
+        {/if}
+        {#if orgChange}
+          <div class="var-menu__notice var-menu__notice--meta">
+            {$_(orgChange.key, { values: orgChange.values })}
+            {#if orgChange.previous !== null}
+              <br />{$_('Previous value: {value}', { values: { value: orgChange.previous } })}
+            {/if}
+          </div>
+        {/if}
+      {/if}
 
       {#if showAdvanced}
         <div class="var-menu__advanced">
@@ -850,6 +909,7 @@
             <option value="package">{$_('Package')}</option>
             <option value="desktop">{$_('Desktop')}</option>
             <option value="cloud">{$_('Cloud')}</option>
+            <option value="organization">{$_('Organization')}</option>
           </select>
           <label class="var-menu__label" for="{listboxId}-access">{$_('Access')}</label>
           <input
@@ -1104,6 +1164,23 @@
   .var-menu__badge.is-global {
     background: color-mix(in srgb, var(--color-primary) 18%, transparent);
     color: color-mix(in srgb, var(--color-primary) 75%, var(--color-base-content));
+  }
+  .var-menu__badge.is-org {
+    background: color-mix(in srgb, var(--color-secondary, #0ea5e9) 20%, transparent);
+    color: color-mix(in srgb, var(--color-secondary, #0ea5e9) 75%, var(--color-base-content));
+  }
+  .var-menu__notice {
+    padding: 4px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    opacity: 0.8;
+  }
+  .var-menu__notice--meta {
+    padding: 0 2px;
+  }
+  .var-menu__scope-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .var-menu__badge--ai {
     background: color-mix(in srgb, #a855f7 20%, transparent);

@@ -1,9 +1,14 @@
-// The Organization scope as the app uses it: the bridge is
-// `window.server.variables.organization` (the web driver calls the API
-// bridge over HTTPS, the desktop preload asks the main process to), the
-// offline copy is kept in localStorage, and the scope is read again every
-// few seconds while the window is visible, when it gets focus and when the
-// network comes back.
+// The Organization scope as the app uses it:
+// - the bridge is `window.server.variables.organization` (the web driver
+//   sends the vars:org:* channels to the API bridge, the desktop preload asks
+//   the main process to);
+// - the identity is the signed-in user and the session's organization, from
+//   the auth store on every platform (Main.svelte calls followSession; the
+//   store is passed in, not imported, which would close an import cycle
+//   through the variable store); a token renewal does not change it;
+// - the offline copy is kept in localStorage, one key per identity;
+// - the scope is read again when the window gets focus or becomes visible,
+//   when the network comes back, and every few minutes while visible.
 import { readable, type Readable } from 'svelte/store'
 import {
   createOrganizationScope,
@@ -16,19 +21,18 @@ import {
 
 export type { OrgConflict, OrgStatus, OrgVariableRecord } from './organizationScope.core'
 
-const CACHE_KEY = 'ddoc.org_vars.v1'
-const POLL_MS = 4_000
+const CACHE_PREFIX = 'ddoc.org_vars.v1:'
+const POLL_MS = 3 * 60_000
 
 const cache: OrgCache = {
-  read() {
+  read(identity) {
     if (typeof localStorage === 'undefined') return null
-    const raw = localStorage.getItem(CACHE_KEY)
+    const raw = localStorage.getItem(CACHE_PREFIX + identity)
     return raw ? (JSON.parse(raw) as OrgCacheSnapshot) : null
   },
-  write(snapshot) {
+  write(identity, snapshot) {
     if (typeof localStorage === 'undefined') return
-    if (snapshot) localStorage.setItem(CACHE_KEY, JSON.stringify(snapshot))
-    else localStorage.removeItem(CACHE_KEY)
+    localStorage.setItem(CACHE_PREFIX + identity, JSON.stringify(snapshot))
   }
 }
 
@@ -41,12 +45,30 @@ function bridge(): OrgBridge | null {
 
 export const organizationScope = createOrganizationScope({ bridge, cache })
 
-let polling = false
+type SessionState = {
+  initializing?: boolean
+  authenticated?: boolean
+  user?: { id?: string; email?: string } | null
+  activeOrg?: string
+}
+
+/** Who is signed in, in which organization: the scope's identity. */
+export function followSession(session: Readable<SessionState>): () => void {
+  return session.subscribe((state) => {
+    if (state.initializing) return
+    const user = state.user?.id || state.user?.email
+    organizationScope.setIdentity(
+      state.authenticated && user ? `${user}@${state.activeOrg || ''}` : null
+    )
+  })
+}
+
+let started = false
 
 /** Starts reading the scope in the background; loading the global scopes calls it. */
 export function startOrganizationSync(): void {
-  if (polling || typeof window === 'undefined') return
-  polling = true
+  if (started || typeof window === 'undefined') return
+  started = true
   const visible = (): boolean =>
     typeof document === 'undefined' || document.visibilityState === 'visible'
   setInterval(() => {
@@ -54,24 +76,9 @@ export function startOrganizationSync(): void {
   }, POLL_MS)
   window.addEventListener('focus', () => void organizationScope.refresh())
   window.addEventListener('online', () => void organizationScope.refresh())
-  // Another account: the previous one's copy and pending changes are not
-  // this one's to see or send.
-  let token = currentToken()
-  window.addEventListener('ddoc:session-changed', () => {
-    const next = currentToken()
-    if (next === token) return
-    token = next
-    organizationScope.reset()
-    void organizationScope.refresh()
+  document.addEventListener('visibilitychange', () => {
+    if (visible()) void organizationScope.refresh()
   })
-}
-
-function currentToken(): string | null {
-  try {
-    return localStorage.getItem('ddoc.access_token')
-  } catch {
-    return null
-  }
 }
 
 /** The scope's status, for the UI. */

@@ -61,6 +61,26 @@ if (build.status !== 0) {
   process.exit(1)
 }
 const { createOrganizationScope, stableJson } = await import(`file://${compiled}`)
+
+const displayCompiled = path.join(outDir, 'organizationDisplay.utils.mjs')
+const displayBuild = spawnSync(
+  esbuild,
+  [
+    path.join(
+      repoRoot,
+      'src/renderer/src/extensions/tiptap/CustomVarExtension/utils/organizationDisplay.utils.ts'
+    ),
+    '--bundle',
+    '--format=esm',
+    `--outfile=${displayCompiled}`
+  ],
+  { encoding: 'utf-8' }
+)
+if (displayBuild.status !== 0) {
+  console.error(`[organization-variables] FAIL: could not compile the display helpers`)
+  process.exit(1)
+}
+const { orgStatusLine, orgChangeLine } = await import(`file://${displayCompiled}`)
 const { emptyOrgState, orgVariableChannels } = await import(
   path.join(repoRoot, 'tools/stub-bridge/org-variables.mjs')
 )
@@ -100,14 +120,14 @@ function stubBridge() {
   return { net, api, writes, value, write }
 }
 
+/** One copy per identity, like the app's localStorage keys. */
 function memoryCache() {
-  let snapshot = null
+  const copies = new Map()
+  const clone = (value) => (value ? JSON.parse(JSON.stringify(value)) : null)
   return {
-    read: () => (snapshot ? JSON.parse(JSON.stringify(snapshot)) : null),
-    write: (next) => {
-      snapshot = next ? JSON.parse(JSON.stringify(next)) : null
-    },
-    peek: () => snapshot
+    read: (identity) => clone(copies.get(identity)),
+    write: (identity, next) => copies.set(identity, clone(next)),
+    peek: (identity = 'alice@acme') => copies.get(identity) || null
   }
 }
 
@@ -119,7 +139,13 @@ const v = (value, extra = {}) => ({
   ...extra
 })
 
-function scopeFor(bridge, who, cache = memoryCache(), clock = { t: 1_000_000 }) {
+function scopeFor(
+  bridge,
+  who,
+  cache = memoryCache(),
+  clock = { t: 1_000_000 },
+  identity = `${who}@acme`
+) {
   const changes = []
   const scope = createOrganizationScope({
     bridge: () => bridge.api(who),
@@ -130,6 +156,7 @@ function scopeFor(bridge, who, cache = memoryCache(), clock = { t: 1_000_000 }) 
     flushDelayMs: 0
   })
   scope.onChange((batch) => changes.push(...batch))
+  scope.setIdentity(identity)
   return { scope, changes, cache, clock }
 }
 
@@ -139,6 +166,42 @@ check(
   stableJson({ b: 1, a: { d: 2, c: 3 } }),
   stableJson({ a: { c: 3, d: 2 }, b: 1 })
 )
+
+// --- what the UI says about the copy -------------------------------------
+{
+  const at = (state, extra = {}) => ({
+    state,
+    syncedAt: 5,
+    pending: 0,
+    conflicts: 0,
+    org: 'acme',
+    lastWriteError: null,
+    ...extra
+  })
+  const time = () => 'T'
+  check('fresh: nothing to say', orgStatusLine(at('fresh'), time), null)
+  check(
+    'stale and offline say since when',
+    [orgStatusLine(at('stale'), time)?.values, orgStatusLine(at('offline'), time)?.key.slice(0, 8)],
+    [{ time: 'T' }, 'Offline:']
+  )
+  check('a refused change says so', orgStatusLine(at('fresh', { conflicts: 2 }), time)?.values, {
+    count: 2
+  })
+  const line = orgChangeLine(
+    {
+      updatedAt: '2026-11-28T08:01:00Z',
+      updatedBy: { name: 'Jane' },
+      previous: { value: { value: 'ACME SARL' } }
+    },
+    () => 'when'
+  )
+  check(
+    'who changed it, when, and the value before',
+    [line.key, line.values, line.previous],
+    ['Changed by {name} on {time}', { name: 'Jane', time: 'when' }, 'ACME SARL']
+  )
+}
 
 // --- one person writes, the other reads ------------------------------------
 {
@@ -289,9 +352,18 @@ check(
   const alice = scopeFor(bridge, 'alice')
   await alice.scope.load()
   bridge.write('c1', v('same'), 'bob')
-  alice.scope.set('c1', v('same'))
+  // From a document: the value carries the document's own fields.
+  alice.scope.set('c1', v('same', { documentId: 'doc-1', nodeId: 'n1', row: 0, col: 1 }))
   await alice.scope.flush()
   check('the same value on both sides: no conflict', alice.scope.conflicts().length, 0)
+  const before = bridge.net.state.revision
+  alice.scope.set('c1', v('same', { documentId: 'doc-2' }))
+  await alice.scope.flush()
+  check(
+    'saving an unchanged value from a document writes nothing',
+    bridge.net.state.revision,
+    before
+  )
 }
 
 // --- offline: the cache serves, writes wait, the status says so ------------
@@ -375,9 +447,11 @@ check(
     }),
     firstLoadTimeoutMs: 50
   })
+  scope.setIdentity('alice@acme')
   await scope.load()
   check('a bridge without the channels: unavailable', scope.status().state, 'unavailable')
   const none = createOrganizationScope({ bridge: () => null, firstLoadTimeoutMs: 50 })
+  none.setIdentity('alice@acme')
   await none.load()
   check('no bridge at all: unavailable', none.status().state, 'unavailable')
 }
@@ -400,35 +474,177 @@ check(
   check('the bridge value is shown again', alice.changes.at(-1)?.value?.value, 'v2')
 }
 
-// --- the cache belongs to one organization ---------------------------------
+// --- the copy belongs to one identity --------------------------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  const cache = memoryCache()
+  const alice = scopeFor(bridge, 'alice', cache)
+  await alice.scope.load()
+  bridge.net.online = false
+  alice.scope.set('c1', v('alice offline'))
+  await alice.scope.flush()
+
+  // A token renewal is not a change of identity: nothing is lost.
+  alice.scope.setIdentity('alice@acme')
+  check('the same identity again keeps the pending write', alice.scope.status().pending, 1)
+
+  // Bob signs in on the same machine, same organization.
+  alice.scope.setIdentity('bob@acme')
+  check(
+    "another user: none of the previous user's values or writes",
+    [alice.scope.list(), alice.scope.status().pending],
+    [{}, 0]
+  )
+  check('and they are reported as gone', alice.changes.at(-1), { id: 'c1', value: null })
+  bridge.net.online = true
+  await alice.scope.refresh()
+  check("the previous user's write is not sent with this session", bridge.value('c1'), 'v1')
+
+  // Alice again: her copy and her queued write are back, and go out as hers.
+  alice.scope.setIdentity('alice@acme')
+  check(
+    'back to the first user: her pending write is back',
+    alice.scope.list().c1?.value,
+    'alice offline'
+  )
+  await alice.scope.refresh()
+  check('and is sent', bridge.value('c1'), 'alice offline')
+
+  // Signed out: nothing shown.
+  alice.scope.setIdentity(null)
+  check(
+    'signed out: nothing shown, unavailable',
+    [alice.scope.list(), alice.scope.status().state],
+    [{}, 'unavailable']
+  )
+
+  // Before the identity is known nothing of the cache is shown.
+  const early = createOrganizationScope({
+    bridge: () => bridge.api('alice'),
+    cache,
+    firstLoadTimeoutMs: 50
+  })
+  check('identity not known yet: nothing shown', early.list(), {})
+}
+
+// --- the bridge answers for another organization than the cached one -------
 {
   const bridge = stubBridge()
   bridge.write('c1', v('v1'))
   const cache = memoryCache()
   const first = scopeFor(bridge, 'alice', cache)
   await first.scope.load()
-  // Same browser, the next session is in another organization.
+  bridge.net.online = false
+  first.scope.set('c1', v('queued in acme'))
+  await first.scope.flush()
+  bridge.net.online = true
   bridge.net.state = emptyOrgState('other')
   const second = scopeFor(bridge, 'alice', cache)
-  second.scope.list()
   await second.scope.refresh()
   check(
     'another organization: the cached variables are dropped',
     [second.scope.list(), second.scope.status().org],
     [{}, 'other']
   )
-  check('and reported as gone', second.changes, [{ id: 'c1', value: null }])
+  check(
+    'and the write made in the first one is not sent to it',
+    bridge.net.calls.filter(([c]) => c === 'vars:org:set').length,
+    0
+  )
 }
 
-// --- another account: nothing of the previous one is kept ------------------
+// --- not a member any more: the copy is dropped -----------------------------
 {
   const bridge = stubBridge()
   bridge.write('c1', v('v1'))
-  const { scope, changes, cache } = scopeFor(bridge, 'alice')
+  const api = bridge.api('alice')
+  let member = true
+  const scope = createOrganizationScope({
+    bridge: () => ({
+      ...api,
+      list: async (p) => (member ? api.list(p) : { status: 403, body: { error: 'forbidden' } })
+    }),
+    firstLoadTimeoutMs: 50
+  })
+  scope.setIdentity('alice@acme')
   await scope.load()
-  scope.reset()
-  check('reset empties the scope and the cache', [scope.list(), cache.peek()], [{}, null])
-  check('reset reports the variables as gone', changes.at(-1), { id: 'c1', value: null })
+  member = false
+  await scope.refresh()
+  check(
+    '403 on list: nothing kept, unavailable',
+    [scope.list(), scope.status().state],
+    [{}, 'unavailable']
+  )
+}
+
+// --- an open conflict is decided against what the bridge holds now ---------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  const alice = scopeFor(bridge, 'alice')
+  await alice.scope.load()
+  bridge.write('c1', v('v2'), 'bob')
+  alice.scope.set('c1', v('alice'))
+  await alice.scope.flush()
+  bridge.write('c1', v('v3'), 'bob')
+  await alice.scope.refresh()
+  check(
+    'a newer value reaches the open conflict',
+    alice.scope.conflicts()[0]?.theirs?.value?.value,
+    'v3'
+  )
+  await alice.scope.resolveConflict('c1', 'mine')
+  check(
+    'keep mine then goes through at once',
+    [bridge.value('c1'), alice.scope.conflicts().length],
+    ['alice', 0]
+  )
+}
+
+// --- two windows share the offline queue -----------------------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  bridge.write('c2', v('w1', { name: 'ville' }))
+  const cache = memoryCache()
+  const one = scopeFor(bridge, 'alice', cache)
+  const two = scopeFor(bridge, 'alice', cache)
+  await one.scope.load()
+  await two.scope.load()
+  bridge.net.online = false
+  one.scope.set('c1', v('from one'))
+  two.scope.set('c2', v('from two', { name: 'ville' }))
+  await one.scope.flush()
+  await two.scope.flush()
+  check(
+    "neither window drops the other one's queued write",
+    Object.keys(cache.peek().pending).sort(),
+    ['c1', 'c2']
+  )
+}
+
+// --- a refused deletion does not bring the value back -----------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  const api = bridge.api('alice')
+  const changes = []
+  const scope = createOrganizationScope({
+    bridge: () => ({
+      ...api,
+      delete: async () => ({ status: 403, body: { error: 'forbidden', message: 'read only' } })
+    }),
+    firstLoadTimeoutMs: 50,
+    flushDelayMs: 0
+  })
+  scope.onChange((batch) => changes.push(...batch))
+  scope.setIdentity('alice@acme')
+  await scope.load()
+  changes.length = 0
+  scope.remove('c1')
+  await scope.flush()
+  check('a refused deletion: nothing redefined over the local copy', changes, [])
 }
 
 // --- the same channels over HTTP, from the running stub --------------------
@@ -488,7 +704,7 @@ check(
 
 rmSync(outDir, { recursive: true, force: true })
 if (failures) {
-  console.error(`\n[organization-variables] FAIL — ${failures} check(s) failed`)
+  console.error(`\n[organization-variables] FAIL: ${failures} check(s) failed`)
   process.exit(1)
 }
-console.log('\n[organization-variables] OK — revisions, conflicts, offline copy and status behave')
+console.log('\n[organization-variables] OK: revisions, conflicts, offline copy and status behave')

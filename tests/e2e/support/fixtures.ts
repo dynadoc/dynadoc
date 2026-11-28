@@ -19,7 +19,13 @@
  * Each allow-list entry says why it is there; KNOWN BUG marks a real bug kept
  * so the rest of the suite can run. Add one only with a reason.
  */
-import { test as base, expect, type Page, type Response } from '@playwright/test'
+import {
+  test as base,
+  expect,
+  type BrowserContext,
+  type Page,
+  type Response
+} from '@playwright/test'
 import { copyFileSync } from 'node:fs'
 import path from 'node:path'
 import { SETTINGS_FILE } from './env'
@@ -131,12 +137,18 @@ const REFUSED_BY_DESIGN =
 export class Guard {
   readonly issues: string[] = []
   private readonly extraConsole: AllowEntry[] = []
+  private readonly extraStubFailures: typeof ALLOWED_STUB_FAILURES = []
   private readonly pending: Promise<void>[] = []
   readonly stubCalls: Array<{ channel: string; arg: string }> = []
 
   /** Allow one more console error pattern for this test only, with a reason. */
   allowConsoleError(pattern: RegExp, why: string): void {
     this.extraConsole.push({ pattern, why })
+  }
+
+  /** Allow one more failed stub call for this test only, with a reason. */
+  allowStubFailure(entry: (typeof ALLOWED_STUB_FAILURES)[number]): void {
+    this.extraStubFailures.push(entry)
   }
 
   attach(page: Page): void {
@@ -193,7 +205,7 @@ export class Guard {
       error
     }
     if (REFUSED_BY_DESIGN.test(failure.error)) return
-    const allowed = ALLOWED_STUB_FAILURES.some(
+    const allowed = [...ALLOWED_STUB_FAILURES, ...this.extraStubFailures].some(
       (entry) =>
         entry.channel === failure.channel && entry.arg.test(failure.arg) && entry.error.test(error)
     )
@@ -242,19 +254,48 @@ function describeCall(postData: string | null): { channel: string; arg: string }
   }
 }
 
-export const test = base.extend<{ guard: Guard }>({
+/** What every browser context starts with, see the header. */
+export async function prepareContext(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    try {
+      localStorage.removeItem('ddoc.api_url')
+      localStorage.removeItem('ddoc.web_auto_signin')
+      localStorage.setItem('ddoc.ui.pref:ui:tour:home:v1', 'true')
+      localStorage.setItem('ddoc.ui.pref:ui:tour:editor:v1', 'true')
+    } catch {
+      // storage unavailable: the app then shows the tour, and the test says so
+    }
+  })
+}
+
+export const test = base.extend<{ guard: Guard; secondPage: { page: Page; guard: Guard } }>({
   context: async ({ context }, use) => {
-    await context.addInitScript(() => {
-      try {
-        localStorage.removeItem('ddoc.api_url')
-        localStorage.removeItem('ddoc.web_auto_signin')
-        localStorage.setItem('ddoc.ui.pref:ui:tour:home:v1', 'true')
-        localStorage.setItem('ddoc.ui.pref:ui:tour:editor:v1', 'true')
-      } catch {
-        // storage unavailable: the app then shows the tour, and the test says so
-      }
-    })
+    await prepareContext(context)
     await use(context)
+  },
+  /**
+   * A page in a second browser context on the same stub: another browser of
+   * the same user, with its own storage. Guarded like the first page.
+   */
+  secondPage: async ({ browser }, use, testInfo) => {
+    const { baseURL, viewport, locale, timezoneId, colorScheme } = testInfo.project.use
+    const context = await browser.newContext({ baseURL, viewport, locale, timezoneId, colorScheme })
+    await prepareContext(context)
+    const page = await context.newPage()
+    const guard = new Guard()
+    guard.attach(page)
+    await use({ page, guard })
+    await guard.settle()
+    await context.close()
+    if (guard.issues.length) {
+      await testInfo.attach('side-effects (second page)', {
+        body: guard.issues.join('\n'),
+        contentType: 'text/plain'
+      })
+    }
+    expect(guard.issues, 'second page: page errors, console errors or failed stub calls').toEqual(
+      []
+    )
   },
   guard: [
     async ({ page }, use, testInfo) => {

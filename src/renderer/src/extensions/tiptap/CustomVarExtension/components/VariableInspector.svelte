@@ -43,6 +43,7 @@
   import { nodeApi } from '../../../../utils/shims/node'
   import { formatSpreadsheetRefName } from '../utils/utils'
   import { CustomVarExtensionProps } from '../utils/common.utils'
+  import { confirmLeavingOrganization } from '../utils/organizationGuard'
 
   let _vars: Variable[] = $state([])
   let _search = $state('')
@@ -694,7 +695,14 @@
     refresh([getDisplayName(v)])
   }
 
-  function handleUpdateMeta(v: Variable, patch: Record<string, any>) {
+  async function handleUpdateMeta(v: Variable, patch: Record<string, any>) {
+    if (
+      'visibility' in patch &&
+      !(await confirmLeavingOrganization(v.name, v.rawValue, patch.visibility))
+    ) {
+      refresh()
+      return
+    }
     const type = v.rawValue?.type ?? getType(v.value)
     const nextRawValue = {
       ...(v.rawValue || {}),
@@ -1427,6 +1435,7 @@
                 <option value="package">{$_('Package')}</option>
                 <option value="desktop">{$_('Desktop')}</option>
                 <option value="cloud">{$_('Cloud')}</option>
+                <option value="organization">{$_('Organization')}</option>
               </select>
             </div>
             <div class="grid grid-cols-1 gap-2">
@@ -1826,6 +1835,7 @@
                         <option value="package">{$_('Package')}</option>
                         <option value="desktop">{$_('Desktop')}</option>
                         <option value="cloud">{$_('Cloud')}</option>
+                        <option value="organization">{$_('Organization')}</option>
                       </select>
                     </div>
 
@@ -2187,6 +2197,7 @@
                           <option value="package">{$_('Package')}</option>
                           <option value="desktop">{$_('Desktop')}</option>
                           <option value="cloud">{$_('Cloud')}</option>
+                          <option value="organization">{$_('Organization')}</option>
                         </select>
                       </div>
                       <div class="grid grid-cols-1 gap-2">

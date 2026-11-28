@@ -4411,7 +4411,15 @@ app.whenReady().then(async () => {
     return { ok: true, url: authUrl }
   }
 
+  // The token organization variable calls use (orgVariablesCall), kept
+  // between calls: reading it spawns the middleware, which is not worth doing
+  // for every read of the scope. Read again after a 401, and dropped on every
+  // sign-in, sign-out and change of organization, so it is never another
+  // account's.
+  let orgVariablesToken = ''
+
   async function completeAuthWithDeepLink(rawUrl: string, debug?: boolean) {
+    orgVariablesToken = ''
     if (!rawUrl) return false
 
     let deepLinkUrl: URL
@@ -4467,6 +4475,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:set-active-org', async (_event, payload) => {
+    orgVariablesToken = ''
     const output = await runDdocServerJson('auth:set-active-org', {
       org: payload?.org,
       // debug: payload?.debug === true
@@ -4506,6 +4515,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:logout', async (_event, payload) => {
+    orgVariablesToken = ''
     const output = await runDdocServerJson('auth:logout', {
       protocol: AUTH_PROTOCOL,
       redirectUri: AUTH_CALLBACK_URI,
@@ -4726,21 +4736,33 @@ app.whenReady().then(async () => {
     channel: string,
     payload: unknown
   ): Promise<{ status: number; body: unknown }> {
-    let token = ''
+    const send = async (token: string): Promise<Response> =>
+      fetchWithHttpFallback(new URL('/api/ipc/invoke', AUTH_SERVER_BASE_URL), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel, args: [payload ?? {}] })
+      })
     try {
-      token = await getDriveAuthToken()
-    } catch {
-      return { status: 401, body: { error: 'unauthorized', message: 'Not signed in.' } }
-    }
-    try {
-      const response = await fetchWithHttpFallback(
-        new URL('/api/ipc/invoke', AUTH_SERVER_BASE_URL),
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ channel, args: [payload ?? {}] })
+      let fresh = false
+      if (!orgVariablesToken) {
+        orgVariablesToken = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
+        fresh = true
+      }
+      // No token: signed out, or the session could not be read (offline, the
+      // middleware missing). The renderer knows from the auth store whether
+      // someone is signed in, so this is "not reached", not "refused".
+      if (!orgVariablesToken) {
+        return {
+          status: 0,
+          body: { error: 'no_session', message: 'No session to call the bridge with.' }
         }
-      )
+      }
+      let response = await send(orgVariablesToken)
+      if (response.status === 401 && !fresh) {
+        orgVariablesToken = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
+        if (orgVariablesToken) response = await send(orgVariablesToken)
+      }
+      if (response.status === 401) orgVariablesToken = ''
       const body = await response.json().catch(() => null)
       if (response.ok) return { status: response.status, body: body?.data ?? null }
       return { status: response.status, body }
