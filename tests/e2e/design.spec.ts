@@ -14,22 +14,29 @@
  *     the Layers panel;
  *   - #100: the right-click menu template carried its click handlers, so
  *     cloning it threw DataCloneError and no menu opened. On the web the menu
- *     goes to the in-app context menu, without any clone.
+ *     goes to the in-app context menu, without any clone;
+ *   - #149: on the web every design shared assets/design/design.json at the
+ *     drive root, so a new design showed the shapes of earlier ones. Each
+ *     design must start empty and keep its file in its own document folder.
  */
 import { test, expect } from './support/fixtures'
-import { createFromDashboard, openApp } from './support/app'
+import { createFromDashboard, dashboardHeading, openApp } from './support/app'
 import { STUB_ROOT } from './support/env'
 import type { Locator, Page } from '@playwright/test'
-import { rmSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
-// Known bug: every Design document keeps its shapes in the same file,
-// `assets/design/design.json` at the root of the drive, so a new design opens
-// with the shapes of every design made before it (see the fixme below). Each
-// test starts from no design file, so its layer count means what it says.
-test.beforeEach(() => {
-  rmSync(path.join(STUB_ROOT, 'assets', 'design'), { recursive: true, force: true })
-})
+/** The design files on the stub's drive, relative to its root. */
+function designFiles(): string[] {
+  return (readdirSync(STUB_ROOT, { recursive: true }) as string[])
+    .map((entry) => entry.split(path.sep).join('/'))
+    .filter((entry) => /(^|\/)assets\/design\/[^/]+\.json$/.test(entry))
+}
+
+/** `home/<uuid>/<name>` of a file under `home/<uuid>/<name>/assets/design/`. */
+function documentFolderOf(file: string): string {
+  return file.split('/').slice(0, 3).join('/')
+}
 
 /** Opaque pixels of the canvas in a CSS-pixel rectangle. */
 async function inkIn(
@@ -150,16 +157,34 @@ test('the in-app menu appears on right-click', async ({ page }) => {
   await expect(page.getByText('Bring forward', { exact: true })).toBeVisible()
 })
 
-test('a new design starts empty', async ({ page }) => {
-  test.fixme(
-    true,
-    'Known bug: Design documents share one shape store, assets/design/design.json at the ' +
-      'drive root, so a new design shows the shapes of earlier ones.'
-  )
+test('a new design starts empty and has a file of its own (#149)', async ({ page }) => {
+  const rows = page.locator('.adobe-layer-row').filter({ visible: true })
+  const before = new Set(designFiles())
+  const created = (): string[] => designFiles().filter((file) => !before.has(file))
+
   const canvas = await openDesign(page)
   await drawRectangle(page, canvas)
-  await expect(page.locator('.adobe-layer-row')).toHaveCount(1)
+  await expect(rows).toHaveCount(1)
+
+  // Saved in its own document folder, nothing at the drive root.
+  await expect.poll(() => created().length).toBe(1)
+  const [first] = created()
+  expect(first).toMatch(/^home\/[^/]+\/[^/]+\/assets\/design\/[^/]+\.json$/)
+  expect(designFiles().filter((file) => file.startsWith('assets/'))).toEqual([])
+  await expect
+    .poll(() => JSON.parse(readFileSync(path.join(STUB_ROOT, first), 'utf8')).updates.length)
+    .toBeGreaterThan(0)
+  const firstContent = readFileSync(path.join(STUB_ROOT, first), 'utf8')
+
+  // A second design, from the dashboard.
   await page.getByRole('button', { name: 'Home', exact: true }).first().click()
-  await openDesign(page)
-  await expect(page.locator('.adobe-layer-row')).toHaveCount(0)
+  await expect(dashboardHeading(page)).toBeVisible()
+  await createFromDashboard(page, 'Design')
+  await expect.poll(() => created().length, { timeout: 60_000 }).toBe(2)
+  await expect(page.locator('canvas.skia-canvas').filter({ visible: true })).toHaveCount(1)
+  await expect(rows).toHaveCount(0)
+
+  const second = created().find((file) => file !== first)!
+  expect(documentFolderOf(second)).not.toBe(documentFolderOf(first))
+  expect(readFileSync(path.join(STUB_ROOT, first), 'utf8')).toBe(firstContent)
 })
