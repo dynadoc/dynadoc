@@ -3,6 +3,7 @@ import Platform from '../libs/platform'
 import Utils from './Utils'
 import { defaultPaginationOptions } from '../extensions/tiptap/utils/common.utils'
 import { nodeApi } from './shims/node'
+import { pickUniqueName } from './uniqueName'
 import {
   convertDocxFileToHtml,
   convertHtmlFileToDocx,
@@ -284,7 +285,7 @@ export async function generateUniqueNameAsync({
 
   if (!safeBase) safeBase = 'Untitled'
 
-  let existing: string[] = []
+  let existing: unknown[] = []
   const normalizedParent = normalizePathForPlatform(parentDir)
   try {
     existing = await nodeApi.fsPromises.readdir(normalizedParent)
@@ -292,27 +293,7 @@ export async function generateUniqueNameAsync({
     await nodeApi.fsPromises.mkdir(normalizedParent, { recursive: true })
   }
 
-  const escaped = safeBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const numberRegex = copyStyle
-    ? new RegExp(`^${copyStyle} ${escaped}(?:${separator}(\\d+))?${extension}$`)
-    : new RegExp(`^${escaped}(?:${separator}(\\d+))?${extension}$`)
-
-  let maxIndex = 0
-  for (const name of existing) {
-    const candidate = typeof name === 'string' ? name : String(name ?? '')
-    const match = candidate.match(numberRegex)
-    if (!match) continue
-    const num = match[1] ? parseInt(match[1], 10) : 1
-    if (num > maxIndex) maxIndex = num
-  }
-
-  if (maxIndex === 0) {
-    return copyStyle ? `${copyStyle} ${safeBase}${extension}` : `${safeBase}${extension}`
-  }
-
-  return copyStyle
-    ? `${copyStyle} ${safeBase}${separator}${maxIndex + 1}${extension}`
-    : `${safeBase}${separator}${maxIndex + 1}${extension}`
+  return pickUniqueName(existing, safeBase, extension, separator, copyStyle)
 }
 
 export function getFileRootFromBaseDir(baseDir: string, filePath: string): string {

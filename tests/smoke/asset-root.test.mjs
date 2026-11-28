@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// Checks where a document keeps its assets (src/renderer/src/utils/assetRoot.ts).
+// Checks where a document keeps its assets (src/renderer/src/utils/assetRoot.ts)
+// and how an asset file gets a free name there (src/renderer/src/utils/uniqueName.ts).
 //
 // Why this exists
 //   #149: on the web every Design document read and wrote the same file,
 //   `assets/design/design.json` at the drive root. The asset folder was
 //   resolved relative to the cache directory (`cache`), which a web document
 //   (`drive/home/...`) is not under, and the result climbed out to the drive
-//   root. The same helper serves slides and sheets.
+//   root. The same helper serves slides and sheets. And the file name never
+//   moved past `design.json`: the web `fs:readdir` answers entry objects, which
+//   the name picker read as "[object Object]".
 //
 // Usage
 //   npm run test:smoke:asset-root
@@ -23,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
 const SOURCE = path.join(repoRoot, 'src', 'renderer', 'src', 'utils', 'assetRoot.ts')
+const UNIQUE_NAME = path.join(repoRoot, 'src', 'renderer', 'src', 'utils', 'uniqueName.ts')
 
 const log = (...args) => console.log('[asset-root]', ...args)
 let failures = 0
@@ -53,6 +57,7 @@ try {
     return import(`file://${compiled}`)
   }
   const { documentAssetRoot, isDriveRootAssetPath } = await compile(SOURCE, 'assetRoot.mjs')
+  const { pickUniqueName, directoryEntryName } = await compile(UNIQUE_NAME, 'uniqueName.mjs')
 
   // What a web document got before the fix: the desktop fallback
   // (getFileRootFromBaseDir), relative to `cache`, which lands on the drive root.
@@ -111,6 +116,30 @@ try {
   check('another type', isDriveRootAssetPath('assets/sheet/sheet.json', 'design'), false)
   check('empty', isDriveRootAssetPath('', 'design'), false)
 
+  // What the web fs:readdir answers: the bridge's drive entries.
+  const entry = (name) => ({ path: `x/${name}`, name, size: 1, mod_time: 0, is_dir: false })
+  check('entry name, string', directoryEntryName('design.json'), 'design.json')
+  check('entry name, drive entry', directoryEntryName(entry('design.json')), 'design.json')
+  check(
+    'free name in an empty folder',
+    pickUniqueName([], 'design', '.json', ' ', null),
+    'design.json'
+  )
+  check(
+    'node readdir (strings): next name',
+    pickUniqueName(['design.json'], 'design', '.json', ' ', null),
+    'design 2.json'
+  )
+  check(
+    'web readdir (entries): next name, not design.json again',
+    pickUniqueName([entry('design.json'), entry('design 2.json')], 'design', '.json', ' ', null),
+    'design 3.json'
+  )
+  check(
+    'web: uuid folders do not number a new document',
+    pickUniqueName([entry('0f6b8c1e-2a8e-4c55-9a3f-1e2d3c4b5a69')], 'New Document', '', ' ', null),
+    'New Document'
+  )
 } finally {
   rmSync(work, { recursive: true, force: true })
 }
