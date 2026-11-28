@@ -93,6 +93,7 @@ import {
 } from '../utils/shareCache'
 import { nodeApi } from '../utils/shims/node'
 import { markFileReadable, markFileUnreadable } from '../utils/unreadableFiles'
+import { registerDocumentKind } from '../utils/documentContentGuard'
 import { awaitDriveReady } from '../utils/driveReady'
 import { CustomSurveyExtensionProps } from '../extensions/tiptap/CustomSurveyExtension/utils/common.utils'
 const t = (key: string) => get(base_)(key)
@@ -2233,6 +2234,8 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
     //   return this.path
     // }
     if (Utils.NON_WYSIWYG_FILE_EXTENSIONS_LIST.includes(this.extension)) {
+      // The web opens a document by its index.html, so this is its main file.
+      registerDocumentKind(this.path, this.info?.contentType)
       return this.path
     }
     const baseName = Utils.MAIN_DOCUMENT_FILE //  index.html file
@@ -2245,7 +2248,12 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
       })
     }
 
-    return this.getFilePath(baseName)
+    const mainFilePath = this.getFilePath(baseName)
+    // Every editor asks for this path before it writes the file: record the
+    // document's kind with it, so a spreadsheet document is never written
+    // without its <sheet> (dynadoc#133).
+    registerDocumentKind(mainFilePath, this.info?.contentType)
+    return mainFilePath
     // return this.getFilePath(`${Utils.MAIN_DOCUMENT_FILE_NAME}${Utils.MAIN_DOCUMENT_FILE_EXTENSION}`)
     // return this.getFilePath(`${baseName}.html`)
   }

@@ -430,6 +430,10 @@
   function handleClick() {
     if (typeof getPos === 'function') {
       ensureVisible()
+      // In a spreadsheet document the sheet fills the page and a click is a
+      // click on a cell. Selecting the whole node there meant the next key
+      // that reached the editor replaced the workbook (dynadoc#133).
+      if (_fillContainer) return
       editor.commands.setNodeSelection(getPos())
     }
   }
