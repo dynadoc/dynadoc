@@ -114,7 +114,7 @@ try {
     'word/footer1.xml': strToU8(`<w:ftr ${W}>${para(run('Pied unique'))}</w:ftr>`),
     'word/footnotes.xml': strToU8(
       `<w:footnotes ${W}><w:footnote w:type="separator" w:id="-1">${para('<w:r><w:separator/></w:r>')}</w:footnote>` +
-        `<w:footnote w:id="1">${para(run('Note de bas'))}</w:footnote></w:footnotes>`
+        `<w:footnote w:id="1">${para(run('Note de bas'))}${para(run('Voir '), textBox('Encadr\u00e9 en note'))}</w:footnote></w:footnotes>`
     ),
     'word/endnotes.xml': strToU8(
       `<w:endnotes ${W}><w:endnote w:id="1">${para(run('Note de fin'))}</w:endnote></w:endnotes>`
@@ -204,7 +204,8 @@ try {
         `<Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/></Relationships>`
     ),
     'xl/comments1.xml': strToU8(
-      `<comments ${NS}><authors><author>A</author></authors><commentList><comment ref="B3" authorId="0"><text><r><t>Vérifier le taux</t></r></text></comment></commentList></comments>`
+      `<comments ${NS}><authors><author>A</author><author>tc={00000000-0000-0000-0000-000000000001}</author></authors><commentList><comment ref="B3" authorId="0"><text><r><t>Vérifier le taux</t></r></text></comment>` +
+        `<comment ref="A1" authorId="1"><text><t>[Threaded comment]\n\nYour version of Excel allows you to read this threaded comment.\n\nComment:\n    Discussion fil</t></text></comment></commentList></comments>`
     ),
     'xl/threadedComments/threadedComment1.xml': strToU8(
       `<ThreadedComments><threadedComment ref="A1" id="{1}"><text>Discussion fil</text></threadedComment></ThreadedComments>`
@@ -247,7 +248,62 @@ try {
     'Page of & co'
   )
 
+  check(
+    'a text box in a footnote is anchored in the footnote',
+    labels(doc.segments, 'Encadr\u00e9 en note'),
+    ['text box 1 (footnote 1, paragraph 2), paragraph 1']
+  )
+  check(
+    'a threaded comment and its legacy copy for older Excel match once',
+    labels(book.segments, 'Discussion fil'),
+    ['Donn\u00e9es!A1 (threaded comment)']
+  )
+
+  const X = 'xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+  const prefixed = zipSync({
+    '_rels/.rels': strToU8(
+      `<Relationships><Relationship Id="rId1" Type="${REL}/officeDocument" Target="book/main.xml"/></Relationships>`
+    ),
+    'book/main.xml': strToU8(
+      `<x:workbook ${X} ${R}><x:sheets><x:sheet name="Pr\u00e9fixe" sheetId="1" r:id="rId1"/></x:sheets></x:workbook>`
+    ),
+    'book/_rels/main.xml.rels': strToU8(
+      `<Relationships><Relationship Id="rId1" Type="${REL}/worksheet" Target="s1.xml"/><Relationship Id="rId2" Type="${REL}/sharedStrings" Target="strings.xml"/></Relationships>`
+    ),
+    'book/strings.xml': strToU8(
+      `<x:sst ${X}><x:si><x:t>Valeur pr\u00e9fix\u00e9e</x:t></x:si></x:sst>`
+    ),
+    'book/s1.xml': strToU8(
+      `<x:worksheet ${X}><x:sheetData><x:row r="1"><x:c r="A1" t="s"><x:v>0</x:v></x:c><x:c r="B1"><x:f>SUM(A1)</x:f></x:c></x:row></x:sheetData></x:worksheet>`
+    )
+  })
+  const prefixedBook = extractOfficeText(prefixed, 'xlsx')
+  check(
+    'SpreadsheetML written with an x: prefix, workbook found through the package relationships',
+    prefixedBook.segments?.map((s) => [s.label, s.text]),
+    [
+      ['sheet name', 'Pr\u00e9fixe'],
+      ['Pr\u00e9fixe!A1', 'Valeur pr\u00e9fix\u00e9e'],
+      ['Pr\u00e9fixe!B1 (formula)', '=SUM(A1)']
+    ]
+  )
+
   log('limits and broken files')
+  const withMedia = zipSync({
+    'word/document.xml': strToU8(
+      `<w:document ${W}><w:body>${para(run('Avec image'))}</w:body></w:document>`
+    ),
+    'word/media/image1.png': new Uint8Array(3 * 1024 * 1024)
+  })
+  check(
+    'media is neither inflated nor counted against the limits',
+    extractOfficeText(withMedia, 'docx', {
+      maxTotalBytes: 1024 * 1024,
+      maxEntryBytes: 1024 * 1024,
+      maxEntries: 10
+    }).ok,
+    true
+  )
   const notZip = extractOfficeText(strToU8('not a zip at all'), 'docx')
   check('a file that is not a package is refused, without throwing', notZip.ok, false)
   const bomb = zipSync({ 'word/document.xml': new Uint8Array(3 * 1024 * 1024) })

@@ -16,9 +16,9 @@
  * tests/smoke bundles it on its own and another process can run the same code.
  */
 
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8 } from 'fflate'
 import { Parser } from 'htmlparser2'
-import { checkZipLimits, type ZipLimits } from '../../renderer/src/shared/zipLimits'
+import { inflateWithinLimits, type ZipLimits } from '../../renderer/src/shared/zipLimits'
 
 export type OfficeKind = 'docx' | 'xlsx'
 
@@ -50,20 +50,33 @@ export function officeKindOf(filePath: string): OfficeKind | null {
 
 type Attributes = Record<string, string>
 
-/** Runs a SAX pass over one XML part. */
+/** `x:c` and `c` are the same SpreadsheetML element: the prefix is free. */
+function localName(name: string): string {
+  const colon = name.indexOf(':')
+  return colon === -1 ? name : name.slice(colon + 1)
+}
+
+/**
+ * Runs a SAX pass over one XML part. With `local`, element names reach the
+ * handlers without their namespace prefix (SpreadsheetML written as `x:c` by
+ * some producers); WordprocessingML and DrawingML keep their prefixes, which
+ * those producers always write.
+ */
 function parseXml(
   xml: string,
   handlers: {
     open: (name: string, attributes: Attributes) => void
     text: (text: string) => void
     close: (name: string) => void
-  }
+  },
+  local = false
 ): void {
+  const named = local ? localName : (name: string): string => name
   const parser = new Parser(
     {
-      onopentag: (name, attributes) => handlers.open(name, attributes),
+      onopentag: (name, attributes) => handlers.open(named(name), attributes),
       ontext: (text) => handlers.text(text),
-      onclosetag: (name) => handlers.close(name)
+      onclosetag: (name) => handlers.close(named(name))
     },
     { xmlMode: true, decodeEntities: true }
   )
@@ -107,7 +120,7 @@ function docxPartSegments(part: string, xml: string): OfficeSegment[] {
   let inText = false
   let topParagraphs = 0
   let textBoxes = 0
-  const textBoxStack: Array<{ index: number; paragraphs: number; anchor: number }> = []
+  const textBoxStack: Array<{ index: number; paragraphs: number; anchor: string }> = []
   let note: string | null = null
   let noteParagraphs = 0
 
@@ -132,7 +145,15 @@ function docxPartSegments(part: string, xml: string): OfficeSegment[] {
         }
         case 'w:txbxContent': {
           textBoxes += 1
-          textBoxStack.push({ index: textBoxes, paragraphs: 0, anchor: topParagraphs })
+          // Anchored in the paragraph being read: a body paragraph, or one of
+          // the note or comment the box sits in.
+          textBoxStack.push({
+            index: textBoxes,
+            paragraphs: 0,
+            anchor: note
+              ? `${note}, paragraph ${noteParagraphs}`
+              : `${partLabel}, paragraph ${topParagraphs}`
+          })
           break
         }
         case 'w:p': {
@@ -140,7 +161,7 @@ function docxPartSegments(part: string, xml: string): OfficeSegment[] {
           const box = textBoxStack[textBoxStack.length - 1]
           if (box) {
             box.paragraphs += 1
-            label = `text box ${box.index} (${partLabel}, paragraph ${box.anchor}), paragraph ${box.paragraphs}`
+            label = `text box ${box.index} (${box.anchor}), paragraph ${box.paragraphs}`
           } else if (note) {
             noteParagraphs += 1
             label = `${note}, paragraph ${noteParagraphs}`
@@ -236,6 +257,7 @@ function resolveTarget(ownerPart: string, target: string): string {
 }
 
 function relsPathOf(part: string): string {
+  if (!part) return '_rels/.rels'
   const pieces = part.split('/')
   const name = pieces.pop()
   return [...pieces, '_rels', `${name}.rels`].join('/')
@@ -248,18 +270,22 @@ function readRelationships(
   const rels = files[relsPathOf(ownerPart)]
   if (!rels) return []
   const out: Array<{ id: string; type: string; target: string }> = []
-  parseXml(strFromU8(rels), {
-    open(name, attributes) {
-      if (name !== 'Relationship' || attributes.TargetMode === 'External') return
-      out.push({
-        id: attributes.Id,
-        type: attributes.Type || '',
-        target: resolveTarget(ownerPart, attributes.Target || '')
-      })
+  parseXml(
+    strFromU8(rels),
+    {
+      open(name, attributes) {
+        if (name !== 'Relationship' || attributes.TargetMode === 'External') return
+        out.push({
+          id: attributes.Id,
+          type: attributes.Type || '',
+          target: resolveTarget(ownerPart, attributes.Target || '')
+        })
+      },
+      text: () => undefined,
+      close: () => undefined
     },
-    text: () => undefined,
-    close: () => undefined
-  })
+    true
+  )
   return out
 }
 
@@ -303,22 +329,26 @@ function sharedStrings(files: Record<string, Uint8Array>, workbookPart: string):
   const strings: string[] = []
   const runs = collectRunText()
   let inItem = false
-  parseXml(strFromU8(bytes), {
-    open(name) {
-      if (name === 'si') inItem = true
-      if (inItem) runs.open(name)
-    },
-    text(text) {
-      if (inItem) runs.text(text)
-    },
-    close(name) {
-      if (inItem) runs.close(name)
-      if (name === 'si') {
-        strings.push(runs.take())
-        inItem = false
+  parseXml(
+    strFromU8(bytes),
+    {
+      open(name) {
+        if (name === 'si') inItem = true
+        if (inItem) runs.open(name)
+      },
+      text(text) {
+        if (inItem) runs.text(text)
+      },
+      close(name) {
+        if (inItem) runs.close(name)
+        if (name === 'si') {
+          strings.push(runs.take())
+          inItem = false
+        }
       }
-    }
-  })
+    },
+    true
+  )
   return strings
 }
 
@@ -353,67 +383,71 @@ function sheetSegments(
   let headerFooter: string | null = null
   let headerFooterText = ''
 
-  parseXml(strFromU8(bytes), {
-    open(name, attributes) {
-      if (name === 'c') {
-        cell = { ref: attributes.r || '', type: attributes.t || 'n' }
-        value = ''
-        formula = ''
-        return
-      }
-      if (!cell) {
-        if (/^(odd|even|first)(Header|Footer)$/.test(name)) {
-          headerFooter = name
-          headerFooterText = ''
+  parseXml(
+    strFromU8(bytes),
+    {
+      open(name, attributes) {
+        if (name === 'c') {
+          cell = { ref: attributes.r || '', type: attributes.t || 'n' }
+          value = ''
+          formula = ''
+          return
         }
-        return
-      }
-      if (name === 'v') inValue = true
-      else if (name === 'f') inFormula = true
-      else if (name === 'is') inline = true
-      if (inline) inlineRuns.open(name)
-    },
-    text(text) {
-      if (headerFooter) headerFooterText += text
-      if (!cell) return
-      if (inValue) value += text
-      else if (inFormula) formula += text
-      else if (inline) inlineRuns.text(text)
-    },
-    close(name) {
-      if (headerFooter === name) {
-        const text = stripHeaderFooterCodes(headerFooterText)
-        const kind = name.replace(/(Header|Footer)$/, ' $1').toLowerCase()
-        if (text) segments.push({ part, label: `${sheetName} (${kind})`, text })
-        headerFooter = null
-        return
-      }
-      if (!cell) return
-      if (inline) inlineRuns.close(name)
-      if (name === 'v') inValue = false
-      else if (name === 'f') inFormula = false
-      else if (name === 'is') inline = false
-      else if (name === 'c') {
-        const current: { ref: string; type: string } = cell
-        let text = ''
-        if (current.type === 's') text = strings[Number(value)] ?? ''
-        else if (current.type === 'inlineStr') text = inlineRuns.take()
-        else if (current.type === 'b')
-          text = value === '1' ? 'TRUE' : value === '0' ? 'FALSE' : value
-        else text = value
-        if (text) segments.push({ part, label: `${sheetName}!${current.ref}`, text })
-        // A shared formula has its text on its first cell only; the others are empty.
-        if (formula.trim()) {
-          segments.push({
-            part,
-            label: `${sheetName}!${current.ref} (formula)`,
-            text: `=${formula}`
-          })
+        if (!cell) {
+          if (/^(odd|even|first)(Header|Footer)$/.test(name)) {
+            headerFooter = name
+            headerFooterText = ''
+          }
+          return
         }
-        cell = null
+        if (name === 'v') inValue = true
+        else if (name === 'f') inFormula = true
+        else if (name === 'is') inline = true
+        if (inline) inlineRuns.open(name)
+      },
+      text(text) {
+        if (headerFooter) headerFooterText += text
+        if (!cell) return
+        if (inValue) value += text
+        else if (inFormula) formula += text
+        else if (inline) inlineRuns.text(text)
+      },
+      close(name) {
+        if (headerFooter === name) {
+          const text = stripHeaderFooterCodes(headerFooterText)
+          const kind = name.replace(/(Header|Footer)$/, ' $1').toLowerCase()
+          if (text) segments.push({ part, label: `${sheetName} (${kind})`, text })
+          headerFooter = null
+          return
+        }
+        if (!cell) return
+        if (inline) inlineRuns.close(name)
+        if (name === 'v') inValue = false
+        else if (name === 'f') inFormula = false
+        else if (name === 'is') inline = false
+        else if (name === 'c') {
+          const current: { ref: string; type: string } = cell
+          let text = ''
+          if (current.type === 's') text = strings[Number(value)] ?? ''
+          else if (current.type === 'inlineStr') text = inlineRuns.take()
+          else if (current.type === 'b')
+            text = value === '1' ? 'TRUE' : value === '0' ? 'FALSE' : value
+          else text = value
+          if (text) segments.push({ part, label: `${sheetName}!${current.ref}`, text })
+          // A shared formula has its text on its first cell only; the others are empty.
+          if (formula.trim()) {
+            segments.push({
+              part,
+              label: `${sheetName}!${current.ref} (formula)`,
+              text: `=${formula}`
+            })
+          }
+          cell = null
+        }
       }
-    }
-  })
+    },
+    true
+  )
   return segments
 }
 
@@ -421,7 +455,8 @@ function commentSegments(
   files: Record<string, Uint8Array>,
   sheetName: string,
   part: string,
-  threaded: boolean
+  threaded: boolean,
+  skipRefs: ReadonlySet<string> = new Set()
 ): OfficeSegment[] {
   const bytes = files[part]
   if (!bytes) return []
@@ -431,49 +466,53 @@ function commentSegments(
   let buffer = ''
   let inText = 0
   const runs = collectRunText()
-  parseXml(strFromU8(bytes), {
-    open(name, attributes) {
-      if (name === container) {
-        ref = attributes.ref || ''
-        buffer = ''
-        return
-      }
-      if (ref === null) return
-      if (threaded) {
-        if (name === 'text') inText += 1
-      } else {
-        runs.open(name)
-      }
-    },
-    text(text) {
-      if (ref === null) return
-      if (threaded) {
-        if (inText > 0) buffer += text
-      } else {
-        runs.text(text)
-      }
-    },
-    close(name) {
-      if (ref === null) return
-      if (name === container) {
-        const text = threaded ? buffer : runs.take()
-        if (text.trim()) {
-          segments.push({
-            part,
-            label: `${sheetName}!${ref} (${threaded ? 'threaded comment' : 'comment'})`,
-            text
-          })
+  parseXml(
+    strFromU8(bytes),
+    {
+      open(name, attributes) {
+        if (name === container) {
+          ref = attributes.ref || ''
+          buffer = ''
+          return
         }
-        ref = null
-        return
+        if (ref === null) return
+        if (threaded) {
+          if (name === 'text') inText += 1
+        } else {
+          runs.open(name)
+        }
+      },
+      text(text) {
+        if (ref === null) return
+        if (threaded) {
+          if (inText > 0) buffer += text
+        } else {
+          runs.text(text)
+        }
+      },
+      close(name) {
+        if (ref === null) return
+        if (name === container) {
+          const text = threaded ? buffer : runs.take()
+          if (text.trim() && !skipRefs.has(ref)) {
+            segments.push({
+              part,
+              label: `${sheetName}!${ref} (${threaded ? 'threaded comment' : 'comment'})`,
+              text
+            })
+          }
+          ref = null
+          return
+        }
+        if (threaded) {
+          if (name === 'text') inText -= 1
+        } else {
+          runs.close(name)
+        }
       }
-      if (threaded) {
-        if (name === 'text') inText -= 1
-      } else {
-        runs.close(name)
-      }
-    }
-  })
+    },
+    true
+  )
   return segments
 }
 
@@ -534,7 +573,11 @@ function drawingSegments(
 }
 
 function xlsxSegments(files: Record<string, Uint8Array>): OfficeSegment[] {
-  const workbookPart = 'xl/workbook.xml'
+  // The workbook is the package's officeDocument relationship; Excel always
+  // puts it at xl/workbook.xml, which is the fallback.
+  const workbookPart =
+    readRelationships(files, '').find((rel) => rel.type.endsWith('/officeDocument'))?.target ??
+    'xl/workbook.xml'
   const workbook = files[workbookPart]
   if (!workbook) return []
   const relations = readRelationships(files, workbookPart)
@@ -542,25 +585,29 @@ function xlsxSegments(files: Record<string, Uint8Array>): OfficeSegment[] {
   const definedNames: Array<{ name: string; ref: string }> = []
   let definedName: { name: string; ref: string } | null = null
 
-  parseXml(strFromU8(workbook), {
-    open(name, attributes) {
-      if (name === 'sheet') {
-        const rel = relations.find((item) => item.id === attributes['r:id'])
-        sheets.push({ name: attributes.name || '', part: rel?.target ?? null })
-      } else if (name === 'definedName') {
-        definedName = { name: attributes.name || '', ref: '' }
+  parseXml(
+    strFromU8(workbook),
+    {
+      open(name, attributes) {
+        if (name === 'sheet') {
+          const rel = relations.find((item) => item.id === attributes['r:id'])
+          sheets.push({ name: attributes.name || '', part: rel?.target ?? null })
+        } else if (name === 'definedName') {
+          definedName = { name: attributes.name || '', ref: '' }
+        }
+      },
+      text(text) {
+        if (definedName) definedName.ref += text
+      },
+      close(name) {
+        if (name === 'definedName' && definedName) {
+          definedNames.push(definedName)
+          definedName = null
+        }
       }
     },
-    text(text) {
-      if (definedName) definedName.ref += text
-    },
-    close(name) {
-      if (name === 'definedName' && definedName) {
-        definedNames.push(definedName)
-        definedName = null
-      }
-    }
-  })
+    true
+  )
 
   const strings = sharedStrings(files, workbookPart)
   const segments: OfficeSegment[] = []
@@ -577,15 +624,24 @@ function xlsxSegments(files: Record<string, Uint8Array>): OfficeSegment[] {
   for (const sheet of sheets) {
     if (!sheet.part) continue
     segments.push(...sheetSegments(files, sheet.name, sheet.part, strings))
-    for (const rel of readRelationships(files, sheet.part)) {
+    const sheetRels = readRelationships(files, sheet.part)
+    // Excel 365 writes each threaded comment twice: in threadedComments, and
+    // as a legacy note in commentsN.xml (author `tc={GUID}`) for older
+    // readers. Read the threaded one; skip the legacy copy of the same cell.
+    const threadedSegments = sheetRels
+      .filter((rel) => rel.type.endsWith('/threadedComment'))
+      .flatMap((rel) => commentSegments(files, sheet.name, rel.target, true))
+    const threadedRefs = new Set(
+      threadedSegments.map((segment) => /!([^ ]+) \(/.exec(segment.label)?.[1] ?? '')
+    )
+    for (const rel of sheetRels) {
       if (rel.type.endsWith('/comments')) {
-        segments.push(...commentSegments(files, sheet.name, rel.target, false))
-      } else if (rel.type.endsWith('/threadedComment')) {
-        segments.push(...commentSegments(files, sheet.name, rel.target, true))
+        segments.push(...commentSegments(files, sheet.name, rel.target, false, threadedRefs))
       } else if (rel.type.endsWith('/drawing')) {
         segments.push(...drawingSegments(files, sheet.name, rel.target))
       }
     }
+    segments.push(...threadedSegments)
   }
   return segments
 }
@@ -594,7 +650,8 @@ function xlsxSegments(files: Record<string, Uint8Array>): OfficeSegment[] {
 function wantedPart(kind: OfficeKind, name: string): boolean {
   if (name.endsWith('.rels')) return true
   if (kind === 'docx') return DOCX_PARTS.test(name)
-  return /^xl\/.*\.xml$/.test(name)
+  // Spreadsheet parts are found through relationships, wherever they are.
+  return name.endsWith('.xml')
 }
 
 /**
@@ -607,20 +664,18 @@ export function extractOfficeText(
   kind: OfficeKind,
   limits: ZipLimits = OFFICE_SEARCH_ZIP_LIMITS
 ): OfficeExtraction {
-  const problem = checkZipLimits(
+  // One pass: only the parts read below are inflated, and counted against the
+  // limits as they inflate. Images and other media are never inflated.
+  const inflated = inflateWithinLimits(
     bytes,
     limits,
     kind === 'docx'
       ? { file: 'Word (.docx) file', thing: 'document' }
-      : { file: 'Excel (.xlsx) file', thing: 'workbook' }
+      : { file: 'Excel (.xlsx) file', thing: 'workbook' },
+    (name) => wantedPart(kind, name)
   )
-  if (problem) return { ok: false, reason: problem }
-  let files: Record<string, Uint8Array>
-  try {
-    files = unzipSync(bytes, { filter: (file) => wantedPart(kind, file.name) })
-  } catch {
-    return { ok: false, reason: 'not a valid package' }
-  }
+  if (inflated.problem !== null) return { ok: false, reason: inflated.problem }
+  const files = inflated.files
   try {
     return { ok: true, segments: kind === 'docx' ? docxSegments(files) : xlsxSegments(files) }
   } catch {
