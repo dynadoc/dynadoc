@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/dynadoc/dynadoc/compare/v1.5.0...v1.5.1) (2026-11-28)
+
+
+### Fixes
+
+* **persistence:** keep first-visit documents open ([#127](https://github.com/dynadoc/dynadoc/issues/127)) ([82f67db](https://github.com/dynadoc/dynadoc/commit/82f67db85ac2979f30307293e3ea62ce773515a1)), closes [#126](https://github.com/dynadoc/dynadoc/issues/126)
+
 ## [1.5.0](https://github.com/dynadoc/dynadoc/compare/v1.4.1...v1.5.0) (2026-11-27)
 
 
