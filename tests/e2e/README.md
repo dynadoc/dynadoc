@@ -88,10 +88,6 @@ Each of these is a `test.fixme` or `test.skip` with its reason in the code, so
 it shows up in every report:
 
 - **Known bugs** (fixme; remove the fixme with the fix and the test guards it):
-  - a document created on the very first visit closes a moment after it opens
-    (persisted stores switch from localStorage to the settings store on their
-    first save and re-read an empty list); `shell.spec.ts`. The suite opens
-    the app as a returning user for this reason;
   - Ctrl+Z undoes two steps (editor keymap plus the window-level shortcut in
     `LeftQuickAccessToolBar.svelte`); `set-content.spec.ts`;
   - the in-app context menu never appears on the web (`_showContextMenu` is a

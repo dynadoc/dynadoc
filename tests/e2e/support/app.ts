@@ -5,7 +5,7 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { STUB_ROOT } from './env'
+import { SETTINGS_FILE, STUB_ROOT } from './env'
 
 export type DocumentKind = 'Document' | 'Spreadsheet' | 'Presentation' | 'Design'
 
@@ -17,14 +17,12 @@ export function dashboardHeading(page: Page): Locator {
 /**
  * Opens the app against the stub and waits for the dashboard.
  *
- * It loads the page twice, on purpose. On the very first visit the web client
- * starts its persisted stores in localStorage, then the session arrives and
- * the first save moves them to the server-side settings store, re-reading
- * them from there: a document created in that window is dropped from the open
- * tabs a moment after it opens. A returning user never meets it, because the
- * session is already stored when the page loads, so the suite opens the app
- * the way a returning user does. The first-visit case is tracked as a fixme in
- * shell.spec.ts.
+ * By default it loads the page twice, the way a returning user arrives: the
+ * session is already stored when the page loads, so the persisted stores start
+ * on the settings backend. `firstVisitOnly` loads it once, the way a new
+ * visitor arrives: the stores start in localStorage and switch to the settings
+ * store when the session lands. shell.spec.ts covers a document created in
+ * that window.
  */
 export async function openApp(
   page: Page,
@@ -79,6 +77,49 @@ export async function newTextDocument(page: Page): Promise<Locator> {
  */
 export function uniqueToken(): string {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+}
+
+/**
+ * Waits until the list of open documents has been persisted to the settings
+ * backend with at least one entry. The web client persists UI state in the
+ * stub's settings store (a flat JSON object beside the drive), and only once a
+ * session exists: a non-empty list here means the session arrived, the stores
+ * switched from localStorage to settings, and the open document survived that
+ * switch rather than being dropped by an empty re-read.
+ */
+export async function expectOpenDocumentPersisted(): Promise<void> {
+  const openDocumentCount = (): number => {
+    let store: Record<string, unknown>
+    try {
+      store = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))
+    } catch {
+      return 0
+    }
+    const entry = Object.entries(store).find(([key]) => key.endsWith('documentEditors.store.json'))
+    return Array.isArray(entry?.[1]) ? (entry![1] as unknown[]).length : 0
+  }
+  await expect
+    .poll(openDocumentCount, {
+      message: 'the open-document list is saved to the settings store',
+      timeout: 30_000
+    })
+    .toBeGreaterThan(0)
+}
+
+/**
+ * The open-document list persisted to the settings store, serialized back to a
+ * string, or '' when none is saved yet. Used to assert what did (and did not)
+ * reach the account's server-side preferences.
+ */
+export function savedOpenDocumentsText(): string {
+  let store: Record<string, unknown>
+  try {
+    store = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))
+  } catch {
+    return ''
+  }
+  const entry = Object.entries(store).find(([key]) => key.endsWith('documentEditors.store.json'))
+  return entry ? JSON.stringify(entry[1]) : ''
 }
 
 /** Types text one key at a time, the way a person does (the @ menu reacts per key). */
