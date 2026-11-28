@@ -47,6 +47,7 @@ import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { emptyOrgState, orgVariableChannels } from './org-variables.mjs'
 
 const ROOT = path.resolve(process.env.DYNADOC_STUB_ROOT || path.join(os.homedir(), '.dynadoc-stub'))
 const PORT = Number(process.env.DYNADOC_STUB_PORT || 7070)
@@ -582,6 +583,59 @@ const channels = {
   }
 }
 
+// --- organization variables ---------------------------------------------------
+/**
+ * The five `vars:org:*` channels of docs/organization-variables.md, in
+ * org-variables.mjs. The store is one file next to the drive, like the
+ * settings store and for the same reason: it is not a document and must not
+ * be listed as one. Writes are serialized, as in `settings:set`.
+ *
+ * There is one organization, `local-stub`, and every write is signed by the
+ * local user: the stub verifies no token, so it cannot tell two people apart,
+ * and does not pretend to. Two browsers on the same stub are two clients of
+ * that one user, which is what it takes to show one client seeing another's
+ * change; the revision rule works the same whoever wrote.
+ */
+const ORG_VARIABLES_FILE = `${ROOT}.org-variables.json`
+const ORG_USER = { id: 'local-stub', name: 'Local stub user' }
+let orgWrites = Promise.resolve()
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- plain .mjs
+async function readOrgState() {
+  try {
+    return { ...emptyOrgState(), ...JSON.parse(await fs.readFile(ORG_VARIABLES_FILE, 'utf8')) }
+  } catch {
+    return emptyOrgState()
+  }
+}
+
+for (const channel of [
+  'vars:org:list',
+  'vars:org:get',
+  'vars:org:set',
+  'vars:org:delete',
+  'vars:org:history'
+]) {
+  channels[channel] = (args, { response }) => {
+    const run = orgWrites.then(async () => {
+      const state = await readOrgState()
+      const answer = orgVariableChannels({ state, user: () => ORG_USER })[channel](args[0] || {})
+      if (answer.status === 200 && (channel === 'vars:org:set' || channel === 'vars:org:delete')) {
+        const temp = `${ORG_VARIABLES_FILE}.${process.pid}.tmp`
+        await fs.writeFile(temp, JSON.stringify(state, null, 2))
+        await fs.rename(temp, ORG_VARIABLES_FILE)
+      }
+      // A conflict or a refusal is a real answer with its own status and
+      // body, not a stub limitation: sent as the bridge sends it.
+      if (answer.status === 200) sendJson(response, 200, { ok: true, data: answer.body })
+      else sendJson(response, answer.status, answer.body)
+      return { handled: true }
+    })
+    orgWrites = run.catch(() => {})
+    return run
+  }
+}
+
 // Aliases, exactly as the bridge groups them in one case each.
 channels['read-file'] = channels['fs:readFile']
 channels['read-file-content'] = channels['fs:readFile']
@@ -640,8 +694,9 @@ function unsupportedChannel(channel) {
   }
   return refusal(
     `channel "${channel}" is not implemented. The stub answers the filesystem channels ` +
-      `against ${ROOT}, the boot path constants, the preference store and the two drive ` +
-      'channels that are the filesystem under another name. Everything else needs the ' +
+      `against ${ROOT}, the boot path constants, the preference store, the organization ` +
+      'variables and the two drive channels that are the filesystem under another name. ' +
+      'Everything else needs the ' +
       'full Dynadoc bridge, which is not part of the open core client. The stub refuses ' +
       'rather than return an empty or successful answer it cannot stand behind. ' +
       'See tools/stub-bridge/README.md.'

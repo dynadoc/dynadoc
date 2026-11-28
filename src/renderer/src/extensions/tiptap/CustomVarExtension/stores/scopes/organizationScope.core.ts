@@ -1,16 +1,19 @@
 // The Organization scope: variables shared by everyone in the organization,
-// read from and written to the API bridge (docs/organization-variables.md).
+// read from and written to the API bridge. Contract:
+// docs/organization-variables.md.
 //
-// - Every value the bridge holds has a version. A write names the version it
-//   was made from (`baseVersion`); the bridge refuses it with 409 when the
-//   value has changed since, and the client keeps both sides as a conflict
-//   until the user picks one.
+// - The bridge keeps one revision counter per organization; each write gets
+//   the next one. A write names the revision it was made from
+//   (`baseRevision`, null to create); the bridge refuses it with 409 when the
+//   variable has been written since, and the client keeps both sides as a
+//   conflict until the user picks one. Nothing is overwritten silently.
 // - What the bridge last answered is kept in a cache, so the scope still has
 //   its values offline. Changes made offline wait in the cache too and are
-//   sent when the bridge answers again; the version rule above decides
+//   sent when the bridge answers again; the revision rule above decides
 //   between two people who changed the same variable offline.
-// - The status says when the copy is stale: the bridge could not be reached,
-//   or the copy is older than `staleAfterMs`.
+// - The status says how current the copy is: fresh, stale (older than
+//   `staleAfterMs`, or the last read was refused), offline (the bridge could
+//   not be reached) or unavailable (the bridge does not serve the scope).
 //
 // The bridge, the cache and the clock are injected, so the smoke test drives
 // every path by hand. Wiring for the app: organizationScope.ts.
@@ -18,9 +21,9 @@ import type { ScopeChange, ScopeStatus, StoredVariable, VariableScopeDriver } fr
 
 export type OrgUser = { id?: string; name?: string; email?: string }
 
-/** One version of an organization variable; `value: null` is a deletion. */
+/** One revision of an organization variable; `value: null` is a deletion. */
 export type OrgVersion = {
-  version: number
+  revision: number
   value: StoredVariable | null
   updatedAt: string
   updatedBy: OrgUser | null
@@ -28,29 +31,40 @@ export type OrgVersion = {
 
 export type OrgVariableRecord = OrgVersion & {
   id: string
-  /** The organization-wide revision at which this version was written. */
-  revision: number
-  /** The version before this one, or null for the first. */
+  createdAt: string
+  createdBy: OrgUser | null
+  /** The revision before this one, or null for the first. */
   previous: OrgVersion | null
+  /** False when this user may read the variable but not change it. */
+  canWrite: boolean
 }
 
-/** What a bridge call answered: the HTTP status (0: not reached) and the JSON body. */
+/**
+ * What a bridge call answered: the HTTP status (0: the bridge was not
+ * reached) and, on success, the channel's `data`; otherwise the error body.
+ */
 export type BridgeResponse = {
   status: number
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON from the bridge, checked field by field
   body: any
 }
 
+/** The five `vars:org:*` channels. */
 export interface OrgBridge {
   list(payload: { since?: number }): Promise<BridgeResponse>
-  put(payload: { id: string; baseVersion: number; value: StoredVariable }): Promise<BridgeResponse>
-  remove(payload: { id: string; baseVersion: number }): Promise<BridgeResponse>
+  get(payload: { id: string }): Promise<BridgeResponse>
+  set(payload: {
+    id: string
+    value: StoredVariable
+    baseRevision: number | null
+  }): Promise<BridgeResponse>
+  delete(payload: { id: string; baseRevision: number }): Promise<BridgeResponse>
   history(payload: { id: string; limit?: number }): Promise<BridgeResponse>
 }
 
-type Pending = { value: StoredVariable | null; baseVersion: number }
+type Pending = { value: StoredVariable | null; baseRevision: number | null }
 
-/** A write the bridge refused: `theirs` is what it holds now. */
+/** A write the bridge refused: `theirs` is what it holds now (null: deleted). */
 export type OrgConflict = {
   id: string
   mine: StoredVariable | null
@@ -58,9 +72,10 @@ export type OrgConflict = {
 }
 
 /** A write the bridge refused for another reason than a conflict. */
-export type OrgWriteError = { id: string; status: number; message: string }
+export type OrgWriteError = { id: string; status: number; error: string; message: string }
 
 export type OrgCacheSnapshot = {
+  org: string | null
   revision: number
   syncedAt: number | null
   records: Record<string, OrgVariableRecord>
@@ -87,17 +102,20 @@ export type OrganizationScopeOptions = {
   clearTimer?: (handle: unknown) => void
 }
 
-export type OrgStatus = ScopeStatus & { lastWriteError: OrgWriteError | null }
+export type OrgStatus = ScopeStatus & {
+  org: string | null
+  lastWriteError: OrgWriteError | null
+}
 
 export interface OrganizationScope extends VariableScopeDriver {
   /** Reads what changed on the bridge since the last read, then sends pending writes. */
   refresh(): Promise<void>
   /** Sends pending writes now. */
   flush(): Promise<void>
-  /** The version this client holds: who changed it, when, and the value before. */
+  /** The revision this client holds: who changed it, when, and the value before. */
   meta(id: string): OrgVariableRecord | null
-  /** Every version the bridge keeps, newest first; null when it cannot say. */
-  history(id: string, limit?: number): Promise<OrgVariableRecord[] | null>
+  /** Every revision the bridge keeps, newest first; null when it cannot say. */
+  history(id: string, limit?: number): Promise<OrgVersion[] | null>
   conflicts(): OrgConflict[]
   /** `mine` writes the local value over theirs; `theirs` drops the local value. */
   resolveConflict(id: string, keep: 'mine' | 'theirs'): Promise<void>
@@ -120,6 +138,19 @@ export function stableJson(value: unknown): string {
     .join(',')}}`
 }
 
+// Fields that only mean something inside one document; the contract leaves
+// them out of an organization value.
+const DOCUMENT_ONLY_FIELDS = ['documentId', 'nodeId', 'row', 'col', 'coord']
+
+/** The value as the bridge stores it. */
+export function toOrgValue(value: StoredVariable): StoredVariable {
+  const out: StoredVariable = {}
+  for (const [key, field] of Object.entries(value)) {
+    if (!DOCUMENT_ONLY_FIELDS.includes(key) && field !== undefined) out[key] = field
+  }
+  return out
+}
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
@@ -132,31 +163,42 @@ function toUser(raw: unknown): OrgUser | null {
   return user
 }
 
-function toVersion(raw: unknown): OrgVersion | null {
-  if (!isObject(raw) || !Number.isInteger(raw.version)) return null
+/** One revision from the bridge, or null when it does not have the contract's shape. */
+export function toVersion(raw: unknown): OrgVersion | null {
+  if (!isObject(raw) || !Number.isInteger(raw.revision)) return null
   return {
-    version: raw.version as number,
-    value: isObject(raw.value) ? (raw.value as StoredVariable) : null,
+    revision: raw.revision as number,
+    value: raw.deleted === true ? null : isObject(raw.value) ? (raw.value as StoredVariable) : null,
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : '',
     updatedBy: toUser(raw.updatedBy)
   }
 }
 
-/** A record from the bridge, or null when it does not have the contract's shape. */
+/** A variable from the bridge, or null when it does not have the contract's shape. */
 export function toRecord(raw: unknown): OrgVariableRecord | null {
   if (!isObject(raw) || typeof raw.id !== 'string' || !raw.id) return null
   const version = toVersion(raw)
-  if (!version) return null
+  if (!version || !version.value) return null
   return {
     ...version,
     id: raw.id,
-    revision: Number.isInteger(raw.revision) ? (raw.revision as number) : 0,
-    previous: toVersion(raw.previous)
+    createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : version.updatedAt,
+    createdBy: toUser(raw.createdBy) || version.updatedBy,
+    previous: toVersion(raw.previous),
+    canWrite: raw.canWrite !== false
   }
 }
 
+const errorCode = (response: BridgeResponse): string => String(response?.body?.error || '')
+
 const errorMessage = (response: BridgeResponse): string =>
   String(response?.body?.message || response?.body?.error || `HTTP ${response?.status}`)
+
+/** A bridge that does not know the channel: an older bridge, or a stub without it. */
+const isUnknownChannel = (response: BridgeResponse): boolean =>
+  response.status === 501 ||
+  ((response.status === 400 || response.status === 404) &&
+    /not implemented|unsupported channel|unknown channel/i.test(errorMessage(response)))
 
 async function call(fn: () => Promise<BridgeResponse>): Promise<BridgeResponse> {
   try {
@@ -179,6 +221,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   const clearTimer =
     options.clearTimer || ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
 
+  let org: string | null = null
   let records = new Map<string, OrgVariableRecord>()
   let pending = new Map<string, Pending>()
   let conflicts = new Map<string, OrgConflict>()
@@ -187,6 +230,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   let hasFullList = false
   let hydrated = false
   let unavailable = false
+  let offline = false
   let reason: ScopeStatus['reason'] | undefined
   let lastWriteError: OrgWriteError | null = null
   let listCache: Record<string, StoredVariable> | null = null
@@ -213,20 +257,24 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       if (record) records.set(record.id, record)
     }
     for (const [id, entry] of Object.entries(snapshot.pending || {})) {
-      if (entry && Number.isInteger(entry.baseVersion)) pending.set(id, entry)
+      if (entry && (entry.baseRevision === null || Number.isInteger(entry.baseRevision))) {
+        pending.set(id, entry)
+      }
     }
     for (const [id, entry] of Object.entries(snapshot.conflicts || {})) {
       if (entry) conflicts.set(id, { id, mine: entry.mine ?? null, theirs: toRecord(entry.theirs) })
     }
+    org = typeof snapshot.org === 'string' ? snapshot.org : null
     revision = Number.isInteger(snapshot.revision) ? snapshot.revision : 0
     syncedAt = typeof snapshot.syncedAt === 'number' ? snapshot.syncedAt : null
-    hasFullList = records.size > 0 || revision > 0
+    hasFullList = syncedAt !== null
     listCache = null
   }
 
   function persist(): void {
     try {
       options.cache?.write({
+        org,
         revision,
         syncedAt,
         records: Object.fromEntries(records),
@@ -245,12 +293,19 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   }
 
   function status(): OrgStatus {
-    const base = { syncedAt, pending: pending.size, conflicts: conflicts.size, lastWriteError }
-    if (unavailable) return { ...base, state: 'unavailable' }
-    if (reason) return { ...base, state: syncedAt || records.size ? 'stale' : 'loading', reason }
+    const base = {
+      org,
+      syncedAt,
+      pending: pending.size,
+      conflicts: conflicts.size,
+      lastWriteError
+    }
+    if (unavailable) return { ...base, state: 'unavailable', ...(reason ? { reason } : {}) }
+    if (offline) return { ...base, state: 'offline' }
+    if (reason) return { ...base, state: syncedAt ? 'stale' : 'loading', reason }
     if (syncedAt === null) return { ...base, state: 'loading' }
     if (now() - syncedAt > staleAfterMs) return { ...base, state: 'stale' }
-    return { ...base, state: 'live' }
+    return { ...base, state: 'fresh' }
   }
 
   function notifyStatus(): void {
@@ -278,12 +333,14 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
 
   // Updates records and reports the ids whose value, as this client shows
   // it, changed.
-  function applyRecords(next: OrgVariableRecord[], full: boolean): ScopeChange[] {
+  function applyList(
+    next: OrgVariableRecord[],
+    deleted: { id: string; revision: number }[],
+    full: boolean
+  ): ScopeChange[] {
     const before = new Map<string, string>()
-    const touched = new Set<string>()
     const remember = (id: string): void => {
       if (!before.has(id)) before.set(id, stableJson(effective(id)))
-      touched.add(id)
     }
     if (full) {
       const ids = new Set(next.map((record) => record.id))
@@ -293,19 +350,37 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
         records.delete(id)
       }
     }
+    for (const { id, revision: at } of deleted) {
+      const current = records.get(id)
+      if (current && current.revision > at) continue
+      remember(id)
+      records.delete(id)
+    }
     for (const record of next) {
       const current = records.get(record.id)
-      if (current && current.version > record.version) continue
+      if (current && current.revision > record.revision) continue
       remember(record.id)
       records.set(record.id, record)
     }
     listCache = null
     const changes: ScopeChange[] = []
-    for (const id of touched) {
+    for (const [id, was] of before) {
       const value = effective(id)
-      if (stableJson(value) !== before.get(id)) changes.push({ id, value })
+      if (stableJson(value) !== was) changes.push({ id, value })
     }
     return changes
+  }
+
+  // Another organization than the cached one: nothing of it applies here.
+  function forgetOrganization(): ScopeChange[] {
+    const gone = Object.keys(listValues()).map((id) => ({ id, value: null }))
+    records = new Map()
+    pending = new Map()
+    conflicts = new Map()
+    revision = 0
+    hasFullList = false
+    listCache = null
+    return gone
   }
 
   async function doRefresh(): Promise<void> {
@@ -316,30 +391,51 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       notifyStatus()
       return
     }
-    const since = hasFullList ? revision : undefined
-    const response = await call(() => bridge.list(since === undefined ? {} : { since }))
+    let since = hasFullList ? revision : undefined
+    let response = await call(() => bridge.list(since === undefined ? {} : { since }))
+    let dropped: ScopeChange[] = []
+    if (
+      response.status === 200 &&
+      typeof response.body?.org === 'string' &&
+      org !== null &&
+      response.body.org !== org
+    ) {
+      dropped = forgetOrganization()
+      since = undefined
+      response = await call(() => bridge.list({}))
+    }
     if (response.status === 200 && Array.isArray(response.body?.variables)) {
       const list = (response.body.variables as unknown[])
         .map(toRecord)
         .filter((record): record is OrgVariableRecord => Boolean(record))
+      const deleted = (Array.isArray(response.body.deleted) ? response.body.deleted : []).filter(
+        (entry: unknown) =>
+          isObject(entry) && typeof entry.id === 'string' && Number.isInteger(entry.revision)
+      )
       // `full`: the bridge no longer keeps changes as far back as `since`
       // and sent everything instead.
       const full = since === undefined || response.body.full === true
-      const changes = applyRecords(list, full)
+      const changes = applyList(list, deleted, full)
+      if (typeof response.body.org === 'string') org = response.body.org
       if (Number.isInteger(response.body.revision)) revision = response.body.revision
       hasFullList = true
       syncedAt = now()
       unavailable = false
+      offline = false
       reason = undefined
       persist()
-      emit(changes)
+      emit([...dropped, ...changes])
       notifyStatus()
       if (pending.size) await flush()
       return
     }
-    if (response.status === 404 || response.status === 501) unavailable = true
-    else if (response.status === 401 || response.status === 403) reason = 'unauthorized'
-    else if (response.status === 0 || response.status >= 500) reason = 'offline'
+    emit(dropped)
+    if (isUnknownChannel(response)) unavailable = true
+    else if (response.status === 401) {
+      unavailable = true
+      reason = 'unauthorized'
+    } else if (response.status === 403) reason = 'unauthorized'
+    else if (response.status === 0 || response.status >= 500) offline = true
     else reason = 'error'
     notifyStatus()
   }
@@ -361,23 +457,36 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     }, flushDelayMs)
   }
 
-  // One write. Returns false when the bridge cannot be reached, so the loop
-  // stops and the rest waits for the next refresh.
+  // One write. Returns false when the bridge cannot take writes now, so the
+  // loop stops and the rest waits for the next refresh.
   async function send(bridge: OrgBridge, id: string, entry: Pending): Promise<boolean> {
+    if (entry.value === null && entry.baseRevision === null) {
+      // Created and deleted before the bridge heard of it.
+      pending.delete(id)
+      return true
+    }
     const response = await call(() =>
       entry.value === null
-        ? bridge.remove({ id, baseVersion: entry.baseVersion })
-        : bridge.put({ id, baseVersion: entry.baseVersion, value: entry.value })
+        ? bridge.delete({ id, baseRevision: entry.baseRevision as number })
+        : bridge.set({ id, value: toOrgValue(entry.value), baseRevision: entry.baseRevision })
     )
     const unchanged = pending.get(id) === entry
-    if (response.status === 200 || response.status === 201) {
-      const record = toRecord(response.body?.variable)
-      if (record) {
-        const current = records.get(id)
-        if (!current || current.version <= record.version) records.set(id, record)
+    const accepted =
+      response.status === 200 || (entry.value === null && response.status === 404 && !offline)
+    if (accepted) {
+      let written: number | null = null
+      if (entry.value === null) {
+        records.delete(id)
+      } else {
+        const record = toRecord(response.body)
+        if (record) {
+          const current = records.get(id)
+          if (!current || current.revision <= record.revision) records.set(id, record)
+          written = record.revision
+        }
       }
       if (unchanged) pending.delete(id)
-      else if (record && pending.has(id)) pending.get(id)!.baseVersion = record.version
+      else if (pending.has(id)) pending.get(id)!.baseRevision = written
       lastWriteError = null
       listCache = null
       return true
@@ -385,6 +494,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     if (response.status === 409) {
       const theirs = toRecord(response.body?.current)
       if (theirs) records.set(id, theirs)
+      else records.delete(id)
       const mine = pending.get(id)?.value ?? entry.value
       pending.delete(id)
       listCache = null
@@ -395,20 +505,21 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       return true
     }
     if (response.status === 0 || response.status >= 500) {
-      reason = 'offline'
+      offline = true
       return false
     }
-    if (response.status === 401) {
-      reason = 'unauthorized'
-      return false
-    }
-    if (response.status === 404 && !response.body?.error) {
+    if (response.status === 401 || isUnknownChannel(response)) {
       unavailable = true
       return false
     }
-    // Refused for good (invalid value, no permission): the local change is
-    // dropped and the bridge's value shown again.
-    lastWriteError = { id, status: response.status, message: errorMessage(response) }
+    // Refused for good (no permission, invalid value, a name already taken):
+    // the local change is dropped and the bridge's value shown again.
+    lastWriteError = {
+      id,
+      status: response.status,
+      error: errorCode(response),
+      message: errorMessage(response)
+    }
     if (unchanged) {
       pending.delete(id)
       listCache = null
@@ -451,14 +562,28 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     if (conflict) {
       // Still to be decided: the new local value is what "keep mine" keeps.
       conflict.mine = value
+    } else if (pending.has(id)) {
+      pending.set(id, { value, baseRevision: pending.get(id)!.baseRevision })
     } else {
-      const baseVersion = pending.get(id)?.baseVersion ?? records.get(id)?.version ?? 0
-      pending.set(id, { value, baseVersion })
+      pending.set(id, { value, baseRevision: records.get(id)?.revision ?? null })
     }
     listCache = null
     persist()
     notifyStatus()
     if (!conflict) scheduleFlush()
+  }
+
+  function listValues(): Record<string, StoredVariable> {
+    hydrate()
+    if (listCache) return listCache
+    const ids = new Set([...records.keys(), ...pending.keys(), ...conflicts.keys()])
+    const out: Record<string, StoredVariable> = {}
+    for (const id of ids) {
+      const value = effective(id)
+      if (value) out[id] = value
+    }
+    listCache = out
+    return out
   }
 
   return {
@@ -482,21 +607,10 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
           await loading
         }
       }
-      return this.list()
+      return listValues()
     },
 
-    list() {
-      hydrate()
-      if (listCache) return listCache
-      const ids = new Set([...records.keys(), ...pending.keys(), ...conflicts.keys()])
-      const out: Record<string, StoredVariable> = {}
-      for (const id of ids) {
-        const value = effective(id)
-        if (value) out[id] = value
-      }
-      listCache = out
-      return out
-    },
+    list: listValues,
 
     set(id, value) {
       if (!id || !value) return
@@ -535,10 +649,10 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       const bridge = options.bridge()
       if (!bridge || !id) return null
       const response = await call(() => bridge.history(limit ? { id, limit } : { id }))
-      if (response.status !== 200 || !Array.isArray(response.body?.history)) return null
-      return (response.body.history as unknown[])
-        .map(toRecord)
-        .filter((record): record is OrgVariableRecord => Boolean(record))
+      if (response.status !== 200 || !Array.isArray(response.body)) return null
+      return (response.body as unknown[])
+        .map(toVersion)
+        .filter((version): version is OrgVersion => Boolean(version))
     },
 
     conflicts() {
@@ -552,29 +666,27 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       conflicts.delete(id)
       listCache = null
       if (keep === 'mine') {
-        pending.set(id, { value: conflict.mine, baseVersion: conflict.theirs?.version ?? 0 })
+        pending.set(id, { value: conflict.mine, baseRevision: conflict.theirs?.revision ?? null })
         persist()
         notifyStatus()
         await flush()
         return
       }
       persist()
-      emit([{ id, value: effective(id) }])
+      if (stableJson(conflict.mine) !== stableJson(effective(id))) {
+        emit([{ id, value: effective(id) }])
+      }
       notifyStatus()
     },
 
     reset() {
-      const gone = Object.keys(this.list()).map((id) => ({ id, value: null }))
-      records = new Map()
-      pending = new Map()
-      conflicts = new Map()
-      revision = 0
+      const gone = forgetOrganization()
+      org = null
       syncedAt = null
-      hasFullList = false
       unavailable = false
+      offline = false
       reason = undefined
       lastWriteError = null
-      listCache = null
       loading = null
       try {
         options.cache?.write(null)

@@ -181,6 +181,20 @@ Plus three more that are local despite their names:
   `{ path }` map instead of a bare string. Answering `fs:readdir` while
   refusing its twin would have been the arbitrary choice.
 
+Plus the five organization variable channels, `vars:org:list`, `vars:org:get`,
+`vars:org:set`, `vars:org:delete` and `vars:org:history`, by the contract in
+[docs/organization-variables.md](../../docs/organization-variables.md). The code
+is in `org-variables.mjs`; the store is one file next to the drive,
+`<root>.org-variables.json`, with serialized writes like the settings store.
+There is one organization, `local-stub`, and every write is signed by the local
+user: the stub verifies no token, so it cannot tell two people apart and does
+not pretend to. Two browsers on the same stub are two clients of that one user,
+which is enough to see one client pick up another's change, and the revision
+rule (a stale write answers 409 with the current value) is the same whoever
+wrote. Failure injection works on these channels like on the others, for
+instance `vars:org:list * refuse` to see the client fall back to its cached
+copy.
+
 Two quirks worth knowing before you write code against the filesystem channels,
 both mirrored from the real bridge:
 

@@ -48,6 +48,29 @@ export function selectVisibleGlobals<T extends NamedVariable>(
   return visible
 }
 
+/**
+ * The Desktop and Organization variables together, Desktop first: an
+ * organization variable sharing a name (or alias) with one of this
+ * computer's is left out, so a personal value wins over the shared one, as a
+ * document's own wins over both (selectVisibleGlobals).
+ */
+export function layerGlobals<T extends NamedVariable>(
+  desktopVars: Record<string, T>,
+  organizationVars: Record<string, T>
+): Record<string, T> {
+  const taken = new Set<string>()
+  for (const value of Object.values(desktopVars || {})) {
+    variableNames(value).forEach((name) => taken.add(name))
+  }
+  const layered: Record<string, T> = { ...(desktopVars || {}) }
+  for (const [id, value] of Object.entries(organizationVars || {})) {
+    if (!value || id in layered) continue
+    if (variableNames(value).some((name) => taken.has(name))) continue
+    layered[id] = value
+  }
+  return layered
+}
+
 /** True for a single cell ref like `A1`, false for a range like `A1:B2`. */
 export function isSingleCellRef(ref: string): boolean {
   return /^[A-Z]+[0-9]+$/i.test(String(ref || '').trim())

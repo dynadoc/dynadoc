@@ -1,12 +1,18 @@
 /**
- * Gate: the Organization variable scope against a bridge driven by hand.
+ * Gate: the Organization variable scope against the stub bridge's own
+ * channels.
  *
  * organizationScope.core.ts reads the scope from the API bridge, keeps a
- * local copy for offline use, sends each write with the version it was made
+ * local copy for offline use, sends each write with the revision it was made
  * from, and keeps a conflict when the bridge refuses a stale write. Wrong here
  * means a teammate's value silently overwritten, a value lost offline, or a
- * copy shown as current when it is not. The bridge, the cache and the clock
- * are injected; the bridge below follows docs/organization-variables.md.
+ * copy shown as current when it is not.
+ *
+ * The bridge is tools/stub-bridge/org-variables.mjs, the code the stub runs
+ * for the vars:org:* channels, so this also checks the stub's side of
+ * docs/organization-variables.md. Only the network is simulated (on, off),
+ * and each client is signed in as its own user, which the stub over HTTP
+ * cannot do.
  */
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type --
@@ -55,73 +61,43 @@ if (build.status !== 0) {
   process.exit(1)
 }
 const { createOrganizationScope, stableJson } = await import(`file://${compiled}`)
+const { emptyOrgState, orgVariableChannels } = await import(
+  path.join(repoRoot, 'tools/stub-bridge/org-variables.mjs')
+)
 
-/**
- * A bridge in memory, by the contract: versions per variable, one revision
- * per organization, `since`, 409 with `current` on a stale base version.
- */
-function memoryBridge() {
-  const state = { revision: 0, records: new Map(), online: true, calls: [] }
-  const user = (who) => ({ id: who, name: who })
-  const write = (id, baseVersion, value, who) => {
-    const current = state.records.get(id) || null
-    if ((current?.version ?? 0) !== baseVersion) {
-      return { status: 409, body: { error: 'version_conflict', current } }
+/** The stub's channels over one shared state, a network switch and a call log. */
+function stubBridge() {
+  const net = { online: true, calls: [], state: emptyOrgState('acme'), clock: 0 }
+  const channels = (who) =>
+    orgVariableChannels({
+      state: net.state,
+      user: () => ({ id: who, name: who }),
+      now: () => new Date(1_700_000_000_000 + ++net.clock * 1000).toISOString()
+    })
+  const api = (who) => {
+    const send = (channel) => async (payload) => {
+      if (!net.online) throw new TypeError('Failed to fetch')
+      net.calls.push([channel, payload])
+      // A round trip: JSON in, JSON out, as over HTTP.
+      const answer = channels(who)[channel](JSON.parse(JSON.stringify(payload)))
+      return JSON.parse(JSON.stringify(answer))
     }
-    state.revision++
-    const record = {
-      id,
-      version: (current?.version ?? 0) + 1,
-      revision: state.revision,
-      value,
-      updatedAt: new Date(1_700_000_000_000 + state.revision * 1000).toISOString(),
-      updatedBy: user(who),
-      previous: current
-        ? {
-            version: current.version,
-            value: current.value,
-            updatedAt: current.updatedAt,
-            updatedBy: current.updatedBy
-          }
-        : null
+    return {
+      list: send('vars:org:list'),
+      get: send('vars:org:get'),
+      set: send('vars:org:set'),
+      delete: send('vars:org:delete'),
+      history: send('vars:org:history')
     }
-    state.records.set(id, record)
-    return { status: 200, body: { revision: state.revision, variable: record } }
   }
-  const reach = async (fn) => {
-    if (!state.online) throw new TypeError('Failed to fetch')
-    return fn()
+  const writes = (channel) => net.calls.filter(([name]) => name === channel).map(([, p]) => p)
+  const value = (id) => net.state.variables[id]?.value?.value
+  /** Someone else, writing directly. */
+  const write = (id, val, who = 'carol') => {
+    const base = net.state.variables[id]?.revision ?? null
+    return channels(who)['vars:org:set']({ id, value: val, baseRevision: base })
   }
-  const api = (who) => ({
-    list: (payload) =>
-      reach(() => {
-        state.calls.push(['list', payload?.since ?? null])
-        const since = payload?.since
-        const variables = [...state.records.values()].filter((record) =>
-          since === undefined ? record.value !== null : record.revision > since
-        )
-        return { status: 200, body: { revision: state.revision, variables } }
-      }),
-    put: ({ id, baseVersion, value }) =>
-      reach(() => {
-        state.calls.push(['put', id, baseVersion])
-        return write(id, baseVersion, value, who)
-      }),
-    remove: ({ id, baseVersion }) =>
-      reach(() => {
-        state.calls.push(['remove', id, baseVersion])
-        return write(id, baseVersion, null, who)
-      }),
-    history: ({ id }) =>
-      reach(() => {
-        const record = state.records.get(id)
-        if (!record) return { status: 404, body: { error: 'not_found' } }
-        const history = [record]
-        if (record.previous) history.push({ ...record.previous, id, revision: 0, previous: null })
-        return { status: 200, body: { history } }
-      })
-  })
-  return { state, api, write }
+  return { net, api, writes, value, write }
 }
 
 function memoryCache() {
@@ -166,27 +142,28 @@ check(
 
 // --- one person writes, the other reads ------------------------------------
 {
-  const bridge = memoryBridge()
+  const bridge = stubBridge()
   const alice = scopeFor(bridge, 'alice')
   const bob = scopeFor(bridge, 'bob')
   await alice.scope.load()
   await bob.scope.load()
   check('an empty organization lists nothing', alice.scope.list(), {})
-  check('an empty organization is live', alice.scope.status().state, 'live')
+  check('an empty organization is fresh', alice.scope.status().state, 'fresh')
+  check('the organization is the one the bridge names', alice.scope.status().org, 'acme')
 
-  alice.scope.set('c1', v('ACME SARL'))
+  alice.scope.set('c1', v('ACME SARL', { documentId: 'doc-1', nodeId: 'n1' }))
   check('a local write shows at once', alice.scope.list().c1?.value, 'ACME SARL')
   check('a local write is pending until sent', alice.scope.status().pending, 1)
   await alice.scope.flush()
   check(
-    'the write went out from version 0',
-    bridge.state.calls.filter((c) => c[0] === 'put'),
-    [['put', 'c1', 0]]
+    'the write went out as a creation, without document-only fields',
+    bridge.writes('vars:org:set').map((p) => [p.id, p.baseRevision, 'documentId' in p.value]),
+    [['c1', null, false]]
   )
   check('nothing pending once the bridge accepted it', alice.scope.status().pending, 0)
   check(
-    'who wrote it and when',
-    [alice.scope.meta('c1')?.version, alice.scope.meta('c1')?.updatedBy?.name],
+    'who wrote it, at which revision',
+    [alice.scope.meta('c1')?.revision, alice.scope.meta('c1')?.updatedBy?.name],
     [1, 'alice']
   )
   check('the local write is not reported back as a remote change', alice.changes, [])
@@ -200,16 +177,16 @@ check(
   )
   check(
     'the next read asks only for what changed',
-    bridge.state.calls.filter((c) => c[0] === 'list').at(-1),
-    ['list', 0]
+    bridge.net.calls.filter(([name]) => name === 'vars:org:list').at(-1)[1],
+    { since: 0 }
   )
 
   alice.scope.set('c1', v('ACME Group'))
   await alice.scope.flush()
   check(
-    'the second write is based on version 1',
-    bridge.state.calls.filter((c) => c[0] === 'put').at(-1),
-    ['put', 'c1', 1]
+    'the second write is based on revision 1',
+    bridge.writes('vars:org:set').at(-1).baseRevision,
+    1
   )
   await bob.scope.refresh()
   check('the change reaches the other person', bob.scope.list().c1?.value, 'ACME Group')
@@ -218,27 +195,41 @@ check(
     bob.scope.meta('c1')?.previous?.value?.value,
     'ACME SARL'
   )
-  const history = await bob.scope.history('c1')
   check(
-    'history, newest first',
-    history.map((h) => h.value?.value),
-    ['ACME Group', 'ACME SARL']
+    'created by, then updated by',
+    [bob.scope.meta('c1')?.createdBy?.name, bob.scope.meta('c1')?.updatedBy?.name],
+    ['alice', 'alice']
   )
 
-  // A deletion is a version too.
+  // A deletion is a revision too, sent to those who read with `since`.
   alice.scope.remove('c1')
   await alice.scope.flush()
+  check(
+    'the deletion is based on revision 2',
+    bridge.writes('vars:org:delete').map((p) => p.baseRevision),
+    [2]
+  )
   await bob.scope.refresh()
   check('a deletion reaches the other person', bob.scope.list().c1, undefined)
   check('as a change to null', bob.changes.at(-1), { id: 'c1', value: null })
+  const history = await bob.scope.history('c1')
+  check(
+    'history, newest first, the deletion included',
+    history.map((h) => [h.revision, h.value?.value ?? null]),
+    [
+      [3, null],
+      [2, 'ACME Group'],
+      [1, 'ACME SARL']
+    ]
+  )
 }
 
 // --- a stale write is refused and kept as a conflict -----------------------
 {
-  const bridge = memoryBridge()
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
   const alice = scopeFor(bridge, 'alice')
   const bob = scopeFor(bridge, 'bob')
-  bridge.write('c1', 0, v('v1'), 'carol')
   await alice.scope.load()
   await bob.scope.load()
 
@@ -249,21 +240,21 @@ check(
   check('the bridge refused the stale write: one conflict', alice.scope.conflicts().length, 1)
   const [conflict] = alice.scope.conflicts()
   check(
-    'the conflict holds both sides',
+    'the conflict holds both sides, and who wrote theirs',
     [conflict.mine?.value, conflict.theirs?.value?.value, conflict.theirs?.updatedBy?.name],
     ['alice', 'bob', 'bob']
   )
   check('the local value stays shown until the user picks', alice.scope.list().c1?.value, 'alice')
-  check('the bridge kept the other value', bridge.state.records.get('c1').value.value, 'bob')
+  check('the bridge kept the other value', bridge.value('c1'), 'bob')
   check('the status counts it', alice.scope.status().conflicts, 1)
 
   await alice.scope.resolveConflict('c1', 'mine')
   check(
-    'keep mine: written over theirs, from their version',
-    bridge.state.calls.filter((c) => c[0] === 'put').at(-1),
-    ['put', 'c1', 2]
+    'keep mine: written over theirs, from their revision',
+    bridge.writes('vars:org:set').at(-1).baseRevision,
+    2
   )
-  check('keep mine: the bridge holds mine', bridge.state.records.get('c1').value.value, 'alice')
+  check('keep mine: the bridge holds mine', bridge.value('c1'), 'alice')
   check('keep mine: no conflict left', alice.scope.conflicts().length, 0)
 
   bob.scope.set('c1', v('bob again'))
@@ -272,64 +263,72 @@ check(
   await bob.scope.resolveConflict('c1', 'theirs')
   check('keep theirs: the bridge value is shown', bob.scope.list().c1?.value, 'alice')
   check('keep theirs: and reported as a change', bob.changes.at(-1)?.value?.value, 'alice')
-  check('keep theirs: nothing sent', bridge.state.records.get('c1').version, 3)
+  check('keep theirs: nothing sent', bridge.net.state.revision, 3)
+}
+
+// --- a deletion against a newer value is a conflict too --------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  const alice = scopeFor(bridge, 'alice')
+  await alice.scope.load()
+  bridge.write('c1', v('v2'), 'bob')
+  alice.scope.remove('c1')
+  await alice.scope.flush()
+  check(
+    'deleting a value someone changed: a conflict, the value kept',
+    [alice.scope.conflicts().map((c) => [c.mine, c.theirs?.value?.value]), bridge.value('c1')],
+    [[[null, 'v2']], 'v2']
+  )
 }
 
 // --- the same change on both sides is not a conflict -----------------------
 {
-  const bridge = memoryBridge()
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
   const alice = scopeFor(bridge, 'alice')
-  bridge.write('c1', 0, v('v1'), 'carol')
   await alice.scope.load()
-  bridge.write('c1', 1, v('same'), 'bob')
+  bridge.write('c1', v('same'), 'bob')
   alice.scope.set('c1', v('same'))
   await alice.scope.flush()
   check('the same value on both sides: no conflict', alice.scope.conflicts().length, 0)
 }
 
-// --- offline: the cache serves, writes wait, the status says stale ---------
+// --- offline: the cache serves, writes wait, the status says so ------------
 {
-  const bridge = memoryBridge()
+  const bridge = stubBridge()
   const cache = memoryCache()
   const clock = { t: 1_000_000 }
+  bridge.write('c1', v('v1'))
   const first = scopeFor(bridge, 'alice', cache, clock)
-  bridge.write('c1', 0, v('v1'), 'carol')
   await first.scope.load()
   check('the copy is cached', Object.keys(cache.peek().records), ['c1'])
 
-  bridge.state.online = false
+  bridge.net.online = false
   clock.t += 5_000
   const second = scopeFor(bridge, 'alice', cache, clock)
   await second.scope.load()
   check('offline, the cached value is served', second.scope.list().c1?.value, 'v1')
-  check(
-    'offline, the status is stale, and says why',
-    [second.scope.status().state, second.scope.status().reason],
-    ['stale', 'offline']
-  )
+  check('offline, the status says so', second.scope.status().state, 'offline')
   check('offline, the copy says when it was read', second.scope.status().syncedAt, 1_000_000)
 
   second.scope.set('c1', v('offline edit'))
   await second.scope.flush()
   check('offline, the write waits', second.scope.status().pending, 1)
-  check('and is kept in the cache', cache.peek().pending.c1?.baseVersion, 1)
+  check('and is kept in the cache with its base', cache.peek().pending.c1?.baseRevision, 1)
 
   // The page is reloaded while still offline: the pending write survives.
   const third = scopeFor(bridge, 'alice', cache, clock)
   await third.scope.load()
   check('a reload keeps the pending write', third.scope.list().c1?.value, 'offline edit')
 
-  bridge.state.online = true
+  bridge.net.online = true
   await third.scope.refresh()
+  check('back online, the write is sent', bridge.value('c1'), 'offline edit')
   check(
-    'back online, the write is sent',
-    bridge.state.records.get('c1').value.value,
-    'offline edit'
-  )
-  check(
-    'back online, the status is live',
+    'back online, the status is fresh',
     [third.scope.status().state, third.scope.status().pending],
-    ['live', 0]
+    ['fresh', 0]
   )
 
   clock.t += 61_000
@@ -338,21 +337,21 @@ check(
 
 // --- two people offline: the first to come back wins, the second decides ---
 {
-  const bridge = memoryBridge()
-  bridge.write('c1', 0, v('v1'), 'carol')
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
   const alice = scopeFor(bridge, 'alice')
   const bob = scopeFor(bridge, 'bob')
   await alice.scope.load()
   await bob.scope.load()
-  bridge.state.online = false
+  bridge.net.online = false
   alice.scope.set('c1', v('alice offline'))
   bob.scope.set('c1', v('bob offline'))
   await alice.scope.flush()
   await bob.scope.flush()
-  bridge.state.online = true
+  bridge.net.online = true
   await bob.scope.refresh()
   await alice.scope.refresh()
-  check('the first back online wins', bridge.state.records.get('c1').value.value, 'bob offline')
+  check('the first back online wins', bridge.value('c1'), 'bob offline')
   check(
     'the second gets a conflict, not a silent overwrite',
     alice.scope.conflicts().map((c) => [c.mine?.value, c.theirs?.value?.value]),
@@ -362,17 +361,22 @@ check(
 
 // --- a bridge that does not serve the scope --------------------------------
 {
+  const refused = async () => ({
+    status: 400,
+    body: { error: '[dynadoc local stub] channel "vars:org:list" is not implemented.' }
+  })
   const scope = createOrganizationScope({
     bridge: () => ({
-      list: async () => ({ status: 404, body: { error: '[dynadoc local stub] not implemented' } }),
-      put: async () => ({ status: 404, body: {} }),
-      remove: async () => ({ status: 404, body: {} }),
-      history: async () => ({ status: 404, body: {} })
+      list: refused,
+      get: refused,
+      set: refused,
+      delete: refused,
+      history: refused
     }),
     firstLoadTimeoutMs: 50
   })
   await scope.load()
-  check('a bridge without the endpoints: unavailable', scope.status().state, 'unavailable')
+  check('a bridge without the channels: unavailable', scope.status().state, 'unavailable')
   const none = createOrganizationScope({ bridge: () => null, firstLoadTimeoutMs: 50 })
   await none.load()
   check('no bridge at all: unavailable', none.status().state, 'unavailable')
@@ -380,31 +384,46 @@ check(
 
 // --- a write refused for good is dropped and the bridge value shown --------
 {
-  const bridge = memoryBridge()
-  bridge.write('c1', 0, v('v1'), 'carol')
-  const api = bridge.api('alice')
-  const changes = []
-  const scope = createOrganizationScope({
-    bridge: () => ({
-      ...api,
-      put: async () => ({ status: 403, body: { error: 'forbidden', message: 'read only' } })
-    }),
-    firstLoadTimeoutMs: 50,
-    flushDelayMs: 0
-  })
-  scope.onChange((batch) => changes.push(...batch))
-  await scope.load()
-  scope.set('c1', v('nope'))
-  await scope.flush()
-  check('a forbidden write is dropped', [scope.status().pending, scope.list().c1?.value], [0, 'v1'])
-  check('and says why', scope.status().lastWriteError?.message, 'read only')
-  check('the bridge value is shown again', changes.at(-1)?.value?.value, 'v1')
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  bridge.write('c2', v('v2', { name: 'ville' }))
+  const alice = scopeFor(bridge, 'alice')
+  await alice.scope.load()
+  alice.scope.set('c2', v('taken', { name: 'client' }))
+  await alice.scope.flush()
+  check(
+    'a name another organization variable has: refused, dropped',
+    [alice.scope.status().pending, alice.scope.list().c2?.value, alice.scope.list().c2?.name],
+    [0, 'v2', 'ville']
+  )
+  check('and says why', alice.scope.status().lastWriteError?.error, 'name_taken')
+  check('the bridge value is shown again', alice.changes.at(-1)?.value?.value, 'v2')
+}
+
+// --- the cache belongs to one organization ---------------------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  const cache = memoryCache()
+  const first = scopeFor(bridge, 'alice', cache)
+  await first.scope.load()
+  // Same browser, the next session is in another organization.
+  bridge.net.state = emptyOrgState('other')
+  const second = scopeFor(bridge, 'alice', cache)
+  second.scope.list()
+  await second.scope.refresh()
+  check(
+    'another organization: the cached variables are dropped',
+    [second.scope.list(), second.scope.status().org],
+    [{}, 'other']
+  )
+  check('and reported as gone', second.changes, [{ id: 'c1', value: null }])
 }
 
 // --- another account: nothing of the previous one is kept ------------------
 {
-  const bridge = memoryBridge()
-  bridge.write('c1', 0, v('v1'), 'carol')
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
   const { scope, changes, cache } = scopeFor(bridge, 'alice')
   await scope.load()
   scope.reset()
@@ -412,9 +431,64 @@ check(
   check('reset reports the variables as gone', changes.at(-1), { id: 'c1', value: null })
 }
 
+// --- the same channels over HTTP, from the running stub --------------------
+{
+  const { spawn } = await import('node:child_process')
+  const port = 17_000 + Math.floor(Math.random() * 2000)
+  const root = path.join(outDir, 'drive')
+  const stub = spawn(process.execPath, [path.join(repoRoot, 'tools/stub-bridge/server.mjs')], {
+    env: { ...process.env, DYNADOC_STUB_ROOT: root, DYNADOC_STUB_PORT: String(port) },
+    stdio: ['ignore', 'ignore', 'pipe']
+  })
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the stub did not start')), 10_000)
+    stub.stderr.on('data', (chunk) => {
+      if (String(chunk).includes('listening on')) {
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+  })
+  const invoke = async (channel, payload) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/ipc/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, args: [payload] })
+    })
+    return { status: res.status, body: await res.json() }
+  }
+  try {
+    const created = await invoke('vars:org:set', { id: 'h1', value: v('A'), baseRevision: null })
+    check(
+      'HTTP: a creation answers ok with the stored variable',
+      [
+        created.status,
+        created.body.ok,
+        created.body.data?.revision,
+        created.body.data?.updatedBy?.id
+      ],
+      [200, true, 1, 'local-stub']
+    )
+    const stale = await invoke('vars:org:set', { id: 'h1', value: v('B'), baseRevision: null })
+    check(
+      'HTTP: a stale write is a 409 with the current variable',
+      [stale.status, stale.body.error, stale.body.current?.value?.value],
+      [409, 'conflict', 'A']
+    )
+    const listed = await invoke('vars:org:list', { since: 0 })
+    check(
+      'HTTP: the list carries the organization and its revision',
+      [listed.body.data?.org, listed.body.data?.revision, listed.body.data?.variables?.length],
+      ['local-stub', 1, 1]
+    )
+  } finally {
+    stub.kill()
+  }
+}
+
 rmSync(outDir, { recursive: true, force: true })
 if (failures) {
   console.error(`\n[organization-variables] FAIL — ${failures} check(s) failed`)
   process.exit(1)
 }
-console.log('\n[organization-variables] OK — versions, conflicts, offline copy and status behave')
+console.log('\n[organization-variables] OK — revisions, conflicts, offline copy and status behave')

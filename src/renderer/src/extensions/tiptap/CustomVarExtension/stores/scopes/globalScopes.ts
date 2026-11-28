@@ -3,7 +3,7 @@
 // its visibility names, and leaves the other one when its visibility moves
 // it.
 import { desktopScope } from '../globalVariables'
-import { isOrganizationVisibility } from '../../utils/sheetVariables.utils'
+import { isOrganizationVisibility, layerGlobals } from '../../utils/sheetVariables.utils'
 import { organizationScope, startOrganizationSync } from './organizationScope'
 import type { ScopeChange, StoredVariable, VariableScopeDriver } from './types'
 
@@ -19,9 +19,12 @@ export async function loadGlobalVariables(force = false): Promise<Record<string,
   return getGlobalVariables()
 }
 
-/** Desktop and Organization variables together; an id lives in one scope only. */
+/**
+ * Desktop and Organization variables together. On a name clash the Desktop
+ * one wins (document, then desktop, then organization).
+ */
 export function getGlobalVariables(): Record<string, StoredVariable> {
-  return { ...desktopScope.list(), ...organizationScope.list() }
+  return layerGlobals(desktopScope.list(), organizationScope.list())
 }
 
 export function setGlobalVariable(id: string, value: object): void {

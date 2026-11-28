@@ -17,12 +17,14 @@ export type ScopeChange = { id: string; value: StoredVariable | null }
  * How current the scope's copy is.
  * - `local`: the scope is on this computer, its copy is the truth;
  * - `loading`: nothing to show yet;
- * - `live`: read from its source a moment ago;
- * - `stale`: a copy kept for offline use, older than it should be, or the
- *   source could not be reached (`reason` says why);
- * - `unavailable`: the source does not serve this scope.
+ * - `fresh`: read from its source less than a minute ago;
+ * - `stale`: read from its source, but longer ago than that, or the source
+ *   refused the last read (`reason` says why);
+ * - `offline`: the source could not be reached; the cached copy is shown;
+ * - `unavailable`: the source does not serve this scope (an older bridge, or
+ *   no session).
  */
-export type ScopeState = 'local' | 'loading' | 'live' | 'stale' | 'unavailable'
+export type ScopeState = 'local' | 'loading' | 'fresh' | 'stale' | 'offline' | 'unavailable'
 
 export type ScopeStatus = {
   state: ScopeState
@@ -32,7 +34,7 @@ export type ScopeStatus = {
   pending: number
   /** Changes the source refused because someone changed the value first. */
   conflicts: number
-  reason?: 'offline' | 'unauthorized' | 'error'
+  reason?: 'unauthorized' | 'error'
 }
 
 export interface VariableScopeDriver {

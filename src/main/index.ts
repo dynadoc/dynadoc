@@ -4716,6 +4716,52 @@ app.whenReady().then(async () => {
     return payload
   }
 
+  // Organization variables (docs/organization-variables.md): the same
+  // vars:org:* channels the web client sends, forwarded to the bridge's
+  // /api/ipc/invoke with the session's token. The renderer needs the HTTP
+  // status to tell a conflict (409) from a refusal and from no answer at all
+  // (status 0), so the answer is passed through as { status, body } rather
+  // than thrown.
+  async function orgVariablesCall(
+    channel: string,
+    payload: unknown
+  ): Promise<{ status: number; body: unknown }> {
+    let token = ''
+    try {
+      token = await getDriveAuthToken()
+    } catch {
+      return { status: 401, body: { error: 'unauthorized', message: 'Not signed in.' } }
+    }
+    try {
+      const response = await fetchWithHttpFallback(
+        new URL('/api/ipc/invoke', AUTH_SERVER_BASE_URL),
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel, args: [payload ?? {}] })
+        }
+      )
+      const body = await response.json().catch(() => null)
+      if (response.ok) return { status: response.status, body: body?.data ?? null }
+      return { status: response.status, body }
+    } catch (error) {
+      return {
+        status: 0,
+        body: { error: 'offline', message: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  }
+
+  for (const channel of [
+    'vars:org:list',
+    'vars:org:get',
+    'vars:org:set',
+    'vars:org:delete',
+    'vars:org:history'
+  ]) {
+    ipcMain.handle(channel, (_event, payload) => orgVariablesCall(channel, payload))
+  }
+
   async function translateWithServer(payload: TranslatePayload) {
     const text = String(payload?.text || '').trim()
     if (!text) return { ok: false, message: 'No text to translate.' }

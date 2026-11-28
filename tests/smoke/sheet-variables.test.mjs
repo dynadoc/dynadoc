@@ -60,6 +60,7 @@ const {
   reduceRefValues,
   isSingleCellRef,
   selectVisibleGlobals,
+  layerGlobals,
   isGlobalVisibility,
   isOrganizationVisibility,
   toPlainNumber,
@@ -326,6 +327,16 @@ check(
     isOrganizationVisibility(undefined)
   ],
   [true, true, false, false]
+)
+check(
+  'a desktop variable wins over an organization one of the same name or alias',
+  Object.keys(
+    layerGlobals(
+      { d1: { name: 'Client' }, d2: { name: 'x', aliases: ['ville'] } },
+      { o1: { name: 'client' }, o2: { name: 'VILLE' }, o3: { name: 'taux' }, d1: { name: 'dup' } }
+    )
+  ),
+  ['d1', 'd2', 'o3']
 )
 check(
   'document and package are not',
