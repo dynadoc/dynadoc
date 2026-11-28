@@ -109,6 +109,8 @@ data.getCell('D1').value = { formula: 'A1:A3*10', result: 10, shareType: 'array'
 data.getCell('D2').value = 20
 data.getCell('D3').value = 30
 data.getCell('E1').value = { formula: '"Total: "&A1', result: 'Total: 1' }
+data.getCell('F1').value = 'merged'
+data.mergeCells('F1:F2')
 data.getCell('A1').note = 'Check this value'
 data.getCell('A2').dataValidation = { type: 'list', allowBlank: true, formulae: ['"1,2,3"'] }
 data.addConditionalFormatting({
@@ -251,6 +253,12 @@ for (const [name, sheets] of Object.entries(restored)) {
     `${name}: an array's other cells keep their values`,
     Number(spilled?.v) === 30,
     json(spilled)
+  )
+  const merge = sheets.find((s) => s.name === 'Data').config?.merge?.['0_5']
+  check(
+    `${name}: the merged cells stay merged`,
+    json(merge) === json({ r: 0, c: 5, rs: 2, cs: 1 }),
+    json(merge)
   )
   const noted = cellOf(sheets, 'Data', 'A1')
   check(
@@ -450,6 +458,13 @@ for (const [name, sheets] of Object.entries(restored)) {
     `${name}: the exported B1 carries the recalculated result`,
     Number(b1?.result) === 30,
     json(b1)
+  )
+  const note = reopened.getWorksheet('Data').getCell('A1').note
+  check(
+    `${name}: the comment is written back as a note`,
+    (typeof note === 'string' ? note : note?.texts?.map((t) => t.text).join('')) ===
+      'Check this value',
+    json(note)
   )
   const vatCell = reopened.getWorksheet('Données').getCell('B3').value
   check(

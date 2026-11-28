@@ -1,4 +1,4 @@
-import { transformExcelToFortune, transformFortuneToExcel } from '@corbe30/fortune-excel'
+import { transformFortuneToExcel } from '@corbe30/fortune-excel'
 import { get } from 'svelte/store'
 import { v4 as uuidv4 } from 'uuid'
 import { activeSheet } from '../../stores/sheetBridge.store'
@@ -10,6 +10,10 @@ import { openSpreadsheetImportModal } from '../../stores/spreadsheetImportModal.
 import { nodeApi } from '../../utils/shims/node'
 import { getUploadedFile, getLastUploadedFile } from '../../utils/uploadCache'
 import Utils from '../../utils/Utils'
+import type { ImportFidelityReport } from '../conversion/importFidelity'
+import { showImportFidelityReport } from '../conversion/importFidelityToast'
+import { importXlsxFile, withDefinedNamesRestored } from '../conversion/xlsxImport'
+import { withSheetId } from '../conversion/xlsxImportFidelity'
 
 // const nodeApi =
 //   typeof window !== 'undefined' ? (window as any)?.api?.node || (window as any)?.node : null
@@ -192,8 +196,7 @@ function ensureUniqueSheetIds(sheets: any[], existingIds: Set<string>) {
     while (existingIds.has(id)) id = uuidv4()
     existingIds.add(id)
     return {
-      ...sheet,
-      id,
+      ...withSheetId(sheet, id),
       name: sheet?.name || 'Sheet'
     }
   })
@@ -317,7 +320,9 @@ export async function exportActiveSheetToFile(
   } finally {
     dismissProgress()
   }
-  const buffer = Buffer.from(await blob.arrayBuffer())
+  let bytes = new Uint8Array(await blob.arrayBuffer())
+  if (options.fileType === 'xlsx') bytes = await withDefinedNamesRestored(bytes, sheetsToExport)
+  const buffer = Buffer.from(bytes)
 
   const suggestedName = (currentSheet?.name || 'Spreadsheet')
     .replace(/[\\/:*?"<>|]/g, '_')
@@ -387,15 +392,23 @@ export async function promptAndImportSpreadsheetToActiveSheet() {
   })
   if (!result) return
 
-  await importSpreadsheetFileToActiveSheet(filePath, result, entry)
+  try {
+    await importSpreadsheetFileToActiveSheet(filePath, result, entry)
+  } catch (error) {
+    console.error('Import spreadsheet failed', error)
+    await openAlertModal({
+      title: 'Import Spreadsheet',
+      message: 'Unable to read the selected file. Please try again.'
+    })
+  }
 }
 
 export async function importSpreadsheetFileToActiveSheet(
   filePath: string,
   options: SpreadsheetImportResult,
   entry = get(activeSheet)
-) {
-  if (!entry?.methods) return
+): Promise<ImportFidelityReport | null> {
+  if (!entry?.methods) return null
   const methods = entry.methods
   const existingSheets = methods.getAllSheets?.() || []
   const currentSheet = methods.getSheet?.()
@@ -411,8 +424,10 @@ export async function importSpreadsheetFileToActiveSheet(
       nextSheets = [...existingSheets, ...adjusted]
     } else if (options.mode === 'replaceCurrent' && currentSheet) {
       const adjusted = ensureUniqueSheetIds(nextSheets, new Set(existingIds))
-      const replacement = JSON.parse(JSON.stringify(adjusted[0] || currentSheet))
-      replacement.id = currentSheet.id
+      const replacement = withSheetId(
+        JSON.parse(JSON.stringify(adjusted[0] || currentSheet)),
+        currentSheet.id
+      )
       replacement.name = currentSheet.name || replacement.name
       nextSheets = existingSheets.map((sheet: any) =>
         sheet.id === currentSheet.id ? replacement : sheet
@@ -422,60 +437,25 @@ export async function importSpreadsheetFileToActiveSheet(
     methods.updateSheet?.(JSON.parse(JSON.stringify(nextSheets)))
   }
 
-  const setKey = () => {
-    // no-op: FortuneSheet already reacts to updateSheet
-  }
-
   const sheetRef = { current: methods }
 
   const dismissProgress = showProgressToast('Importing spreadsheet…')
+  let report: ImportFidelityReport | null = null
   try {
-    // Try primary conversion
-    let success = false
-    try {
-      await transformExcelToFortune(file, (sheets) => {
-        if (sheets && sheets.length) {
-           setSheets(sheets)
-           success = true
-        }
-      }, setKey, sheetRef)
-    } catch (err) {
-      console.warn('Primary spreadsheet conversion failed, trying fallback...', err)
-    }
-
-    // Fallback manual conversion if primary failed or didn't produce sheets
-    if (!success) {
-      const xlsx = await import('xlsx')
-      const arrayBuffer = await file.arrayBuffer()
-      const workbook = xlsx.read(arrayBuffer, { type: 'array' })
-      
-      const fortuneData = workbook.SheetNames.map((name, index) => {
-        const sheet = workbook.Sheets[name]
-        const celldata = []
-        for (const cellKey in sheet) {
-          if (cellKey[0] === '!') continue
-          const cell = sheet[cellKey]
-          const { r, c } = xlsx.utils.decode_cell(cellKey)
-          celldata.push({
-            r,
-            c,
-            v: { v: cell.v, m: cell.w || String(cell.v || '') }
-          })
-        }
-        return {
-          id: `sheet-${index}-${uuidv4().slice(0, 8)}`,
-          name: name,
-          celldata: celldata
-        }
-      })
-      
-      if (fortuneData.length) {
-        setSheets(fortuneData)
-      }
-    }
+    // fortune-excel first, exceljs if it fails; formulas, defined names and
+    // comments come from exceljs either way (services/conversion/xlsxImport.ts).
+    const result = await importXlsxFile(
+      file,
+      () => `sheet-${uuidv4().slice(0, 8)}`,
+      sheetRef
+    )
+    if (result.sheets.length) setSheets(result.sheets)
+    report = result.report
   } finally {
     dismissProgress()
   }
+  if (report) showImportFidelityReport(report)
+  return report
 }
 
 export async function openSpreadsheetFileDialog() {

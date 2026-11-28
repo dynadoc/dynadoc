@@ -3,9 +3,18 @@ import { Workbook } from '@fortune-sheet/react'
 import '@fortune-sheet/react/dist/index.css'
 import '../../libs/fortune-sheet/direction.css'
 import React, { useEffect, useRef, useState } from 'react'
-import { transformExcelToFortune } from '@corbe30/fortune-excel'
 
 import { nodeApi } from '../../../../../utils/shims/node'
+import { openConfirmModal } from '../../../../../stores/confirmModal.store'
+import {
+  describeLostItems,
+  type ImportFidelityReport
+} from '../../../../../services/conversion/importFidelity'
+import { showImportFidelityReport } from '../../../../../services/conversion/importFidelityToast'
+import {
+  importXlsxFile,
+  withDefinedNamesRestored
+} from '../../../../../services/conversion/xlsxImport'
 // const fs = nodeApi.fs
 // const path = nodeApi.path
 
@@ -18,6 +27,12 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
   const saveTimerRef = useRef<any>(null)
   const filePathRef = useRef<string>(filePath)
   const fileTypeRef = useRef<'xlsx' | 'csv'>('xlsx')
+  // What the import could not keep: saving over the original file would
+  // remove it from there too, so the first save asks.
+  const lossRef = useRef<{ report: ImportFidelityReport | null; decision: Promise<boolean> | null }>({
+    report: null,
+    decision: null
+  })
 
   const toBuffer = (input: any) => {
     if (!input) return Buffer.from([])
@@ -52,11 +67,32 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
 
   const ensureWorkbookKey = () => setKey((k) => k + 1)
 
+  const mayOverwrite = (): Promise<boolean> => {
+    const loss = lossRef.current
+    const lost = loss.report ? describeLostItems(loss.report) : ''
+    if (!lost) return Promise.resolve(true)
+    if (!loss.decision) {
+      loss.decision = openConfirmModal({
+        title: 'Save over the original file?',
+        message: `Saving writes your changes into ${loss.report?.fileName}, and removes from it what the import could not keep (${lost}). Keep the original to leave the file as it is; your changes then stay in this view only.`,
+        confirmText: 'Save',
+        cancelText: 'Keep the original',
+        destructive: true
+      }).then((answer: unknown) => answer === true)
+    }
+    return loss.decision
+  }
+
   const saveNow = async () => {
     try {
+      if (!(await mayOverwrite())) return
       const { transformFortuneToExcel } = await import('@corbe30/fortune-excel')
       const blob = await transformFortuneToExcel(sheetRef, fileTypeRef.current, false)
-      const buffer = Buffer.from(await blob.arrayBuffer())
+      let bytes = new Uint8Array(await blob.arrayBuffer())
+      if (fileTypeRef.current === 'xlsx') {
+        bytes = await withDefinedNamesRestored(bytes, sheetRef.current?.getAllSheets?.() || [])
+      }
+      const buffer = Buffer.from(bytes)
       await nodeApi.fsPromises.writeFile(filePathRef.current, buffer)
     } catch (err) {
       console.warn('Failed to save spreadsheet file', err)
@@ -134,74 +170,25 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
         const ext = (fileName.split('.').pop() || '').toLowerCase()
         fileTypeRef.current = ext === 'csv' ? 'csv' : 'xlsx'
 
-        // Rich conversion first: preserves styles, merges, widths and formulas
-        let imported: any[] | null = null
-        try {
-          const file =
-            ext === 'xls'
-              ? await convertXlsToXlsxFile(buffer, fileName)
-              : new File([buffer], fileName, {
-                  type:
-                    ext === 'csv'
-                      ? 'text/csv'
-                      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                })
-          await transformExcelToFortune(
-            file,
-            (importedSheets: any[]) => {
-              if (importedSheets?.length) {
-                imported = JSON.parse(JSON.stringify(importedSheets))
-              }
-            },
-            () => {},
-            sheetRef
-          )
-        } catch (err) {
-          console.warn('[SpreadsheetViewer] Rich conversion failed, using basic parser', err)
-        }
-
-        // Fallback: values-only parse (keeps formulas so they survive a save)
-        if (!imported) {
-          const xlsx = await import('xlsx')
-          const workbook = xlsx.read(buffer, { type: 'buffer' })
-
-          imported = workbook.SheetNames.map((name, index) => {
-            const sheet = workbook.Sheets[name]
-            const celldata = []
-
-            for (const cellKey in sheet) {
-              if (cellKey[0] === '!') continue
-
-              const cell = sheet[cellKey]
-              const { r: row, c: col } = xlsx.utils.decode_cell(cellKey)
-
-              const value: any = { v: cell.v, m: cell.w || String(cell.v ?? '') }
-              if (cell.f) value.f = `=${cell.f}`
-              celldata.push({ r: row, c: col, v: value })
-            }
-
-            const config: any = {}
-            const merges = sheet['!merges'] || []
-            if (merges.length) {
-              config.merge = {}
-              for (const range of merges) {
-                config.merge[`${range.s.r}_${range.s.c}`] = {
-                  r: range.s.r,
-                  c: range.s.c,
-                  rs: range.e.r - range.s.r + 1,
-                  cs: range.e.c - range.s.c + 1
-                }
-              }
-            }
-
-            return {
-              id: `sheet-${index}-${Math.random().toString(36).slice(2, 10)}`,
-              name: name,
-              celldata: celldata,
-              config
-            }
-          })
-        }
+        // fortune-excel first, exceljs if it fails; formulas, defined names and
+        // comments come from exceljs either way (services/conversion/xlsxImport.ts).
+        const file =
+          ext === 'xls'
+            ? await convertXlsToXlsxFile(buffer, fileName)
+            : new File([buffer], fileName, {
+                type:
+                  ext === 'csv'
+                    ? 'text/csv'
+                    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+              })
+        const result = await importXlsxFile(
+          file,
+          () => `sheet-${Math.random().toString(36).slice(2, 10)}`,
+          sheetRef
+        )
+        const imported = JSON.parse(JSON.stringify(result.sheets))
+        lossRef.current = { report: result.report, decision: null }
+        if (!cancelled && result.report) showImportFidelityReport(result.report)
 
         if (!cancelled) applySheets(imported || [])
       } catch (err) {

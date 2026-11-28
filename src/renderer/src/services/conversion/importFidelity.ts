@@ -110,3 +110,11 @@ export function formatFidelityLines(report: ImportFidelityReport): string[] {
     return `${KIND_LABELS[entry.kind]}: ${parts.join(', ')}`
   })
 }
+
+/** What is lost, as "Charts: 2, Pivot tables: 1", for a warning before a save. */
+export function describeLostItems(report: ImportFidelityReport): string {
+  return report.entries
+    .filter((entry) => entry.lost > 0)
+    .map((entry) => `${KIND_LABELS[entry.kind]}: ${entry.lost}`)
+    .join(', ')
+}

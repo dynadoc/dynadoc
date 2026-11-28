@@ -104,6 +104,8 @@ export type XlsxCell = {
 export type XlsxWorkbookContent = {
   sheetNames: string[]
   cells: Record<string, XlsxCell[]>
+  /** Merged ranges per sheet, as "A1:B2". */
+  merges: Record<string, string[]>
 }
 
 // --- XML helpers --------------------------------------------------------------
@@ -441,11 +443,12 @@ export async function readXlsxWorkbook(
 ): Promise<XlsxWorkbookContent> {
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(bytes as unknown as ArrayBuffer)
-  const content: XlsxWorkbookContent = { sheetNames: [], cells: {} }
+  const content: XlsxWorkbookContent = { sheetNames: [], cells: {}, merges: {} }
   workbook.eachSheet((worksheet) => {
     const cells: XlsxCell[] = []
     content.sheetNames.push(worksheet.name)
     content.cells[worksheet.name] = cells
+    content.merges[worksheet.name] = [...((worksheet.model as { merges?: string[] }).merges || [])]
     worksheet.eachRow({ includeEmpty: true }, (row) => {
       row.eachCell({ includeEmpty: true }, (cell) => {
         const note = noteText(cell.note)
@@ -485,15 +488,29 @@ export function sheetsFromWorkbook(
   content: XlsxWorkbookContent,
   newId: () => string
 ): FortuneSheetLike[] {
-  return content.sheetNames.map((name, index) => ({
-    id: newId(),
-    name,
-    order: index,
-    status: index === 0 ? 1 : 0,
-    celldata: content.cells[name]
-      .filter((cell) => cell.value.v !== undefined || cell.formula)
-      .map((cell) => ({ r: cell.r, c: cell.c, v: { ...cell.value } }))
-  }))
+  return content.sheetNames.map((name, index) => {
+    const merge: Record<string, { r: number; c: number; rs: number; cs: number }> = {}
+    for (const range of content.merges[name] || []) {
+      const [from, to] = range.split(':').map(decodeCellAddress)
+      if (!from || !to) continue
+      merge[`${from.r}_${from.c}`] = {
+        r: from.r,
+        c: from.c,
+        rs: to.r - from.r + 1,
+        cs: to.c - from.c + 1
+      }
+    }
+    return {
+      id: newId(),
+      name,
+      order: index,
+      status: index === 0 ? 1 : 0,
+      celldata: content.cells[name]
+        .filter((cell) => cell.value.v !== undefined || cell.formula)
+        .map((cell) => ({ r: cell.r, c: cell.c, v: { ...cell.value } })),
+      ...(Object.keys(merge).length ? { config: { merge } } : {})
+    }
+  })
 }
 
 /**
@@ -631,7 +648,8 @@ const toA1 = (r: number, c: number): string => {
 /**
  * The .xlsx fortune-excel exported from `sheets`, with the user's formulas
  * put back where names had been written out (unless the formula was edited
- * since), and the defined names those formulas use.
+ * since), the defined names those formulas use, and the cell notes
+ * (comments), which fortune-excel does not write.
  */
 export async function restoreXlsxExport(
   ExcelJS: ExcelJs,
@@ -640,6 +658,7 @@ export async function restoreXlsxExport(
 ): Promise<Uint8Array> {
   const names = new Map<string, XlsxDefinedName>()
   const restores: Array<{ sheet: string; address: string; formula: string }> = []
+  const notes: Array<{ sheet: string; address: string; note: string }> = []
   for (const sheet of sheets) {
     const rows: Array<Array<FortuneCellValue | null>> =
       sheet.data ||
@@ -649,6 +668,10 @@ export async function restoreXlsxExport(
       }, [])
     rows.forEach((row, r) =>
       row?.forEach((cell, c) => {
+        const note = cell?.ps?.value
+        if (typeof note === 'string' && note.trim()) {
+          notes.push({ sheet: sheet.name, address: toA1(r, c), note })
+        }
         const source = cell?.[XLSX_FORMULA_KEY]
         const used = cell?.[XLSX_NAMES_KEY]
         if (typeof source !== 'string' || !Array.isArray(used) || !cell?.f) return
@@ -659,7 +682,7 @@ export async function restoreXlsxExport(
       })
     )
   }
-  if (!restores.length) return bytes
+  if (!restores.length && !notes.length) return bytes
 
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(bytes as unknown as ArrayBuffer)
@@ -669,6 +692,11 @@ export async function restoreXlsxExport(
     const current = cell.value as { result?: unknown } | null
     const result = current && typeof current === 'object' ? current.result : current
     cell.value = { formula: restore.formula, result } as ExcelJSModule.CellFormulaValue
+  }
+  // fortune-excel does not write cell notes.
+  for (const { sheet, address, note } of notes) {
+    const cell = workbook.getWorksheet(sheet)?.getCell(address)
+    if (cell) cell.note = note
   }
   const written = new Uint8Array(await workbook.xlsx.writeBuffer())
 
