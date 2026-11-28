@@ -50,7 +50,7 @@ declare global {
         maxMatchesPerFile?: number
         restrictToPaths?: string[]
       }) => Promise<any>
-      replaceInFiles: (payload: {
+      previewReplaceInFiles: (payload: {
         rootPath: string
         query: string
         replaceText: string
@@ -61,6 +61,19 @@ declare global {
         excludePattern?: string
         restrictToPaths?: string[]
       }) => Promise<any>
+      applyReplaceInFiles: (payload: {
+        rootPath: string
+        query: string
+        replaceText: string
+        isRegex?: boolean
+        caseSensitive?: boolean
+        wholeWord?: boolean
+        includePattern?: string
+        excludePattern?: string
+        previewToken: string
+        files: Array<{ path: string; hash: string; exclude?: number[] }>
+      }) => Promise<any>
+      restoreReplaceBackup: (payload: { backupId: string }) => Promise<any>
       searchFileNames: (payload: {
         rootPath: string
         query: string

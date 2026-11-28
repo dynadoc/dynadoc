@@ -269,8 +269,15 @@ function readTag(html: string, start: number): ParsedTag | null {
   return null
 }
 
-/** Decodes a character reference at `start` (on `&`). Null when it is not one. */
-function readEntity(html: string, start: number): { value: string; end: number } | null {
+/**
+ * Decodes a character reference at `start` (on `&`). Null when it is not one.
+ * A well-formed named reference this table does not know comes back with
+ * `unknown`: it reads as one opaque character, so nothing matches inside it.
+ */
+function readEntity(
+  html: string,
+  start: number
+): { value: string; end: number; unknown?: boolean } | null {
   const match = /^&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/.exec(
     html.slice(start, start + 40)
   )
@@ -289,6 +296,7 @@ function readEntity(html: string, start: number): { value: string; end: number }
     }
   } else {
     value = NAMED_ENTITIES[body]
+    if (value === undefined) return { value: '\ufffd', end: start + match[0].length, unknown: true }
   }
   if (value === undefined) return null
   return { value, end: start + match[0].length }
@@ -379,7 +387,12 @@ export function htmlTextModel(html: string): TextModel {
           continue
         }
         if (RAW_TEXT_ELEMENTS.has(tag.name)) {
-          const closeAt = html.toLowerCase().indexOf(`</${tag.name}`, index)
+          // Case-insensitive search on the document itself: a lowercased copy
+          // can be longer than the original ('\u0130' lowercases to two units),
+          // and its offsets would drift.
+          const closing = new RegExp(`</${tag.name}(?=[\\s/>])`, 'gi')
+          closing.lastIndex = index
+          const closeAt = closing.exec(html)?.index ?? -1
           if (closeAt === -1) {
             index = html.length
           } else {
@@ -415,10 +428,9 @@ export function htmlTextModel(html: string): TextModel {
       const entity = readEntity(html, index)
       if (entity) {
         const value = entity.value === '\u00a0' ? ' ' : entity.value
-        for (const unit of value) {
-          // A decoded character, even a pair of UTF-16 units, maps to the whole reference.
-          for (let k = 0; k < unit.length; k += 1) push(unit[k], index, entity.end, 0)
-        }
+        const flag = entity.unknown ? CHAR_SYNTHETIC | CHAR_OBJECT : 0
+        // A decoded character, even a pair of UTF-16 units, maps to the whole reference.
+        for (let k = 0; k < value.length; k += 1) push(value[k], index, entity.end, flag)
         index = entity.end
         continue
       }
@@ -504,6 +516,9 @@ export function findInTextModel(
       }
       const start = lineOffset + found.index
       const end = start + matched.length
+      // Without the `u` flag, `.` can match half of a character outside the
+      // BMP. Replacing half a character would corrupt it: not a match.
+      if (isLowSurrogate(model.text, start) || isLowSurrogate(model.text, end)) continue
       let blocked: TextMatch['blocked']
       for (let k = start; k < end; k += 1) {
         if (model.flags[k] & CHAR_OBJECT) {
@@ -529,6 +544,16 @@ export function findInTextModel(
     lineOffset += lineText.length + 1
   }
   return { matches, truncated: false }
+}
+
+function isLowSurrogate(text: string, index: number): boolean {
+  const code = text.charCodeAt(index)
+  return code >= 0xdc00 && code <= 0xdfff && index > 0 && isHighSurrogate(text, index - 1)
+}
+
+function isHighSurrogate(text: string, index: number): boolean {
+  const code = text.charCodeAt(index)
+  return code >= 0xd800 && code <= 0xdbff
 }
 
 export function escapeHtmlText(value: string): string {
@@ -647,20 +672,29 @@ export function planReplace(
   const edits: Edit[] = []
   const applied: boolean[] = []
   let replaced = 0
+  let lastEnd = 0
   matches.forEach((match, index) => {
     applied.push(false)
     if (match.blocked || options.skip?.has(index)) return
     const text = replacementFor(match, replacement, options)
     const forMatch = editsForMatch(model, match, html ? escapeHtmlText(text) : text)
     if (forMatch.length === 0) return
+    // Matches come in document order and their edits in source order. An edit
+    // that would reach back over an earlier one (two matches sharing the
+    // source of one decoded character) is dropped with its whole match.
+    if (forMatch.some((edit, k) => edit.start < (k === 0 ? lastEnd : forMatch[k - 1].end))) return
     edits.push(...forMatch)
+    lastEnd = forMatch[forMatch.length - 1].end
     applied[index] = true
     replaced += 1
   })
-  edits.sort((a, b) => b.start - a.start)
-  let output = raw
+  // One pass: the untouched source between edits, then each insert.
+  const parts: string[] = []
+  let cursor = 0
   for (const edit of edits) {
-    output = output.slice(0, edit.start) + edit.insert + output.slice(edit.end)
+    parts.push(raw.slice(cursor, edit.start), edit.insert)
+    cursor = edit.end
   }
-  return { output, matches, applied, replaced }
+  parts.push(raw.slice(cursor))
+  return { output: parts.join(''), matches, applied, replaced }
 }

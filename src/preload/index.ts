@@ -210,7 +210,9 @@ const api = {
     maxMatchesPerFile?: number
     restrictToPaths?: string[]
   }) => ipcRenderer.invoke('search:files', payload),
-  replaceInFiles: (payload: {
+  // Replace across files is two steps: the preview lists every change, the
+  // apply writes the ones kept, after a backup copy of each file (#137).
+  previewReplaceInFiles: (payload: {
     rootPath: string
     query: string
     replaceText: string
@@ -220,7 +222,21 @@ const api = {
     includePattern?: string
     excludePattern?: string
     restrictToPaths?: string[]
-  }) => ipcRenderer.invoke('search:replace-in-files', payload),
+  }) => ipcRenderer.invoke('search:replace-preview', payload),
+  applyReplaceInFiles: (payload: {
+    rootPath: string
+    query: string
+    replaceText: string
+    isRegex?: boolean
+    caseSensitive?: boolean
+    wholeWord?: boolean
+    includePattern?: string
+    excludePattern?: string
+    previewToken: string
+    files: Array<{ path: string; hash: string; exclude?: number[] }>
+  }) => ipcRenderer.invoke('search:replace-apply', payload),
+  restoreReplaceBackup: (payload: { backupId: string }) =>
+    ipcRenderer.invoke('search:replace-restore', payload),
   searchFileNames: (payload: {
     rootPath: string
     query: string

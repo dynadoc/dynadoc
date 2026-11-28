@@ -3223,23 +3223,6 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Kept until the Search panel moves to preview + apply: the same safe
-  // replace in one step, with the backup and the log.
-  ipcMain.handle('search:replace-in-files', async (_event, payload: ReplacePayload) => {
-    try {
-      const preview = await previewReplaceInFiles(payload || ({} as ReplacePayload))
-      if (!preview.ok)
-        return { ok: false, changedFiles: 0, replacements: 0, files: [], error: preview.error }
-      return await applyReplaceInFiles(
-        { ...payload, files: preview.files.map((file) => ({ path: file.path, hash: file.hash })) },
-        searchReplaceBackupRoot()
-      )
-    } catch (error) {
-      console.error('search:replace-in-files error', error)
-      return { ok: false, changedFiles: 0, replacements: 0, files: [], error: 'Replace failed' }
-    }
-  })
-
   ipcMain.handle('search:replace-restore', async (_event, payload: { backupId: string }) => {
     try {
       return await restoreReplaceBackup(String(payload?.backupId || ''), searchReplaceBackupRoot())

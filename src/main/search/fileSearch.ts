@@ -41,6 +41,8 @@ export type SearchFsPayload = {
 export type ReplacePayload = SearchFsPayload & { replaceText: string }
 
 export type ApplyReplacePayload = ReplacePayload & {
+  /** From the preview: the apply must use the same query, options and scope. */
+  previewToken: string
   /**
    * The files of the preview, with the hash each had when it was previewed and
    * the indexes (in the preview's `changes`) the user unticked.
@@ -150,6 +152,16 @@ export const SEARCH_TEXT_EXTENSIONS = new Set([
   '.sddoc'
 ])
 
+/**
+ * The only files a replace writes: documents and plain text. Never data or
+ * code (`vars.json`, translations, `.css`, `.js`), whatever the patterns say.
+ */
+export const REPLACE_EXTENSIONS = new Set(['.html', '.htm', '.sddoc', '.md', '.markdown', '.txt'])
+
+export function isReplaceableFile(filePath: string): boolean {
+  return REPLACE_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+}
+
 export function normalizeSearchPath(inputPath: string): string {
   return String(inputPath || '')
     .trim()
@@ -233,6 +245,17 @@ function isInsideRoot(filePath: string, rootPath: string): boolean {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
 }
 
+/** Inside the root (or the root itself), after resolving symbolic links on both sides. */
+function isReallyInsideRoot(filePath: string, rootPath: string): boolean {
+  try {
+    const real = fs.realpathSync(filePath)
+    const realRoot = fs.realpathSync(rootPath)
+    return real === realRoot || isInsideRoot(real, realRoot)
+  } catch {
+    return false
+  }
+}
+
 export async function collectSearchFiles(
   rootPath: string,
   includeMatchers: RegExp[],
@@ -245,9 +268,7 @@ export async function collectSearchFiles(
       restrictToPaths
         .filter((item) => item && fs.existsSync(item))
         // A restricted list names files of this search, never files elsewhere.
-        .filter(
-          (item) => isInsideRoot(item, rootPath) || path.resolve(item) === path.resolve(rootPath)
-        )
+        .filter((item) => isReallyInsideRoot(item, rootPath))
         .filter(
           (item) =>
             !excludeMatchers.length || !matchesAnyPatternForFile(item, rootPath, excludeMatchers)
@@ -330,6 +351,25 @@ function toSearchMatch(match: {
   }
 }
 
+/**
+ * Binds an apply to its preview: the indexes of unticked changes only mean
+ * something for the same query, options, replacement and scope.
+ */
+export function previewTokenFor(payload: ReplacePayload): string {
+  return hashContent(
+    JSON.stringify([
+      String(payload.rootPath || '').trim(),
+      String(payload.query || ''),
+      String(payload.replaceText ?? ''),
+      !!payload.isRegex,
+      !!payload.caseSensitive,
+      !!payload.wholeWord,
+      String(payload.includePattern || ''),
+      String(payload.excludePattern || '')
+    ])
+  )
+}
+
 type MatcherResult = { matcher: RegExp } | { error: string }
 
 function buildMatcher(payload: SearchFsPayload): MatcherResult {
@@ -401,6 +441,7 @@ export async function searchInFiles(payload: SearchFsPayload): Promise<{
 /** Lists every change a replace would make, without writing anything. */
 export async function previewReplaceInFiles(payload: ReplacePayload): Promise<{
   ok: boolean
+  previewToken?: string
   files: ReplacePreviewFile[]
   replacements: number
   skipped: number
@@ -417,7 +458,7 @@ export async function previewReplaceInFiles(payload: ReplacePayload): Promise<{
   const built = buildMatcher(payload)
   if ('error' in built) return { ok: false, ...empty, error: built.error }
 
-  const files = await filesForPayload(payload, rootPath)
+  const files = (await filesForPayload(payload, rootPath)).filter(isReplaceableFile)
   const preview: ReplacePreviewFile[] = []
   let replacements = 0
   let skipped = 0
@@ -450,6 +491,7 @@ export async function previewReplaceInFiles(payload: ReplacePayload): Promise<{
 
   return {
     ok: true,
+    previewToken: previewTokenFor(payload),
     files: preview,
     replacements,
     skipped,
@@ -482,8 +524,13 @@ function changedLines(
 /** Writes next to the file, then renames: a failed write leaves the file as it was. */
 async function writeFileAtomic(filePath: string, content: string | Buffer): Promise<void> {
   const temp = `${filePath}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`
+  const mode = await fsp
+    .stat(filePath)
+    .then((stats) => stats.mode & 0o7777)
+    .catch(() => undefined)
   try {
-    await fsp.writeFile(temp, content)
+    await fsp.writeFile(temp, content, mode === undefined ? undefined : { mode })
+    if (mode !== undefined) await fsp.chmod(temp, mode)
     await fsp.rename(temp, filePath)
   } catch (err) {
     await fsp.rm(temp, { force: true }).catch(() => {})
@@ -500,9 +547,42 @@ const BACKUP_ID_PATTERN = /^[0-9TZ-]+-[0-9a-f]{6}$/
 
 export const REPLACE_LOG_FILE = 'replace-log.jsonl'
 
+/**
+ * One line per replace or restore: when, where, how many, which files. The
+ * changed text itself stays in the run's manifest, next to its backup copies,
+ * and goes away with them.
+ */
 async function appendLog(backupRoot: string, entry: Record<string, unknown>): Promise<void> {
-  await fsp.mkdir(backupRoot, { recursive: true })
-  await fsp.appendFile(path.join(backupRoot, REPLACE_LOG_FILE), `${JSON.stringify(entry)}\n`)
+  try {
+    await fsp.mkdir(backupRoot, { recursive: true })
+    await fsp.appendFile(path.join(backupRoot, REPLACE_LOG_FILE), `${JSON.stringify(entry)}\n`)
+  } catch (err) {
+    console.warn('[search] could not append to the replace log:', err)
+  }
+}
+
+/** How many replace backups are kept; older ones are removed on the next apply. */
+export const REPLACE_BACKUPS_KEPT = 20
+
+async function pruneBackups(backupRoot: string, keep: string): Promise<void> {
+  try {
+    const entries = (await fsp.readdir(backupRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && BACKUP_ID_PATTERN.test(entry.name))
+      .map((entry) => entry.name)
+      .sort()
+      .reverse()
+    for (const name of entries.slice(REPLACE_BACKUPS_KEPT)) {
+      if (name === keep) continue
+      await fsp.rm(path.join(backupRoot, name), { recursive: true, force: true })
+    }
+  } catch (err) {
+    console.warn('[search] could not prune replace backups:', err)
+  }
+}
+
+async function writeManifest(backupDir: string, manifest: ReplaceBackupManifest): Promise<void> {
+  await fsp.mkdir(backupDir, { recursive: true })
+  await writeFileAtomic(path.join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
 }
 
 /**
@@ -533,6 +613,10 @@ export async function applyReplaceInFiles(
   if (!fs.existsSync(rootPath)) return { ok: false, ...empty, error: 'Search root does not exist' }
   if (!backupRoot) return { ok: false, ...empty, error: 'No backup location' }
 
+  if (String(payload.previewToken || '') !== previewTokenFor(payload)) {
+    return { ok: false, ...empty, error: 'The preview is out of date: preview the replace again' }
+  }
+
   const built = buildMatcher(payload)
   if ('error' in built) return { ok: false, ...empty, error: built.error }
 
@@ -549,7 +633,9 @@ export async function applyReplaceInFiles(
         { ...payload, restrictToPaths: expected.map((item) => item.path) },
         rootPath
       )
-    ).map((item) => path.resolve(item))
+    )
+      .filter(isReplaceableFile)
+      .map((item) => path.resolve(item))
   )
 
   const backupId = newBackupId()
@@ -569,6 +655,15 @@ export async function applyReplaceInFiles(
   }
   const skippedFiles: Array<{ path: string; reason: string }> = []
   let replacements = 0
+
+  // The manifest exists before the first file changes, and is rewritten after
+  // each one, so whatever happens next, every change made has its undo.
+  try {
+    await writeManifest(backupDir, manifest)
+  } catch (err) {
+    console.warn('[search] could not create the replace backup:', err)
+    return { ok: false, ...empty, error: 'Could not create the backup, nothing was replaced' }
+  }
 
   for (const [filePath, hash] of expectedHash) {
     if (!allowed.has(filePath)) {
@@ -602,44 +697,51 @@ export async function applyReplaceInFiles(
       skippedFiles.push({ path: filePath, reason: 'backup failed' })
       continue
     }
-    try {
-      await writeFileAtomic(filePath, plan.output)
-    } catch (err) {
-      console.warn('[search] write failed:', filePath, err)
-      skippedFiles.push({ path: filePath, reason: 'write failed' })
-      continue
-    }
-
-    replacements += plan.replaced
-    manifest.files.push({
+    const entry = {
       path: filePath,
       backup: path.join('files', backupName),
       hashBefore,
       hashAfter: hashContent(Buffer.from(plan.output, 'utf-8')),
       replacements: plan.replaced,
       changes: changedLines(filePath, plan.matches, plan.applied, plan.output)
-    })
+    }
+    // Listed before the write: a restore checks hashAfter, so an entry whose
+    // write did not happen is simply not restored.
+    manifest.files.push(entry)
+    try {
+      await writeManifest(backupDir, manifest)
+    } catch (err) {
+      console.warn('[search] manifest not updated, file left unchanged:', filePath, err)
+      manifest.files.pop()
+      skippedFiles.push({ path: filePath, reason: 'backup failed' })
+      continue
+    }
+    try {
+      await writeFileAtomic(filePath, plan.output)
+    } catch (err) {
+      console.warn('[search] write failed:', filePath, err)
+      manifest.files.pop()
+      skippedFiles.push({ path: filePath, reason: 'write failed' })
+      await writeManifest(backupDir, manifest).catch(() => {})
+      continue
+    }
+    replacements += plan.replaced
   }
 
   const logPath = path.join(backupRoot, REPLACE_LOG_FILE)
-  if (manifest.files.length > 0) {
-    await fsp.mkdir(backupDir, { recursive: true })
-    await fsp.writeFile(path.join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
+  if (manifest.files.length === 0) {
+    await fsp.rm(backupDir, { recursive: true, force: true }).catch(() => {})
+  } else {
+    await pruneBackups(backupRoot, backupId)
   }
   await appendLog(backupRoot, {
     action: 'replace',
     at: manifest.createdAt,
     backupId: manifest.files.length > 0 ? backupId : null,
     rootPath,
-    query,
-    replaceText,
     options: manifest.options,
     replacements,
-    files: manifest.files.map((file) => ({
-      path: file.path,
-      replacements: file.replacements,
-      changes: file.changes
-    })),
+    files: manifest.files.map((file) => ({ path: file.path, replacements: file.replacements })),
     skippedFiles
   })
 
@@ -705,7 +807,9 @@ export async function restoreReplaceBackup(
   }
 
   manifest.restoredAt = new Date().toISOString()
-  await fsp.writeFile(path.join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
+  await writeManifest(backupDir, manifest).catch((err) =>
+    console.warn('[search] could not mark the backup as restored:', err)
+  )
   await appendLog(backupRoot, {
     action: 'restore',
     at: manifest.restoredAt,

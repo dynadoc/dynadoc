@@ -69,8 +69,13 @@ try {
     searchInFiles,
     previewReplaceInFiles,
     applyReplaceInFiles,
+    previewTokenFor,
     restoreReplaceBackup
   } = search
+
+  // The Search panel sends back the token its preview returned.
+  const applyWithToken = (payload, backupRoot) =>
+    applyReplaceInFiles({ ...payload, previewToken: previewTokenFor(payload) }, backupRoot)
 
   const replaceHtml = (html, query, replacement, options = {}) =>
     planReplace('doc.html', html, createSearchRegExp(query, options), replacement).output
@@ -210,6 +215,35 @@ try {
     'X\r\n[X](https://X.example)\r\n'
   )
 
+  log('review findings (#160)')
+  const turkish =
+    '<p>' +
+    '\u0130'.repeat(10) +
+    '</p><style>.x{}</style><span data-variable="client" name="client">{client}</span><p>z</p>'
+  check(
+    'a closing </style> is found without offsets drifting (\u0130 lowercases to two units)',
+    replaceHtml(turkish, 'client', 'buyer'),
+    turkish
+  )
+  check(
+    'nothing matches inside a named reference the table does not know',
+    replaceHtml('<p>caf&eacute; acute</p>', 'acute', 'X'),
+    '<p>caf&eacute; X</p>'
+  )
+  check(
+    'regex . never takes half of a character outside the BMP',
+    planReplace('a.html', '<p>a&#x1F600;b</p>', createSearchRegExp('.', { isRegex: true }), 'Z', {
+      expand: true
+    }).output,
+    '<p>Z&#x1F600;Z</p>'
+  )
+  const big = '<p>' + 'acme '.repeat(200000) + '</p>'
+  const started = Date.now()
+  const bigPlan = planReplace('b.html', big, createSearchRegExp('acme', {}), 'x')
+  const elapsed = Date.now() - started
+  check('200 000 replacements in 1 MB, in one pass', bigPlan.replaced, 200000)
+  check(`and quickly (${elapsed} ms, limit 5000)`, elapsed < 5000, true)
+
   log('regular expressions')
   const regexReplace = (html, query, replacement) =>
     planReplace('doc.html', html, createSearchRegExp(query, { isRegex: true }), replacement, {
@@ -291,7 +325,7 @@ try {
   check('a restricted path outside the search root is ignored', escape.files.length, 0)
 
   writeFileSync(docPath, original + '<p>edited</p>')
-  const stale = await applyReplaceInFiles(
+  const stale = await applyWithToken(
     {
       ...base,
       replaceText: 'Globex Inc',
@@ -307,7 +341,7 @@ try {
   check('and left as it is', readFileSync(docPath, 'utf8'), original + '<p>edited</p>')
   writeFileSync(docPath, original)
 
-  const applied = await applyReplaceInFiles(
+  const applied = await applyWithToken(
     {
       ...base,
       replaceText: 'Globex Inc',
@@ -330,14 +364,24 @@ try {
     readFileSync(path.join(applied.backupDir, manifest.files[0].backup), 'utf8'),
     original
   )
+  check(
+    'apply: the manifest lists what changed, line by line',
+    manifest.files[0].changes[0].after,
+    'Globex Inc signs with Globex Inc.'
+  )
   const logLines = readFileSync(applied.logPath, 'utf8')
     .trim()
     .split('\n')
     .map((l) => JSON.parse(l))
   check(
-    'apply: one log line per run, the last one with what changed',
-    [logLines.length, logLines.at(-1).replacements, logLines.at(-1).files[0].changes[0].after],
-    [2, 2, 'Globex Inc signs with Globex Inc.']
+    'apply: one log line per run, with counts and files but not the document text',
+    [
+      logLines.length,
+      logLines.at(-1).replacements,
+      logLines.at(-1).files[0].replacements,
+      JSON.stringify(logLines.at(-1)).includes('Globex')
+    ],
+    [2, 2, 2, false]
   )
 
   check(
@@ -346,6 +390,56 @@ try {
     '{"client":"Acme Corp"}'
   )
 
+  const typeRoot = path.join(work, 'types')
+  mkdirSync(typeRoot, { recursive: true })
+  writeFileSync(path.join(typeRoot, 'index.html'), '<p>Acme</p>')
+  writeFileSync(path.join(typeRoot, 'vars.json'), '{"c":"acme"}')
+  writeFileSync(path.join(typeRoot, 'a.css'), '.acme{}')
+  writeFileSync(path.join(typeRoot, 'a.js'), 'const acme = 1')
+  const unscoped = {
+    rootPath: typeRoot,
+    query: 'acme',
+    replaceText: 'globex',
+    includePattern: '',
+    excludePattern: ''
+  }
+  const unscopedPreview = await previewReplaceInFiles(unscoped)
+  check(
+    'with empty patterns, only documents and text files are previewed',
+    unscopedPreview.files.map((file) => path.basename(file.path)),
+    ['index.html']
+  )
+  const forced = await applyWithToken(
+    {
+      ...unscoped,
+      files: ['vars.json', 'a.css', 'a.js', 'index.html'].map((name) => ({
+        path: path.join(typeRoot, name),
+        hash: unscopedPreview.files[0].hash
+      }))
+    },
+    backupRoot
+  )
+  check(
+    'and apply refuses data and code files even when they are sent',
+    [
+      forced.files.map((file) => path.basename(file)),
+      readFileSync(path.join(typeRoot, 'vars.json'), 'utf8'),
+      readFileSync(path.join(typeRoot, 'a.css'), 'utf8'),
+      readFileSync(path.join(typeRoot, 'a.js'), 'utf8')
+    ],
+    [['index.html'], '{"c":"acme"}', '.acme{}', 'const acme = 1']
+  )
+  const mismatch = await applyReplaceInFiles(
+    {
+      ...unscoped,
+      replaceText: 'other',
+      previewToken: unscopedPreview.previewToken,
+      files: [{ path: path.join(typeRoot, 'index.html'), hash: 'x' }]
+    },
+    backupRoot
+  )
+  check('apply refuses a payload that is not the one previewed', mismatch.ok, false)
+
   const restored = await restoreReplaceBackup(applied.backupId, backupRoot)
   check(
     'restore: the file is back',
@@ -353,7 +447,7 @@ try {
     [1, original]
   )
 
-  const again = await applyReplaceInFiles(
+  const again = await applyWithToken(
     {
       ...base,
       replaceText: 'Z',
@@ -375,7 +469,7 @@ try {
   )
   writeFileSync(docPath, original)
   const partial = await previewReplaceInFiles({ ...base, replaceText: 'P' })
-  const partialApplied = await applyReplaceInFiles(
+  const partialApplied = await applyWithToken(
     {
       ...base,
       replaceText: 'P',
