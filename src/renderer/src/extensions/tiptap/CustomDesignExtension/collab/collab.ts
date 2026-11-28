@@ -6,6 +6,9 @@ import EditorHelpers from '../../../../utils/EditorHelpers'
 import { v4 as uuidv4 } from 'uuid'
 import { DocumentModel } from '../../../../models/Document'
 import { createCanvas, type CollaborativeCanvas } from '../../../../utils/canvas.utils'
+import { copyDriveRootStore, isDriveRootAssetPath } from '../../../../utils/assetRoot'
+import { writeFileEnsuringDirAsync } from '../../../../utils/documentFileUtils'
+import { nodeApi } from '../../../../utils/shims/node'
 
 // import { nodeApi } from '../../../../utils/shims/node'
 // const COMPACT_AFTER = 50
@@ -58,6 +61,37 @@ export function encodeSnapshot(ydoc: Y.Doc): string {
 
 export async function createDesign(designId?: string, designPath?: string, parentDoc?: any, userInfo?: { name: string, color: string }): Promise<CollaborativeCanvas> {
     return await createCanvas(DocumentModel.AssetType.DESIGN, designId, designPath, {}, parentDoc, userInfo)
+}
+
+/**
+ * Before #149 every design on the web was given `assets/design/<name>.json`
+ * at the drive root, one file for all of them. For a design still pointing
+ * there, copies that file into its document's own `assets/design/` folder and
+ * returns the new path; null when there is nothing to move. The shared file
+ * is left in place, so nothing is lost, whichever design opens first. Each
+ * design gets every shape the shared file holds, other designs' included.
+ *
+ * The copy is named after the design's id: it can never land on another
+ * design's file, and a design whose new `src` was not saved finds its own
+ * copy again on the next open instead of copying the shared file anew.
+ */
+export async function ownDesignStore(
+    designId?: string,
+    src?: string,
+    documentPath?: string
+): Promise<string | null> {
+    const type = DocumentModel.AssetType.DESIGN
+    if (!designId || !documentPath || !isDriveRootAssetPath(src, type)) return null
+    const target = (
+        await DocumentModel.getAssetFilePathFromDocument(type, documentPath, `design-${designId}.json`)
+    )?.filePath
+    return copyDriveRootStore(src, target, type, {
+        exists: async (filePath) => Boolean(await nodeApi.fsPromises.exists(filePath)),
+        readFile: async (filePath) => String(await nodeApi.fsPromises.readFile(filePath, 'utf-8')),
+        writeFile: async (filePath, data) => {
+            await writeFileEnsuringDirAsync(filePath, data, 'utf-8')
+        }
+    })
 }
 
 /* export function createDesign(designId?: string, designPath?: string): CollaborativeCanvas {

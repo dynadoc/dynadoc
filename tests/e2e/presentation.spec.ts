@@ -21,7 +21,10 @@ import {
   typeKeys,
   variableMenu
 } from './support/app'
+import { STUB_ROOT } from './support/env'
 import type { Locator, Page } from '@playwright/test'
+import { readdirSync } from 'node:fs'
+import path from 'node:path'
 
 // Slides are laid out at 1280 x 720 and drawn scaled into their stage.
 const SLIDE_WIDTH = 1280
@@ -83,6 +86,24 @@ test('add a slide with a layout, type a title and insert @client', async ({ page
   const chip = body.locator('span[data-variable="client"]')
   await expect(chip).toHaveCount(1)
   await expect(chip).toHaveText('ACME SARL')
+})
+
+test('a new deck keeps one file per slide in its own folder (#149)', async ({ page }) => {
+  const slideFiles = (): string[] =>
+    (readdirSync(STUB_ROOT, { recursive: true }) as string[])
+      .map((entry) => entry.split(path.sep).join('/'))
+      .filter((entry) => /(^|\/)assets\/slide\/[^/]+\.json$/.test(entry))
+  const before = new Set(slideFiles())
+  const created = (): string[] => slideFiles().filter((file) => !before.has(file))
+
+  await newDeckWithContentSlide(page)
+  // Two slides, two files, both in the new document's folder: before #149 on
+  // the web they were all one `assets/slide/slide.json` at the drive root.
+  await expect.poll(() => created().length).toBe(2)
+  for (const file of created()) {
+    expect(file).toMatch(/^home\/[^/]+\/[^/]+\/assets\/slide\/[^/]+\.json$/)
+  }
+  expect(new Set(created().map((file) => file.split('/').slice(0, 3).join('/'))).size).toBe(1)
 })
 
 test('the slideshow opens its window', async ({ page, context }) => {

@@ -65,6 +65,7 @@ import {
   convertDocxToHtml,
   convertHtmlToDocx
 } from '../utils/documentFileUtils'
+import { documentAssetRoot } from '../utils/assetRoot'
 import { NavigationTab } from './Tab'
 import { type } from 'process'
 import SecurityHelpers from '../utils/SecurityHelpers'
@@ -2339,17 +2340,30 @@ extractName("C:\\Users\\me\\Documents\\Project A\\")
       // if document param is a string: it is actually the main file path of the document
       fileRelativePath = DocumentModel.getAssetRelativePath(assetType)
       let cacheDir = await window.api.getCacheDir() // Exposed via preload script
-      let rootDir = ''
-      if (document.startsWith(cacheDir)) {
+      const isDesktop = Platform.getPlatform() === Platform.SUPPORTED_PLATFORMS.desktop
+      let isDirectory = false
+      // On the web a stat of a missing path is a failed bridge call, and a new
+      // document's main file is not written yet when its content is built.
+      const mayStat =
+        isDesktop ? document.startsWith(cacheDir) : await nodeApi.fsPromises.exists(document)
+      if (mayStat) {
         try {
           const stat = await nodeApi.fsPromises.lstat(document)
-          rootDir = stat?.isDirectory?.() ? document : nodeApi.path.dirname(document)
+          isDirectory = Boolean(stat?.isDirectory?.())
         } catch {
-          rootDir = nodeApi.path.dirname(document)
+          // not there yet: the folder of the main file is the root
         }
-      } else {
-        rootDir = getFileRootFromBaseDir(cacheDir, document)
       }
+      // On the web the root is the document's own folder, never the drive
+      // root (#149): see documentAssetRoot.
+      const rootDir = documentAssetRoot({
+        documentPath: document,
+        cacheDir,
+        isDesktop,
+        isDirectory,
+        rootOutsideCache: getFileRootFromBaseDir,
+        dirname: (value) => nodeApi.path.dirname(value)
+      })
       dir = nodeApi.path.join(rootDir, fileRelativePath)
     } else {
       if (!document) {

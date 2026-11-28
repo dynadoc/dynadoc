@@ -14,22 +14,70 @@
  *     the Layers panel;
  *   - #100: the right-click menu template carried its click handlers, so
  *     cloning it threw DataCloneError and no menu opened. On the web the menu
- *     goes to the in-app context menu, without any clone.
+ *     goes to the in-app context menu, without any clone;
+ *   - #149: on the web every design shared assets/design/design.json at the
+ *     drive root, so a new design showed the shapes of earlier ones. Each
+ *     design must start empty and keep its file in its own document folder.
  */
 import { test, expect } from './support/fixtures'
-import { createFromDashboard, openApp } from './support/app'
+import {
+  createFromDashboard,
+  dashboardHeading,
+  expectOpenDocumentPersisted,
+  openApp
+} from './support/app'
 import { STUB_ROOT } from './support/env'
 import type { Locator, Page } from '@playwright/test'
-import { rmSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
-// Known bug: every Design document keeps its shapes in the same file,
-// `assets/design/design.json` at the root of the drive, so a new design opens
-// with the shapes of every design made before it (see the fixme below). Each
-// test starts from no design file, so its layer count means what it says.
-test.beforeEach(() => {
-  rmSync(path.join(STUB_ROOT, 'assets', 'design'), { recursive: true, force: true })
-})
+/** The design files on the stub's drive, relative to its root. */
+function designFiles(): string[] {
+  return (readdirSync(STUB_ROOT, { recursive: true }) as string[])
+    .map((entry) => entry.split(path.sep).join('/'))
+    .filter((entry) => /(^|\/)assets\/design\/[^/]+\.json$/.test(entry))
+}
+
+/** `home/<uuid>/<name>` of a file under `home/<uuid>/<name>/assets/design/`. */
+function documentFolderOf(file: string): string {
+  return file.split('/').slice(0, 3).join('/')
+}
+
+function readDriveFile(file: string): string {
+  return readFileSync(path.join(STUB_ROOT, file), 'utf8')
+}
+
+/**
+ * The content of a design file once it holds shapes and has stopped changing
+ * (two reads half a second apart agree), so a late save of the canvas is not
+ * mistaken for a change made by something else.
+ */
+async function settledDesignFile(file: string): Promise<string> {
+  let previous = ''
+  await expect
+    .poll(
+      () => {
+        const content = readDriveFile(file)
+        const settled = content === previous && JSON.parse(content).updates.length > 0
+        previous = content
+        return settled
+      },
+      { intervals: [500], timeout: 30_000 }
+    )
+    .toBe(true)
+  return previous
+}
+
+/** Draws a rectangle in a new design and returns its file, once saved. */
+async function newDesignWithRectangle(page: Page): Promise<{ file: string; content: string }> {
+  const before = new Set(designFiles())
+  const canvas = await openDesign(page)
+  await drawRectangle(page, canvas)
+  await expect(page.locator('.adobe-layer-row').filter({ visible: true })).toHaveCount(1)
+  await expect.poll(() => designFiles().filter((file) => !before.has(file)).length).toBe(1)
+  const file = designFiles().find((entry) => !before.has(entry))!
+  return { file, content: await settledDesignFile(file) }
+}
 
 /** Opaque pixels of the canvas in a CSS-pixel rectangle. */
 async function inkIn(
@@ -150,16 +198,36 @@ test('the in-app menu appears on right-click', async ({ page }) => {
   await expect(page.getByText('Bring forward', { exact: true })).toBeVisible()
 })
 
-test('a new design starts empty', async ({ page }) => {
-  test.fixme(
-    true,
-    'Known bug: Design documents share one shape store, assets/design/design.json at the ' +
-      'drive root, so a new design shows the shapes of earlier ones.'
-  )
-  const canvas = await openDesign(page)
-  await drawRectangle(page, canvas)
-  await expect(page.locator('.adobe-layer-row')).toHaveCount(1)
+test('a new design starts empty and has a file of its own (#149)', async ({ page }) => {
+  const rows = page.locator('.adobe-layer-row').filter({ visible: true })
+  const before = new Set(designFiles())
+  const created = (): string[] => designFiles().filter((file) => !before.has(file))
+
+  const first = await newDesignWithRectangle(page)
+  // Saved in its own document folder, nothing new at the drive root.
+  expect(first.file).toMatch(/^home\/[^/]+\/[^/]+\/assets\/design\/[^/]+\.json$/)
+  expect(created().filter((file) => file.startsWith('assets/'))).toEqual([])
+
+  // A second design, from the dashboard.
   await page.getByRole('button', { name: 'Home', exact: true }).first().click()
-  await openDesign(page)
-  await expect(page.locator('.adobe-layer-row')).toHaveCount(0)
+  await expect(dashboardHeading(page)).toBeVisible()
+  await createFromDashboard(page, 'Design')
+  await expect.poll(() => created().length, { timeout: 60_000 }).toBe(2)
+  await expect(page.locator('canvas.skia-canvas').filter({ visible: true })).toHaveCount(1)
+  await expect(rows).toHaveCount(0)
+
+  const second = created().find((file) => file !== first.file)!
+  expect(documentFolderOf(second)).not.toBe(documentFolderOf(first.file))
+  expect(created().filter((file) => file.startsWith('assets/'))).toEqual([])
+  expect(readDriveFile(first.file)).toBe(first.content)
+})
+
+test('a design shows its shapes again after a reload (#149)', async ({ page }) => {
+  await newDesignWithRectangle(page)
+  await expectOpenDocumentPersisted()
+  await page.reload()
+  const canvas = page.locator('canvas.skia-canvas').filter({ visible: true }).first()
+  await expect(canvas).toBeVisible({ timeout: 60_000 })
+  await canvas.click({ position: { x: 40, y: 40 } })
+  await expect(page.locator('.adobe-layer-row').filter({ visible: true })).toHaveCount(1)
 })

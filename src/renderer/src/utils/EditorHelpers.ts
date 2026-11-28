@@ -50,6 +50,7 @@ import {
   type DocumentContentType
 } from '../models/Document'
 import Utils from './Utils'
+import { pickUniqueName } from './uniqueName'
 import SecurityHelpers from './SecurityHelpers'
 // import { CustomProgrammingStyleCommentExtension } from '../extensions/tiptap/CustomProgrammingStyleCommentExtension/CustomProgrammingStyleCommentExtension';
 // import { CustomSecuredContentExtension } from '../extensions/tiptap/CustomSecuredContentExtension/CustomSecuredContentExtension';
@@ -338,7 +339,7 @@ export default class EditorHelpers {
 
     if (!safeBase) safeBase = 'Untitled'
 
-    let existing: string[] = []
+    let existing: unknown[] = []
     try {
       const normalizedParent = EditorHelpers.normalizePathForPlatform(parentDir)
       existing = await nodeApi.fsPromises.readdir(normalizedParent)
@@ -347,27 +348,7 @@ export default class EditorHelpers {
       await nodeApi.fsPromises.mkdir(normalizedParent, { recursive: true })
     }
 
-    const escaped = safeBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const numberRegex = copyStyle
-      ? new RegExp(`^${copyStyle} ${escaped}(?:${separator}(\\d+))?${extension}$`)
-      : new RegExp(`^${escaped}(?:${separator}(\\d+))?${extension}$`)
-
-    let maxIndex = 0
-    for (const name of existing) {
-      const candidate = typeof name === 'string' ? name : String(name ?? '')
-      const match = candidate.match(numberRegex)
-      if (!match) continue
-      const num = match[1] ? parseInt(match[1], 10) : 1
-      if (num > maxIndex) maxIndex = num
-    }
-
-    if (maxIndex === 0) {
-      return copyStyle ? `${copyStyle} ${safeBase}${extension}` : `${safeBase}${extension}`
-    }
-
-    return copyStyle
-      ? `${copyStyle} ${safeBase}${separator}${maxIndex + 1}${extension}`
-      : `${safeBase}${separator}${maxIndex + 1}${extension}`
+    return pickUniqueName(existing, safeBase, extension, separator, copyStyle)
   }
 
   public static startsWithOperator(str) {
