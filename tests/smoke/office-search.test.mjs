@@ -51,6 +51,9 @@ try {
     [
       `export * from ${JSON.stringify(path.join(repoRoot, 'src/main/search/officeText.ts'))}`,
       `export * from ${JSON.stringify(path.join(repoRoot, 'src/main/search/officeSearch.ts'))}`,
+      `export * from ${JSON.stringify(path.join(repoRoot, 'src/main/search/officeCache.ts'))}`,
+      `export * from ${JSON.stringify(path.join(repoRoot, 'src/main/search/officeWorker.ts'))}`,
+      `export { searchInFiles } from ${JSON.stringify(path.join(repoRoot, 'src/main/search/fileSearch.ts'))}`,
       `export { zipSync, strToU8 } from 'fflate'`
     ].join('\n')
   )
@@ -72,8 +75,35 @@ try {
     console.error(`[office-search] FAIL: could not compile\n${build.stdout}${build.stderr}`)
     process.exit(1)
   }
+  // The worker as the main process runs it: its own bundle, loaded by path.
+  const workerFile = path.join(work, 'officeText.worker.cjs')
+  const workerBuild = spawnSync(
+    path.join(repoRoot, 'node_modules', '.bin', 'esbuild'),
+    [
+      path.join(repoRoot, 'src/main/workers/officeText.worker.ts'),
+      '--bundle',
+      '--platform=node',
+      '--format=cjs',
+      `--outfile=${workerFile}`
+    ],
+    { encoding: 'utf8', cwd: repoRoot }
+  )
+  if (workerBuild.status !== 0) {
+    console.error(`[office-search] FAIL: could not compile the worker\n${workerBuild.stderr}`)
+    process.exit(1)
+  }
   const office = await import(`file://${compiled}`)
-  const { extractOfficeText, searchOfficeFile, stripHeaderFooterCodes, zipSync, strToU8 } = office
+  const {
+    extractOfficeText,
+    searchOfficeFile,
+    stripHeaderFooterCodes,
+    searchInFiles,
+    createOfficeWorkerExtractor,
+    clearOfficeCache,
+    officeCacheStats,
+    zipSync,
+    strToU8
+  } = office
 
   const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
   const MC = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
@@ -346,6 +376,77 @@ try {
     searchOfficeFile('x.docx', strToU8('nope'), /a/g, 10).skipped !== undefined,
     true
   )
+  check(
+    'reaching the per-file cap exactly is not truncation',
+    searchOfficeFile('b.xlsx', xlsx, /TauxTVA/g, 2).truncated,
+    false
+  )
+  writeFileSync(path.join(folder, 'Broken.docx'), strToU8('not a package'))
+  writeFileSync(path.join(folder, 'notes.md'), 'TauxTVA in a note')
+
+  log('search: worker, cache, cancel')
+  clearOfficeCache()
+  const worker = createOfficeWorkerExtractor(workerFile)
+  let extractions = 0
+  const counted = (bytes, kind) => {
+    extractions += 1
+    return worker.extract(bytes, kind)
+  }
+  const payload = { rootPath: folder, query: 'TauxTVA', maxMatchesPerFile: 1 }
+  const first = await searchInFiles(payload, { extractOffice: counted })
+  check(
+    'the folder search reads both packages in the worker and the text file',
+    [first.ok, first.scannedFiles, first.files.map((f) => f.file).sort(), extractions],
+    [true, 3, ['Budget.xlsx', 'notes.md'], 3]
+  )
+  check(
+    'a per-file cap does not end the search: later files are still searched',
+    first.files.find((f) => f.file === 'Budget.xlsx')?.items.length,
+    1
+  )
+  check(
+    'a broken package is listed as skipped, with its reason',
+    first.skippedFiles.map((f) => [path.basename(f.path), f.reason.length > 0]),
+    [['Broken.docx', true]]
+  )
+  const second = await searchInFiles({ ...payload, query: 'Acme Corp' }, { extractOffice: counted })
+  check(
+    'a new query over unchanged files extracts nothing again',
+    [extractions, second.files.map((f) => f.file)],
+    [3, ['Contrat.docx']]
+  )
+  check('the cache holds the three packages', officeCacheStats().files, 3)
+  writeFileSync(path.join(folder, 'Contrat.docx'), docx)
+  const later = new Date(Date.now() + 5000)
+  const { utimesSync } = await import('node:fs')
+  utimesSync(path.join(folder, 'Contrat.docx'), later, later)
+  await searchInFiles({ ...payload, query: 'Acme Corp' }, { extractOffice: counted })
+  check('a file saved again is extracted again', extractions, 4)
+
+  clearOfficeCache()
+  const signal = { aborted: false }
+  let cancelExtractions = 0
+  const cancelling = (bytes, kind) => {
+    cancelExtractions += 1
+    // A newer search starts while this extraction is in the worker.
+    const inFlight = worker.extract(bytes, kind)
+    signal.aborted = true
+    worker.cancel()
+    return inFlight
+  }
+  const stopped = await searchInFiles(payload, { extractOffice: cancelling, signal })
+  check(
+    'a cancelled search stops at the next file and says so',
+    [stopped.cancelled, cancelExtractions],
+    [true, 1]
+  )
+  check('a cancelled extraction is not cached', officeCacheStats().files, 0)
+  const afterCancel = await searchInFiles(payload, { extractOffice: worker.extract })
+  check('the worker starts again after a cancel', afterCancel.files.map((f) => f.file).sort(), [
+    'Budget.xlsx',
+    'notes.md'
+  ])
+  worker.dispose()
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

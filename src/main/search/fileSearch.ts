@@ -25,7 +25,8 @@ import path from 'path'
 import { findInTextModel, planReplace, replacementFor, textModelFor } from './htmlText'
 import { createSearchRegExp } from './matcher'
 import { officeKindOf } from './officeText'
-import { searchOfficeFile } from './officeSearch'
+import { matchSegments } from './officeSearch'
+import { extractInProcess, officeTextFor, type OfficeExtractor } from './officeCache'
 
 export type SearchFsPayload = {
   rootPath: string
@@ -391,8 +392,20 @@ async function filesForPayload(payload: SearchFsPayload, rootPath: string): Prom
   return collectSearchFiles(rootPath, includeMatchers, excludeMatchers, restrictToPaths)
 }
 
-export async function searchInFiles(payload: SearchFsPayload): Promise<{
+export type SearchRunOptions = {
+  /** How to extract the text of a .docx or .xlsx (a worker thread in the main process). */
+  extractOffice?: OfficeExtractor
+  /** Set `aborted` to stop the search at the next file: a newer search replaced it. */
+  signal?: { aborted: boolean }
+}
+
+export async function searchInFiles(
+  payload: SearchFsPayload,
+  options: SearchRunOptions = {}
+): Promise<{
   ok: boolean
+  /** The search was stopped because a newer one started; the results are partial. */
+  cancelled?: boolean
   files: SearchFsFileResult[]
   totalMatches: number
   scannedFiles: number
@@ -420,26 +433,23 @@ export async function searchInFiles(payload: SearchFsPayload): Promise<{
   // Files actually read: one skipped by type, size or content is not "scanned".
   let scannedFiles = 0
 
+  const extractOffice = options.extractOffice ?? extractInProcess
+  const cancelled = (): boolean => options.signal?.aborted === true
+
   for (const filePath of files) {
+    if (cancelled()) break
     // Word and Excel packages: the text of every part, with a location (#136).
+    // Extracted off the main thread and cached per file version (officeCache.ts).
     if (officeKindOf(filePath)) {
-      let bytes: Buffer
-      try {
-        bytes = await fsp.readFile(filePath)
-      } catch (err) {
-        console.warn('[search] skipping file:', filePath, err)
-        continue
-      }
-      if (bytes.byteLength > SEARCH_MAX_FILE_BYTES) {
-        skippedFiles.push({ path: filePath, reason: 'larger than 10 MB' })
+      const extraction = await officeTextFor(filePath, extractOffice, SEARCH_MAX_FILE_BYTES)
+      if (cancelled()) break
+      if (!extraction) continue
+      if (!extraction.ok) {
+        skippedFiles.push({ path: filePath, reason: extraction.reason })
         continue
       }
       const limit = Math.min(maxMatchesPerFile, maxResults - totalMatches)
-      const office = searchOfficeFile(filePath, bytes, built.matcher, limit)
-      if (office.skipped) {
-        skippedFiles.push({ path: filePath, reason: office.skipped })
-        continue
-      }
+      const office = matchSegments(extraction.segments, built.matcher, limit)
       scannedFiles += 1
       totalMatches += office.matches.length
       if (office.truncated || totalMatches >= maxResults) truncated = true
@@ -480,7 +490,15 @@ export async function searchInFiles(payload: SearchFsPayload): Promise<{
     if (totalMatches >= maxResults) break
   }
 
-  return { ok: true, files: grouped, totalMatches, scannedFiles, skippedFiles, truncated }
+  return {
+    ok: true,
+    ...(cancelled() ? { cancelled: true } : {}),
+    files: grouped,
+    totalMatches,
+    scannedFiles,
+    skippedFiles,
+    truncated
+  }
 }
 
 /** Lists every change a replace would make, without writing anything. */

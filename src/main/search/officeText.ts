@@ -32,7 +32,13 @@ export type OfficeSegment = {
 }
 
 export type OfficeExtraction =
-  { ok: true; segments: OfficeSegment[] } | { ok: false; reason: string }
+  | { ok: true; segments: OfficeSegment[] }
+  | {
+      ok: false
+      reason: string
+      /** Not about the file (search cancelled, worker crashed): never cached. */
+      transient?: boolean
+    }
 
 /** Limits for a package read by the search: smaller than an import's. */
 export const OFFICE_SEARCH_ZIP_LIMITS: ZipLimits = {

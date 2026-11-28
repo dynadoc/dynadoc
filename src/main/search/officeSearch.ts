@@ -61,6 +61,7 @@ export function matchSegments(
           pattern.lastIndex += 1
           continue
         }
+        if (matches.length >= limit) return { matches, truncated: true }
         matches.push({
           line: index + 1,
           column: found.index + 1,
@@ -71,7 +72,6 @@ export function matchSegments(
           after: lineText.slice(found.index + matched.length),
           location: { part: segment.part, label: segment.label }
         })
-        if (matches.length >= limit) return { matches, truncated: true }
       }
     }
   }
