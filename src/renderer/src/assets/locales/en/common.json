@@ -1771,5 +1771,8 @@
   "variable, not replaced": "variable, not replaced",
   "spans an object, not replaced": "spans an object, not replaced",
   "Replace failed": "Replace failed",
-  "Close {list} to undo the replace.": "Close {list} to undo the replace."
+  "Close {list} to undo the replace.": "Close {list} to undo the replace.",
+  "{count} file(s) not read": "{count} file(s) not read",
+  "Replace does not change Word or Excel files.": "Replace does not change Word or Excel files.",
+  "search only": "search only"
 }

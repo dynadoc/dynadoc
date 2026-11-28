@@ -37,6 +37,8 @@
 
   type SearchResponse = {
     ok: boolean
+    /** Packages that could not be read, with why (#136). */
+    skippedFiles?: Array<{ path: string; reason: string }>
     files: Array<Omit<SearchResultFile, 'expanded'>>
     totalMatches: number
     scannedFiles: number
@@ -122,6 +124,7 @@
   let totalMatches = $state(0)
   let scannedFiles = $state(0)
   let isTruncated = $state(false)
+  let skippedFiles = $state<Array<{ path: string; reason: string }>>([])
   let errorMessage = $state('')
   let replaceSummary = $state('')
   let replacePreview = $state<ReplacePreview | null>(null)
@@ -289,6 +292,7 @@
       }))
     totalMatches = results.reduce((sum, file) => sum + (file.items?.length || 0), 0)
     scannedFiles = response.scannedFiles || 0
+    skippedFiles = response.skippedFiles || []
     isTruncated = Boolean(response.truncated)
     isLoading = false
   }
@@ -574,38 +578,38 @@
     const needle = isCaseSensitive ? target : target.toLowerCase()
     const doc = editor.state.doc
 
-    let count = 0
-    let found: { from: number; to: number } | null = null
-
-    // Walk Tiptap document model (not rendered DOM) to find exact text positions
+    // The search counts matches in the text of each paragraph, formatting
+    // runs joined (src/main/search, and the paragraphs of a .docx), so the
+    // editor counts the same way: over each textblock's text, mapped back to
+    // positions, not over single text nodes, where a word split by bold is
+    // invisible and the count drifts to the wrong paragraph.
+    const occurrences: Array<{ from: number; to: number }> = []
     doc.descendants((node, pos) => {
-      if (found || !node.isText) return
-      const rawText = node.text || ''
-      const hay = isCaseSensitive ? rawText : rawText.toLowerCase()
+      if (!node.isTextblock) return true
+      // Offsets in the block's text, and the document position of each one.
+      let text = ''
+      const positions: number[] = []
+      node.forEach((child, offset) => {
+        const childText = child.isText ? child.text || '' : child.textContent
+        for (let k = 0; k < childText.length; k += 1) {
+          positions.push(pos + 1 + offset + (child.isText ? k : 0))
+        }
+        text += childText
+      })
+      const hay = (isCaseSensitive ? text : text.toLowerCase()).replace(/\u00a0/g, ' ')
       let idx = hay.indexOf(needle)
       while (idx !== -1) {
-        if (count === occurrenceIndex) {
-          found = { from: pos + idx, to: pos + idx + target.length }
-          return false
-        }
-        count++
+        const last = idx + needle.length - 1
+        occurrences.push({ from: positions[idx], to: positions[last] + 1 })
         idx = hay.indexOf(needle, idx + Math.max(1, needle.length))
       }
+      return false
     })
 
-    // Fallback: first occurrence regardless of index
-    if (!found) {
-      doc.descendants((node, pos) => {
-        if (found || !node.isText) return
-        const rawText = node.text || ''
-        const hay = isCaseSensitive ? rawText : rawText.toLowerCase()
-        const idx = hay.indexOf(needle)
-        if (idx !== -1) {
-          found = { from: pos + idx, to: pos + idx + target.length }
-          return false
-        }
-      })
-    }
+    let found: { from: number; to: number } | null = occurrences[occurrenceIndex] ?? null
+    // Fallback to the first occurrence, for documents only: a .docx match
+    // whose count disagrees would land in the wrong paragraph.
+    if (!found && !match.location) found = occurrences[0] ?? null
 
     if (!found) {
       // text not found in doc — occurrence may have been edited since search ran
@@ -636,6 +640,11 @@
     setTimeout(() => inputEl?.focus(), 50)
 
     return true
+  }
+
+  /** Word and Excel files are searched, never replaced in (#136). */
+  function isOfficeFile(filePath: string): boolean {
+    return /\.(docx|xlsx)$/i.test(filePath)
   }
 
   /** A match in the body of a .docx: the converted document shows it. */
@@ -831,6 +840,14 @@
     {:else if searchQuery.trim() && results.length > 0}
       {totalMatches} {$_('results in')} {results.length} {$_('files')}
       {#if isTruncated}<span class="text-amber-400 ml-1">({$_('truncated')})</span>{/if}
+      {#if skippedFiles.length}
+        <span
+          class="text-amber-500 ml-1"
+          title={skippedFiles.map((item) => `${nodeApi.path.basename(item.path)}: ${item.reason}`).join('\n')}
+        >
+          {$_('{count} file(s) not read', { values: { count: skippedFiles.length } })}
+        </span>
+      {/if}
       {#if mode === 'variable'}<span class="text-primary ml-2">{$_('Variable mode')}</span>{/if}
     {:else if searchQuery.trim()}
       {$_('No results')}
@@ -916,7 +933,11 @@
             {#if parts.dir}<span class="text-[10px] opacity-30 truncate min-w-0 ml-0.5">{parts.dir}</span>{/if}
             <div class="ml-auto flex items-center gap-1 shrink-0 pl-2">
               <span class="search-badge">{res.items.length}</span>
-              {#if isReplaceOpen && replaceQuery}
+              {#if isReplaceOpen && replaceQuery && isOfficeFile(res.path)}
+                <span class="text-[9px] opacity-50" title={$_('Replace does not change Word or Excel files.')}>
+                  {$_('search only')}
+                </span>
+              {:else if isReplaceOpen && replaceQuery}
                 <button class="search-row-btn opacity-0 group-hover:opacity-100" title={$_('Replace in file')}
                   onclick={(e) => { e.stopPropagation(); previewReplace(res.path).catch(err => { errorMessage = $_('Replace failed'); console.error('[search] previewReplace', err) }) }}>
                   <i class="ph-light ph-arrows-left-right"></i>
