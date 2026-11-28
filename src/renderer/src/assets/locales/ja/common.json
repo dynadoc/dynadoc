@@ -1781,5 +1781,7 @@
   "You can read @{name} but not change it: it stays in the organization.": "@{name} は読み取りのみ可能で、変更できません。組織に残ります。",
   "Remove @{name} from the organization?": "@{name} を組織から削除しますか？",
   "Everyone in the organization loses this variable. It is kept here, in the scope you chose.": "組織の全員がこの変数を失います。ここでは選択した範囲に残ります。",
-  "Remove from the organization": "組織から削除"
+  "Remove from the organization": "組織から削除",
+  "Not added to the organization: {message}. It is kept in All my files.": "組織に追加されませんでした: {message}。すべてのファイルに残ります。",
+  "Organization variables are not available right now: @{name} stays where it was.": "現在、組織の変数を使用できません。@{name} は元の場所に残ります。"
 }

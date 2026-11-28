@@ -24,6 +24,7 @@
   import { formatSpreadsheetRefName } from '../utils/utils'
   import { nodeApi } from '../../../../utils/shims/node'
   import { confirmLeavingOrganization } from '../utils/organizationGuard'
+  import { organizationWritable } from '../stores/scopes/organizationScope'
 
   // Svelte 5 Props
   let {
@@ -452,7 +453,13 @@
             <option value="package">{$_('Package')}</option>
             <option value="desktop">{$_('Desktop')}</option>
             <option value="cloud">{$_('Cloud')}</option>
-            <option value="organization">{$_('Organization')}</option>
+            <option
+              value="organization"
+              disabled={!$organizationWritable &&
+                __variable?.rawValue?.visibility !== 'organization'}
+            >
+              {$_('Organization')}
+            </option>
           </select>
         </div>
         <div class="flex flex-col gap-1">

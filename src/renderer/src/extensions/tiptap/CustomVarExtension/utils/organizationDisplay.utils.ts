@@ -40,6 +40,12 @@ export function orgStatusLine(
     }
     return { key: 'Organization variables may be out of date (as of {time}).', values: { time } }
   }
+  if (status.lastWriteError?.kept) {
+    return {
+      key: 'Not added to the organization: {message}. It is kept in All my files.',
+      values: { message: status.lastWriteError.message }
+    }
+  }
   if (status.lastWriteError) {
     return {
       key: 'The last change to an organization variable was refused: {message}',

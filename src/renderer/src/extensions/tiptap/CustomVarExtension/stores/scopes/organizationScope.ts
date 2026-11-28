@@ -9,7 +9,7 @@
 // - the offline copy is kept in localStorage, one key per identity;
 // - the scope is read again when the window gets focus or becomes visible,
 //   when the network comes back, and every few minutes while visible.
-import { readable, type Readable } from 'svelte/store'
+import { derived, readable, type Readable } from 'svelte/store'
 import {
   createOrganizationScope,
   type OrgBridge,
@@ -57,9 +57,8 @@ export function followSession(session: Readable<SessionState>): () => void {
   return session.subscribe((state) => {
     if (state.initializing) return
     const user = state.user?.id || state.user?.email
-    organizationScope.setIdentity(
-      state.authenticated && user ? `${user}@${state.activeOrg || ''}` : null
-    )
+    const org = state.activeOrg || ''
+    organizationScope.setIdentity(state.authenticated && user ? `${user}@${org}` : null, org)
   })
 }
 
@@ -94,6 +93,16 @@ export const organizationStatus: Readable<OrgStatus> = readable(
       clearInterval(timer)
     }
   }
+)
+
+/**
+ * True when the Organization scope can take a value now: someone is signed in
+ * and the bridge serves it (read at least once, or offline with a copy). The
+ * UI offers the scope only then.
+ */
+export const organizationWritable: Readable<boolean> = derived(
+  organizationStatus,
+  (status) => organizationScope.writable() && ['fresh', 'stale', 'offline'].includes(status.state)
 )
 
 /** Writes the bridge refused because the value had changed; the user picks a side. */

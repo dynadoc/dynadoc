@@ -466,7 +466,7 @@ check(
   alice.scope.set('c2', v('taken', { name: 'client' }))
   await alice.scope.flush()
   check(
-    'a name another organization variable has: refused, dropped',
+    'renamed to a name another variable has: refused, the bridge value back',
     [alice.scope.status().pending, alice.scope.list().c2?.value, alice.scope.list().c2?.name],
     [0, 'v2', 'ville']
   )
@@ -645,6 +645,112 @@ check(
   scope.remove('c1')
   await scope.flush()
   check('a refused deletion: nothing redefined over the local copy', changes, [])
+}
+
+// --- the scope says when it cannot keep a value ---------------------------
+{
+  const bridge = stubBridge()
+  const unknown = createOrganizationScope({
+    bridge: () => bridge.api('alice'),
+    firstLoadTimeoutMs: 50
+  })
+  check('session not known yet: not writable', unknown.writable(), false)
+  unknown.setIdentity(null)
+  check('signed out: not writable', unknown.writable(), false)
+  unknown.setIdentity('alice@acme')
+  check('signed in: writable', unknown.writable(), true)
+  const refused = async () => ({
+    status: 400,
+    body: { error: 'unsupported channel "vars:org:list"' }
+  })
+  const old = createOrganizationScope({
+    bridge: () => ({
+      list: refused,
+      get: refused,
+      set: refused,
+      delete: refused,
+      history: refused
+    }),
+    firstLoadTimeoutMs: 50
+  })
+  old.setIdentity('alice@acme')
+  await old.load()
+  check('a bridge without the scope: not writable', old.writable(), false)
+}
+
+// --- a refused creation keeps the value -------------------------------------
+{
+  // Bob created `client` while Alice was offline; Alice creates `client` too.
+  const bridge = stubBridge()
+  const alice = scopeFor(bridge, 'alice')
+  await alice.scope.load()
+  const handed = []
+  alice.scope.onRefused((id, value, error) => handed.push([id, value.value, error.error]))
+  bridge.net.online = false
+  alice.scope.set('a1', v('Alice SA', { documentId: 'doc-1' }))
+  await alice.scope.flush()
+  bridge.net.online = true
+  bridge.write('b1', v('Bob SA'), 'bob')
+  alice.changes.length = 0
+  await alice.scope.refresh()
+  check('the refused creation is handed over to be kept', handed, [
+    ['a1', 'Alice SA', 'name_taken']
+  ])
+  check(
+    'it is not reported as deleted',
+    alice.changes.filter((c) => c.id === 'a1'),
+    []
+  )
+  check(
+    'and the status says where it went',
+    [alice.scope.status().lastWriteError?.kept, alice.scope.status().pending],
+    [true, 0]
+  )
+}
+
+// --- the bridge answers for another organization than the session's -------
+{
+  const bridge = stubBridge() // answers for acme
+  bridge.write('c1', v('acme value'))
+  const cache = memoryCache()
+  const scope = createOrganizationScope({
+    bridge: () => bridge.api('alice'),
+    cache,
+    firstLoadTimeoutMs: 50,
+    flushDelayMs: 0
+  })
+  scope.setIdentity('alice@beta', 'beta')
+  await scope.load()
+  check("another organization's answer is not shown", scope.list(), {})
+  check('and the copy is not current', scope.status().reason, 'error')
+  scope.set('c3', v('meant for beta', { name: 'c3' }))
+  await scope.flush()
+  check('a write made for beta is not sent to acme', bridge.net.state.variables.c3, undefined)
+  check("beta's cache holds nothing of acme", cache.peek('alice@beta')?.records || {}, {})
+  check('the write waits for beta', scope.status().pending, 1)
+}
+
+// --- an open conflict survives another window's save ------------------------
+{
+  const bridge = stubBridge()
+  bridge.write('c1', v('v1'))
+  bridge.write('c2', v('w1', { name: 'ville' }))
+  const cache = memoryCache()
+  const one = scopeFor(bridge, 'alice', cache)
+  const two = scopeFor(bridge, 'alice', cache)
+  await one.scope.load()
+  await two.scope.load()
+  bridge.write('c1', v('v2'), 'bob')
+  one.scope.set('c1', v('mine'))
+  await one.scope.flush()
+  check('window one has a conflict', one.scope.conflicts().length, 1)
+  two.scope.set('c2', v('w2', { name: 'ville' }))
+  await two.scope.flush()
+  check(
+    "another window's save keeps it, with the user's value",
+    cache.peek().conflicts?.c1?.mine?.value,
+    'mine'
+  )
 }
 
 // --- the same channels over HTTP, from the running stub --------------------

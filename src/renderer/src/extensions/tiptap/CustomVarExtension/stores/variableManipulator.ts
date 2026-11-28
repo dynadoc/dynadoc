@@ -15,7 +15,10 @@ import type { DocumentEditorModel } from '../../../../models/Document'
 import EditorHelpers from '../../../../utils/EditorHelpers'
 import { CustomVarExtensionProps } from '../utils/common.utils'
 import { v4 as uuidv4 } from 'uuid'
+import { _ as translate } from 'svelte-i18n'
+import { openAlertModal } from '../../../../stores/alertModal.store'
 import {
+  canStoreGlobal,
   deleteGlobalVariable,
   getGlobalVariables,
   loadGlobalVariables,
@@ -2364,6 +2367,27 @@ export function defineVariable(
       existingCell?.rawValue as VariableValue,
       variableId
     )
+  }
+
+  // The Organization scope cannot keep a value now (nobody signed in, the
+  // session not known yet, or a bridge without the scope): the variable
+  // stays where it was, rather than leave the document for a scope that
+  // drops it, and the user is told.
+  if (persist && !canStoreGlobal(normalizedValue)) {
+    const previous = (existingCell?.rawValue as VariableValue)?.visibility
+    normalizedValue.visibility = isOrganizationVisibility(previous) ? 'package' : previous
+    try {
+      const t = get(translate)
+      openAlertModal({
+        title: t('Organization variable'),
+        message: t(
+          'Organization variables are not available right now: @{name} stays where it was.',
+          { values: { name: normalizedValue.name } }
+        )
+      })
+    } catch {
+      // No UI (tests): the value is kept all the same.
+    }
   }
 
   const nextRow = existingCell?.row ?? 0

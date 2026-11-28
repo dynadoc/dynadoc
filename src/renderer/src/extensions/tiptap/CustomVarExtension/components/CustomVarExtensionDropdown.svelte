@@ -40,6 +40,7 @@
   import {
     organizationScope,
     organizationStatus,
+    organizationWritable,
     type OrgStatus
   } from '../stores/scopes/organizationScope'
   import { orgStatusLine, orgChangeLine } from '../utils/organizationDisplay.utils'
@@ -859,10 +860,8 @@
             type="button"
             class="var-menu__scope-btn"
             aria-pressed={formScope === option.scope}
-            disabled={option.scope === 'org' &&
-              formScope !== 'org' &&
-              $organizationStatus.state === 'unavailable'}
-            title={option.scope === 'org' && $organizationStatus.state === 'unavailable'
+            disabled={option.scope === 'org' && formScope !== 'org' && !$organizationWritable}
+            title={option.scope === 'org' && !$organizationWritable
               ? $_('Organization variables are not available here')
               : undefined}
             onclick={() => {
@@ -909,7 +908,9 @@
             <option value="package">{$_('Package')}</option>
             <option value="desktop">{$_('Desktop')}</option>
             <option value="cloud">{$_('Cloud')}</option>
-            <option value="organization">{$_('Organization')}</option>
+            <option value="organization" disabled={!$organizationWritable && formScope !== 'org'}>
+              {$_('Organization')}
+            </option>
           </select>
           <label class="var-menu__label" for="{listboxId}-access">{$_('Access')}</label>
           <input

@@ -111,6 +111,10 @@ renderer by the preload as `window.server.variables.organization`.
   `revision` and sends it as `since` next time.
 - If the bridge no longer keeps changes as far back as `since`, it answers as
   if `since` was not given, with `"full": true`.
+- An id deleted and then created again after `since` is listed in `variables`
+  only, at its new revision, and not in `deleted`. A bridge that lists it in
+  both is still read correctly: the client applies `deleted` first, and never
+  lets an older revision replace a newer one.
 
 ### `vars:org:set`
 
@@ -133,6 +137,8 @@ revision of the counter, so clients reading with `since` learn about it.
 Every revision the bridge keeps for the variable, newest first, each
 `{ "revision", "value", "updatedAt", "updatedBy" }`; a deletion has
 `"value": null` and `"deleted": true`. The bridge keeps at least the last 50.
+A deleted id still has its history, the deletion first; 404 is only for an id
+that was never written.
 
 ## Errors
 
@@ -164,7 +170,15 @@ does not retry in a loop.
   channels). The @ menu says when the copy is stale or offline, and since when.
 - **Writes.** Sent shortly after the change, with `baseRevision`. Offline, they
   wait in the copy and are sent when the bridge answers again, in the
-  organization they were made in and never in another.
+  organization they were made in and never in another. A list answered for
+  another organization than the session's (a switch not finished on both
+  sides) is not applied, and nothing is sent, until the two agree.
+- **No value is dropped.** The scope is offered only when someone is signed
+  in and the bridge serves it; a value moved there otherwise stays where it
+  was, and the user is told. A change to an existing variable that the bridge
+  refuses for good (403, 422) falls back to the bridge's value. A creation it
+  refuses has nothing to fall back to: the value is kept in the Desktop scope
+  ("All my files") and the @ menu says so.
 - **Conflicts.** On 409 the client keeps both values and shows them (theirs
   with who wrote it and when) until the user keeps one. "Keep mine" sends the
   local value again with `current.revision` as `baseRevision`; "keep theirs"

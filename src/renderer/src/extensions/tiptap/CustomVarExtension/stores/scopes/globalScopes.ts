@@ -41,6 +41,16 @@ export function setGlobalVariable(id: string, value: object): void {
   target.set(id, value as StoredVariable)
 }
 
+/**
+ * True when the scope the value's visibility names can keep it now. The
+ * Organization scope cannot while nobody is signed in, or before the session
+ * is known, or when the bridge does not serve it: a value is not moved there
+ * then (defineVariable keeps it in its previous scope).
+ */
+export function canStoreGlobal(value: { visibility?: unknown } | null | undefined): boolean {
+  return scopeFor(value) !== organizationScope || organizationScope.writable()
+}
+
 export function deleteGlobalVariable(id: string): void {
   for (const scope of scopes) {
     if (scope.list()[id]) scope.remove(id)
@@ -73,6 +83,17 @@ export function onGlobalVariablesChange(fn: (changes: ScopeChange[]) => void): (
     visible = next
     if (out.size) fn([...out].map(([id, value]) => ({ id, value })))
   }
+  // A creation the bridge refused (a name taken, no right): the value stays
+  // the user's, in the Desktop scope ("All my files"), and the status line
+  // says why.
+  const offRefused = organizationScope.onRefused((id, value) => {
+    const kept = { ...value, visibility: 'desktop' }
+    if (!desktopScope.list()[id]) desktopScope.set(id, kept)
+    relay([{ id, value: kept }])
+  })
   const unsubscribe = scopes.map((scope) => scope.onChange(relay))
-  return () => unsubscribe.forEach((off) => off())
+  return () => {
+    offRefused()
+    unsubscribe.forEach((off) => off())
+  }
 }

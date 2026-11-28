@@ -76,7 +76,14 @@ export type OrgConflict = {
 }
 
 /** A write the bridge refused for another reason than a conflict. */
-export type OrgWriteError = { id: string; status: number; error: string; message: string }
+export type OrgWriteError = {
+  id: string
+  status: number
+  error: string
+  message: string
+  /** A creation the bridge refused: the value was handed to onRefused to keep. */
+  kept?: boolean
+}
 
 export type OrgCacheSnapshot = {
   org: string | null
@@ -132,7 +139,18 @@ export interface OrganizationScope extends VariableScopeDriver {
    * first called nothing is shown or sent. A token renewal is not a change of
    * identity.
    */
-  setIdentity(identity: string | null): void
+  setIdentity(identity: string | null, organization?: string): void
+  /**
+   * True when a write would be kept: someone is signed in and the bridge
+   * serves the scope. A caller must not move a value here otherwise.
+   */
+  writable(): boolean
+  /**
+   * A creation the bridge refused for good (no right, a name already taken):
+   * nothing in the organization to fall back to, so the value is handed over
+   * to be kept elsewhere instead of being dropped.
+   */
+  onRefused(fn: (id: string, value: StoredVariable, error: OrgWriteError) => void): () => void
 }
 
 /** JSON with object keys sorted, so two equal values compare equal whatever their key order. */
@@ -233,6 +251,10 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
 
   // undefined: not known yet; null: nobody signed in.
   let identity: string | null | undefined = undefined
+  // The organization the session names, when it names one: a bridge that
+  // answers for another one is not this identity's (a switch in progress).
+  let expectedOrg = ''
+  let orgMismatch = false
   // Bumped on every change of identity: an answer to a call made for the
   // previous identity is dropped.
   let epoch = 0
@@ -259,6 +281,9 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   let waitIdentity: (() => void) | null = null
 
   const changeHandlers = new Set<(changes: ScopeChange[]) => void>()
+  const refusedHandlers = new Set<
+    (id: string, value: StoredVariable, error: OrgWriteError) => void
+  >()
   const statusHandlers = new Set<(status: OrgStatus) => void>()
 
   function readCache(key: string): OrgCacheSnapshot | null {
@@ -328,13 +353,19 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
         if (parsed && !pending.has(id) && !settled.has(id)) queue[id] = parsed
       }
       for (const [id, entry] of pending) queue[id] = entry
+      // Open conflicts too: another window's undecided value is the user's.
+      const open: Record<string, OrgConflict> = {}
+      for (const [id, entry] of Object.entries(stored?.conflicts || {})) {
+        if (entry && !conflicts.has(id) && !pending.has(id) && !settled.has(id)) open[id] = entry
+      }
+      for (const [id, entry] of conflicts) open[id] = entry
       options.cache.write(identity, {
         org,
         revision,
         syncedAt,
         records: Object.fromEntries(records),
         pending: queue,
-        conflicts: Object.fromEntries(conflicts)
+        conflicts: open
       })
     } catch {
       // A full or blocked storage: the scope still works, without its offline copy.
@@ -358,6 +389,7 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     if (identity === undefined) return { ...base, state: 'loading' }
     if (identity === null) return { ...base, state: 'unavailable', reason: 'unauthorized' }
     if (unavailable) return { ...base, state: 'unavailable', ...(reason ? { reason } : {}) }
+    if (orgMismatch) return { ...base, state: syncedAt ? 'stale' : 'loading', reason: 'error' }
     if (offline) return { ...base, state: 'offline' }
     if (reason) return { ...base, state: syncedAt ? 'stale' : 'loading', reason }
     if (syncedAt === null) return { ...base, state: 'loading' }
@@ -461,6 +493,20 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     let since = hasFullList ? revision : undefined
     let response = await call(() => bridge.list(since === undefined ? {} : { since }))
     if (at !== epoch) return
+    if (
+      response.status === 200 &&
+      expectedOrg &&
+      typeof response.body?.org === 'string' &&
+      response.body.org !== expectedOrg
+    ) {
+      // The bridge answers for another organization than the session's: a
+      // switch not finished on one side. Nothing of it is applied here, and
+      // nothing is sent, until both agree.
+      orgMismatch = true
+      notifyStatus()
+      return
+    }
+    orgMismatch = false
     let dropped: ScopeChange[] = []
     if (
       response.status === 200 &&
@@ -535,7 +581,10 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
   // A write goes only to the organization it was made in; one made before
   // the first list belongs to the first organization that answers.
   const sendable = (entry: Pending): boolean =>
-    org !== null && (entry.org === null || entry.org === org)
+    org !== null &&
+    !orgMismatch &&
+    (!expectedOrg || org === expectedOrg) &&
+    (entry.org === null || entry.org === org)
 
   function settle(id: string): void {
     pending.delete(id)
@@ -598,19 +647,35 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
       unavailable = true
       return false
     }
-    // Refused for good (no permission, invalid value, a name already taken):
-    // the local change is dropped and the bridge's value shown again. A
-    // refused deletion shows nothing again: the variable has moved on here.
+    // Refused for good (no permission, invalid value, a name already taken).
+    // A change to an existing variable falls back to the bridge's value. A
+    // creation has nothing to fall back to: the value is handed to onRefused
+    // to be kept elsewhere, never dropped. A refused deletion shows nothing
+    // again: the variable has moved on here.
+    const creation = entry.value !== null && !records.has(id)
     lastWriteError = {
       id,
       status: response.status,
       error: errorCode(response),
-      message: errorMessage(response)
+      message: errorMessage(response),
+      ...(creation && refusedHandlers.size ? { kept: true } : {})
     }
     if (unchanged) {
       settle(id)
       listCache = null
-      if (entry.value !== null) emit([{ id, value: effective(id) }])
+      if (creation) {
+        const value = entry.value as StoredVariable
+        const error = lastWriteError
+        refusedHandlers.forEach((fn) => {
+          try {
+            fn(id, value, error)
+          } catch (err) {
+            console.error('Organization variables refusal handler failed:', err)
+          }
+        })
+      } else if (entry.value !== null) {
+        emit([{ id, value: effective(id) }])
+      }
     }
     return true
   }
@@ -679,8 +744,14 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     return out
   }
 
-  function setIdentity(next: string | null): void {
-    if (next === identity) return
+  function setIdentity(next: string | null, organization = ''): void {
+    if (next === identity && organization === expectedOrg) return
+    expectedOrg = organization
+    orgMismatch = false
+    if (next === identity) {
+      void refresh()
+      return
+    }
     const before = listValues()
     identity = next
     epoch++
@@ -758,6 +829,15 @@ export function createOrganizationScope(options: OrganizationScopeOptions): Orga
     refresh,
     flush,
     setIdentity,
+
+    writable: () => Boolean(identity) && !unavailable,
+
+    onRefused(fn) {
+      refusedHandlers.add(fn)
+      return () => {
+        refusedHandlers.delete(fn)
+      }
+    },
 
     meta(id) {
       return identity ? records.get(id) || null : null

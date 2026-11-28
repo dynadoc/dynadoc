@@ -1781,5 +1781,7 @@
   "You can read @{name} but not change it: it stays in the organization.": "Vous pouvez lire @{name} mais pas la modifier : elle reste dans l’organisation.",
   "Remove @{name} from the organization?": "Retirer @{name} de l’organisation ?",
   "Everyone in the organization loses this variable. It is kept here, in the scope you chose.": "Tous les membres de l’organisation perdent cette variable. Elle est gardée ici, dans la portée choisie.",
-  "Remove from the organization": "Retirer de l’organisation"
+  "Remove from the organization": "Retirer de l’organisation",
+  "Not added to the organization: {message}. It is kept in All my files.": "Pas ajoutée à l’organisation : {message}. Elle est gardée dans Tous mes fichiers.",
+  "Organization variables are not available right now: @{name} stays where it was.": "Les variables de l’organisation ne sont pas disponibles pour le moment : @{name} reste où elle était."
 }

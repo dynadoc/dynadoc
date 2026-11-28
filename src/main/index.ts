@@ -4417,9 +4417,16 @@ app.whenReady().then(async () => {
   // sign-in, sign-out and change of organization, so it is never another
   // account's.
   let orgVariablesToken = ''
+  // Bumped each time the token is dropped: a session read that started before
+  // (during a switch of organization, say) does not store its token after.
+  let orgVariablesTokenGeneration = 0
+  const dropOrgVariablesToken = (): void => {
+    orgVariablesToken = ''
+    orgVariablesTokenGeneration++
+  }
 
   async function completeAuthWithDeepLink(rawUrl: string, debug?: boolean) {
-    orgVariablesToken = ''
+    dropOrgVariablesToken()
     if (!rawUrl) return false
 
     let deepLinkUrl: URL
@@ -4475,13 +4482,16 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:set-active-org', async (_event, payload) => {
-    orgVariablesToken = ''
+    dropOrgVariablesToken()
     const output = await runDdocServerJson('auth:set-active-org', {
       org: payload?.org,
       // debug: payload?.debug === true
       // debug: debug === true
       debug: payload?.debug
     })
+    // Again once switched: a call made during the switch may have read the
+    // previous organization's session.
+    dropOrgVariablesToken()
     return parseJsonSafely(output) || {}
   })
 
@@ -4515,7 +4525,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('auth:logout', async (_event, payload) => {
-    orgVariablesToken = ''
+    dropOrgVariablesToken()
     const output = await runDdocServerJson('auth:logout', {
       protocol: AUTH_PROTOCOL,
       redirectUri: AUTH_CALLBACK_URI,
@@ -4743,26 +4753,33 @@ app.whenReady().then(async () => {
         body: JSON.stringify({ channel, args: [payload ?? {}] })
       })
     try {
+      const readToken = async (): Promise<string> => {
+        const generation = orgVariablesTokenGeneration
+        const read = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
+        if (generation === orgVariablesTokenGeneration) orgVariablesToken = read
+        return read
+      }
       let fresh = false
-      if (!orgVariablesToken) {
-        orgVariablesToken = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
+      let token = orgVariablesToken
+      if (!token) {
+        token = await readToken()
         fresh = true
       }
       // No token: signed out, or the session could not be read (offline, the
       // middleware missing). The renderer knows from the auth store whether
       // someone is signed in, so this is "not reached", not "refused".
-      if (!orgVariablesToken) {
+      if (!token) {
         return {
           status: 0,
           body: { error: 'no_session', message: 'No session to call the bridge with.' }
         }
       }
-      let response = await send(orgVariablesToken)
+      let response = await send(token)
       if (response.status === 401 && !fresh) {
-        orgVariablesToken = (await fetchAuthSessionFromMiddleware())?.accessToken || ''
-        if (orgVariablesToken) response = await send(orgVariablesToken)
+        token = await readToken()
+        if (token) response = await send(token)
       }
-      if (response.status === 401) orgVariablesToken = ''
+      if (response.status === 401) dropOrgVariablesToken()
       const body = await response.json().catch(() => null)
       if (response.ok) return { status: response.status, body: body?.data ?? null }
       return { status: response.status, body }

@@ -44,6 +44,7 @@
   import { formatSpreadsheetRefName } from '../utils/utils'
   import { CustomVarExtensionProps } from '../utils/common.utils'
   import { confirmLeavingOrganization } from '../utils/organizationGuard'
+  import { organizationWritable } from '../stores/scopes/organizationScope'
 
   let _vars: Variable[] = $state([])
   let _search = $state('')
@@ -1435,7 +1436,9 @@
                 <option value="package">{$_('Package')}</option>
                 <option value="desktop">{$_('Desktop')}</option>
                 <option value="cloud">{$_('Cloud')}</option>
-                <option value="organization">{$_('Organization')}</option>
+                <option value="organization" disabled={!$organizationWritable}>
+                  {$_('Organization')}
+                </option>
               </select>
             </div>
             <div class="grid grid-cols-1 gap-2">
@@ -1835,7 +1838,13 @@
                         <option value="package">{$_('Package')}</option>
                         <option value="desktop">{$_('Desktop')}</option>
                         <option value="cloud">{$_('Cloud')}</option>
-                        <option value="organization">{$_('Organization')}</option>
+                        <option
+                          value="organization"
+                          disabled={!$organizationWritable &&
+                            v.rawValue?.visibility !== 'organization'}
+                        >
+                          {$_('Organization')}
+                        </option>
                       </select>
                     </div>
 
@@ -2197,7 +2206,13 @@
                           <option value="package">{$_('Package')}</option>
                           <option value="desktop">{$_('Desktop')}</option>
                           <option value="cloud">{$_('Cloud')}</option>
-                          <option value="organization">{$_('Organization')}</option>
+                          <option
+                            value="organization"
+                            disabled={!$organizationWritable &&
+                              v.rawValue?.visibility !== 'organization'}
+                          >
+                            {$_('Organization')}
+                          </option>
                         </select>
                       </div>
                       <div class="grid grid-cols-1 gap-2">

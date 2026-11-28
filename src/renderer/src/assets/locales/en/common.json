@@ -1781,5 +1781,7 @@
   "You can read @{name} but not change it: it stays in the organization.": "You can read @{name} but not change it: it stays in the organization.",
   "Remove @{name} from the organization?": "Remove @{name} from the organization?",
   "Everyone in the organization loses this variable. It is kept here, in the scope you chose.": "Everyone in the organization loses this variable. It is kept here, in the scope you chose.",
-  "Remove from the organization": "Remove from the organization"
+  "Remove from the organization": "Remove from the organization",
+  "Not added to the organization: {message}. It is kept in All my files.": "Not added to the organization: {message}. It is kept in All my files.",
+  "Organization variables are not available right now: @{name} stays where it was.": "Organization variables are not available right now: @{name} stays where it was."
 }
