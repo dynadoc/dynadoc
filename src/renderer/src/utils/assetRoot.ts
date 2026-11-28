@@ -48,7 +48,7 @@ export type AssetRootInput = {
 export function documentAssetRoot(input: AssetRootInput): string {
   const { documentPath, cacheDir, isDesktop, isDirectory, rootOutsideCache } = input
   const dirname = input.dirname ?? dirnamePosix
-  const inCache = Boolean(cacheDir) && documentPath.startsWith(cacheDir)
+  const inCache = documentPath.startsWith(cacheDir)
   if (!isDesktop || inCache) {
     return isDirectory ? documentPath : dirname(documentPath)
   }
@@ -65,4 +65,42 @@ export function isDriveRootAssetPath(src: string | null | undefined, assetType: 
   const normalized = toPosix(src).replace(/^\.?\/+/, '')
   const parts = normalized.split('/')
   return parts.length === 3 && parts[0] === 'assets' && parts[1] === assetType && Boolean(parts[2])
+}
+
+export type StoreFs = {
+  exists: (filePath: string) => Promise<boolean>
+  readFile: (filePath: string) => Promise<string>
+  writeFile: (filePath: string, data: string) => Promise<void>
+}
+
+/**
+ * Gives a canvas whose store is a shared drive-root file its own copy at
+ * `target` (in its document folder) and returns the path to use from now on.
+ * The shared file is never changed or removed, so whichever design opens
+ * first, the others still find their shapes. Returns null, and the caller
+ * keeps `src`, when there is nothing to move or the copy failed.
+ *
+ * `target` must be this canvas's own name (the caller derives it from the
+ * canvas id). A target that exists already is this canvas's earlier copy,
+ * kept as it is: when the rewritten `src` was not saved, the next open must
+ * not copy the shared file over the edits made since.
+ */
+export async function copyDriveRootStore(
+  src: string | null | undefined,
+  target: string | null | undefined,
+  assetType: string,
+  fs: StoreFs
+): Promise<string | null> {
+  if (!src || !isDriveRootAssetPath(src, assetType)) return null
+  if (!target || target === src || isDriveRootAssetPath(target, assetType)) return null
+  try {
+    if (await fs.exists(target)) return target
+    // A store never written (nothing was drawn) has nothing to copy: the
+    // canvas starts its own file at the new path.
+    if (await fs.exists(src)) await fs.writeFile(target, await fs.readFile(src))
+  } catch (err) {
+    console.warn('Could not copy the shared store, keeping it', err)
+    return null
+  }
+  return target
 }

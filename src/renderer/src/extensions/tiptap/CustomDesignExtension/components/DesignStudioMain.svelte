@@ -1,7 +1,7 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n'
   import { onMount, onDestroy } from 'svelte'
-  import { createDesign } from '../collab/collab'
+  import { createDesign, ownDesignStore } from '../collab/collab'
   import { createCanvasCommands, type CanvasCommands } from '../../../../commands/canvasCommands'
   import { _$_canvasCommands } from '../../../../stores/canvas.store'
   import SkiaCanva from './canvas/SkiaCanva.svelte'
@@ -244,7 +244,18 @@
     return pieces.join('; ')
   })
 
+  // A web design still on the drive-root store of before #149 gets its own
+  // copy in its document folder, and points to it from now on.
+  async function moveOffDriveRootStore(): Promise<void> {
+    if (Platform.isDesktopPlatform) return
+    const moved = await ownDesignStore(_designId, _src, _parentDoc?.path)
+    if (!moved) return
+    _src = moved
+    updateAttributes?.({ [CustomDesignExtensionProps.tagAttributeSrc]: moved })
+  }
+
   const initializeDesign = async () => {
+    await moveOffDriveRootStore()
     _design = await createDesign(_designId, _src, _parentDoc, _userInfo)
 
     _designId = _designId || _design.id

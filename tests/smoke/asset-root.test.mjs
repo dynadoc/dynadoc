@@ -56,7 +56,10 @@ try {
     }
     return import(`file://${compiled}`)
   }
-  const { documentAssetRoot, isDriveRootAssetPath } = await compile(SOURCE, 'assetRoot.mjs')
+  const { documentAssetRoot, isDriveRootAssetPath, copyDriveRootStore } = await compile(
+    SOURCE,
+    'assetRoot.mjs'
+  )
   const { pickUniqueName, directoryEntryName } = await compile(UNIQUE_NAME, 'uniqueName.mjs')
 
   // What a web document got before the fix: the desktop fallback
@@ -104,6 +107,16 @@ try {
     })
   check('desktop, in the cache: unchanged', desktop('/cache/u/Doc/index.html'), '/cache/u/Doc')
   check('desktop, outside the cache: unchanged', desktop('/elsewhere/Doc/index.html'), 'outside')
+  check(
+    'desktop, empty cache dir: the main file folder, as before',
+    documentAssetRoot({
+      documentPath: '/x/Doc/index.html',
+      cacheDir: '',
+      isDesktop: true,
+      rootOutsideCache: () => 'outside'
+    }),
+    '/x/Doc'
+  )
 
   check('shared store path', isDriveRootAssetPath('assets/design/design.json', 'design'), true)
   check('shared store, ./', isDriveRootAssetPath('./assets/design/design 2.json', 'design'), true)
@@ -115,6 +128,62 @@ try {
   )
   check('another type', isDriveRootAssetPath('assets/sheet/sheet.json', 'design'), false)
   check('empty', isDriveRootAssetPath('', 'design'), false)
+
+  // Moving a design off the shared drive-root store, on an in-memory drive.
+  const drive = (files) => ({
+    files,
+    exists: async (p) => p in files,
+    readFile: async (p) => files[p],
+    writeFile: async (p, data) => {
+      files[p] = data
+    }
+  })
+  const own = 'home/0f/New Document/assets/design/design.json'
+  const shared = 'assets/design/design.json'
+  {
+    const fs = drive({ [shared]: '{"updates":["a","b"]}' })
+    check('move: returns the new path', await copyDriveRootStore(shared, own, 'design', fs), own)
+    check('move: the copy has the shapes', fs.files[own], '{"updates":["a","b"]}')
+    check('move: the shared file is untouched', fs.files[shared], '{"updates":["a","b"]}')
+    const other = 'home/1a/New Document/assets/design/design.json'
+    await copyDriveRootStore(shared, other, 'design', fs)
+    check('move: a second design gets the same shapes too', fs.files[other], fs.files[shared])
+  }
+  {
+    const fs = drive({})
+    check('move: no shared file yet', await copyDriveRootStore(shared, own, 'design', fs), own)
+    check('move: nothing written', Object.keys(fs.files).length, 0)
+  }
+  {
+    const fs = drive({ [own]: 'x' })
+    check('move: own store stays', await copyDriveRootStore(own, own + '2', 'design', fs), null)
+    check('move: no target', await copyDriveRootStore(shared, null, 'design', fs), null)
+    check('move: target at the root', await copyDriveRootStore(shared, shared, 'design', fs), null)
+  }
+  {
+    // Opened again before the new src was saved: the copy made the first
+    // time, edited since, is kept rather than overwritten by the shared file.
+    const fs = drive({ [shared]: '{"updates":["a"]}', [own]: '{"updates":["a","edit"]}' })
+    check('move again: returns the copy', await copyDriveRootStore(shared, own, 'design', fs), own)
+    check('move again: edits kept', fs.files[own], '{"updates":["a","edit"]}')
+  }
+  {
+    const failing = {
+      exists: async (p) => p === shared,
+      readFile: async () => {
+        throw new Error('bridge down')
+      },
+      writeFile: async () => {}
+    }
+    const warn = console.warn
+    console.warn = () => {}
+    check(
+      'move: a failed copy keeps src',
+      await copyDriveRootStore(shared, own, 'design', failing),
+      null
+    )
+    console.warn = warn
+  }
 
   // What the web fs:readdir answers: the bridge's drive entries.
   const entry = (name) => ({ path: `x/${name}`, name, size: 1, mod_time: 0, is_dir: false })
