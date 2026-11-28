@@ -649,7 +649,11 @@ Object.assign(channels, {
   'search:files': async (args) => {
     const { searchInFiles } = await loadSearchModule()
     const result = await searchInFiles(searchPayload(args))
-    return { ...result, files: remoteFiles(result.files) }
+    return {
+      ...result,
+      files: remoteFiles(result.files),
+      skippedFiles: remoteFiles(result.skippedFiles)
+    }
   },
 
   'search:replace-preview': async (args) => {

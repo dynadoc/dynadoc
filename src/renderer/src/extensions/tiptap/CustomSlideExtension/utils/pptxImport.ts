@@ -1,7 +1,7 @@
 import { PowerPointParser, PPTXParser } from '@cliftonc/pptx-to-json'
 import { convertPresentationToSlidesHtml } from './presentationImport'
 import { pptxToPresentation } from './pptxMapping'
-import { checkZipLimits } from './zipLimits'
+import { checkZipLimits } from '../../../../shared/zipLimits'
 import { nodeApi } from '../../../../utils/shims/node'
 
 // const fs = nodeApi.fs

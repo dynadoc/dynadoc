@@ -59,6 +59,10 @@ export default defineConfig({
           'workers/latexCompile.worker': path.resolve(
             __dirname,
             'src/main/workers/latexCompile.worker.ts'
+          ),
+          'workers/officeText.worker': path.resolve(
+            __dirname,
+            'src/main/workers/officeText.worker.ts'
           )
         },
         output: {

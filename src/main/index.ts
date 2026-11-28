@@ -72,6 +72,7 @@ import {
   type ReplacePayload,
   type SearchFsPayload
 } from './search/fileSearch'
+import { createOfficeWorkerExtractor } from './search/officeWorker'
 import { loadNodePty } from './utils/optionalNative'
 
 import { spawn, execFile, exec } from 'child_process'
@@ -3176,9 +3177,27 @@ app.whenReady().then(async () => {
   const searchReplaceBackupRoot = () =>
     path.join(app.getPath('userData'), 'search-replace-backups')
 
-  ipcMain.handle('search:files', async (_event, payload: SearchFsPayload) => {
+  // Office text is extracted in a worker thread (#136). A new search from the
+  // same window stops the one still running, and the extraction in flight.
+  const officeExtractor = createOfficeWorkerExtractor(
+    path.join(__dirname, 'workers', 'officeText.worker.js')
+  )
+  const runningSearches = new Map<number, { aborted: boolean }>()
+  app.on('will-quit', () => officeExtractor.dispose())
+
+  ipcMain.handle('search:files', async (event, payload: SearchFsPayload) => {
+    const previous = runningSearches.get(event.sender.id)
+    if (previous) {
+      previous.aborted = true
+      officeExtractor.cancel()
+    }
+    const signal = { aborted: false }
+    runningSearches.set(event.sender.id, signal)
     try {
-      return await searchInFiles(payload || ({} as SearchFsPayload))
+      return await searchInFiles(payload || ({} as SearchFsPayload), {
+        extractOffice: officeExtractor.extract,
+        signal
+      })
     } catch (error) {
       console.error('search:files error', error)
       return {
@@ -3189,6 +3208,8 @@ app.whenReady().then(async () => {
         truncated: false,
         error: 'Search failed'
       }
+    } finally {
+      if (runningSearches.get(event.sender.id) === signal) runningSearches.delete(event.sender.id)
     }
   })
 

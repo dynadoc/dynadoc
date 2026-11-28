@@ -24,6 +24,9 @@ import fsp from 'fs/promises'
 import path from 'path'
 import { findInTextModel, planReplace, replacementFor, textModelFor } from './htmlText'
 import { createSearchRegExp } from './matcher'
+import { officeKindOf } from './officeText'
+import { matchSegments } from './officeSearch'
+import { extractInProcess, officeTextFor, type OfficeExtractor } from './officeCache'
 
 export type SearchFsPayload = {
   rootPath: string
@@ -58,6 +61,8 @@ export type SearchFsMatch = {
   before: string
   match: string
   after: string
+  /** Inside a .docx or .xlsx: the package part and where in it (#136). */
+  location?: { part: string; label: string }
 }
 
 export type SearchFsFileResult = {
@@ -387,17 +392,31 @@ async function filesForPayload(payload: SearchFsPayload, rootPath: string): Prom
   return collectSearchFiles(rootPath, includeMatchers, excludeMatchers, restrictToPaths)
 }
 
-export async function searchInFiles(payload: SearchFsPayload): Promise<{
+export type SearchRunOptions = {
+  /** How to extract the text of a .docx or .xlsx (a worker thread in the main process). */
+  extractOffice?: OfficeExtractor
+  /** Set `aborted` to stop the search at the next file: a newer search replaced it. */
+  signal?: { aborted: boolean }
+}
+
+export async function searchInFiles(
+  payload: SearchFsPayload,
+  options: SearchRunOptions = {}
+): Promise<{
   ok: boolean
+  /** The search was stopped because a newer one started; the results are partial. */
+  cancelled?: boolean
   files: SearchFsFileResult[]
   totalMatches: number
   scannedFiles: number
+  /** Files that were not read, with why (a package too large or not valid). */
+  skippedFiles: Array<{ path: string; reason: string }>
   truncated: boolean
   error?: string
 }> {
   const rootPath = String(payload?.rootPath || '').trim()
   const query = String(payload?.query || '')
-  const empty = { files: [], totalMatches: 0, scannedFiles: 0, truncated: false }
+  const empty = { files: [], totalMatches: 0, scannedFiles: 0, skippedFiles: [], truncated: false }
   if (!rootPath || !query) return { ok: true, ...empty }
   if (!fs.existsSync(rootPath)) return { ok: false, ...empty, error: 'Search root does not exist' }
 
@@ -408,12 +427,48 @@ export async function searchInFiles(payload: SearchFsPayload): Promise<{
   const maxMatchesPerFile = Math.max(1, Number(payload.maxMatchesPerFile || 200))
   const files = await filesForPayload(payload, rootPath)
   const grouped: SearchFsFileResult[] = []
+  const skippedFiles: Array<{ path: string; reason: string }> = []
   let totalMatches = 0
   let truncated = false
+  // Files actually read: one skipped by type, size or content is not "scanned".
+  let scannedFiles = 0
+
+  const extractOffice = options.extractOffice ?? extractInProcess
+  const cancelled = (): boolean => options.signal?.aborted === true
 
   for (const filePath of files) {
+    if (cancelled()) break
+    // Word and Excel packages: the text of every part, with a location (#136).
+    // Extracted off the main thread and cached per file version (officeCache.ts).
+    if (officeKindOf(filePath)) {
+      const extraction = await officeTextFor(filePath, extractOffice, SEARCH_MAX_FILE_BYTES)
+      if (cancelled()) break
+      if (!extraction) continue
+      if (!extraction.ok) {
+        skippedFiles.push({ path: filePath, reason: extraction.reason })
+        continue
+      }
+      const limit = Math.min(maxMatchesPerFile, maxResults - totalMatches)
+      const office = matchSegments(extraction.segments, built.matcher, limit)
+      scannedFiles += 1
+      totalMatches += office.matches.length
+      if (office.truncated || totalMatches >= maxResults) truncated = true
+      if (office.matches.length > 0) {
+        grouped.push({
+          file: path.basename(filePath),
+          path: filePath,
+          relativePath: path.relative(rootPath, filePath),
+          matches: office.matches.length,
+          items: office.matches
+        })
+      }
+      if (totalMatches >= maxResults) break
+      continue
+    }
+
     const buffer = await readSearchableFile(filePath)
     if (!buffer) continue
+    scannedFiles += 1
 
     const model = textModelFor(filePath, buffer.toString('utf-8'))
     const limit = Math.min(maxMatchesPerFile, maxResults - totalMatches)
@@ -435,7 +490,15 @@ export async function searchInFiles(payload: SearchFsPayload): Promise<{
     if (totalMatches >= maxResults) break
   }
 
-  return { ok: true, files: grouped, totalMatches, scannedFiles: files.length, truncated }
+  return {
+    ok: true,
+    ...(cancelled() ? { cancelled: true } : {}),
+    files: grouped,
+    totalMatches,
+    scannedFiles,
+    skippedFiles,
+    truncated
+  }
 }
 
 /** Lists every change a replace would make, without writing anything. */
