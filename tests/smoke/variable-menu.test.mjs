@@ -137,6 +137,8 @@ check('package is the document’s', variableScope({ visibility: 'package' }), '
 check('no visibility is the document’s', variableScope(undefined), 'doc')
 check('created for all files: desktop', scopeVisibility('desktop'), 'desktop')
 check('created for this document: package', scopeVisibility('doc'), 'package')
+check('organization is its own scope', variableScope({ visibility: 'Organization' }), 'org')
+check('created for the organization: organization', scopeVisibility('org'), 'organization')
 
 // ── create row ───────────────────────────────────────────────────────────────
 check('nothing typed, nothing to create', canCreateVariable('', vars), false)

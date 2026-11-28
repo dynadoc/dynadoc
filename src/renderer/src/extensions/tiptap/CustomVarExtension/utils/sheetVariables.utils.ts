@@ -2,11 +2,19 @@
 // No imports on purpose: tests/smoke/sheet-variables.test.mjs compiles this
 // file on its own with esbuild.
 
-/** Visibilities whose variables live in the app-wide store, not in vars.json. */
-export const GLOBAL_VISIBILITIES = ['desktop', 'cloud']
+/**
+ * Visibilities whose variables live outside vars.json: in the Desktop scope
+ * (desktop, cloud) or in the Organization scope served by the API bridge.
+ */
+export const GLOBAL_VISIBILITIES = ['desktop', 'cloud', 'organization']
 
 export function isGlobalVisibility(visibility: unknown): boolean {
   return GLOBAL_VISIBILITIES.includes(String(visibility || '').toLowerCase())
+}
+
+/** True for a variable of the Organization scope. */
+export function isOrganizationVisibility(visibility: unknown): boolean {
+  return String(visibility || '').toLowerCase() === 'organization'
 }
 
 type NamedVariable = { name?: string; aliases?: string[]; visibility?: string }

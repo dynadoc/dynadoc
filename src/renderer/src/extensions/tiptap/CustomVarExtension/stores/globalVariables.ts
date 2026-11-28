@@ -1,14 +1,17 @@
-// App-wide variables: the ones whose visibility is Desktop or Cloud.
+// The Desktop scope: variables whose visibility is Desktop or Cloud.
 //
 // They live in one JSON file in the app's storage directory (a filesystem
 // policy root, like the other renderer-owned stores) instead of a document's
 // vars.json, so every document on this computer can use them. Cloud is
-// treated like Desktop locally.
+// treated like Desktop locally. Organization variables have their own scope,
+// served by the API bridge (scopes/organizationScope.ts); scopes/globalScopes.ts
+// routes between the two.
 //
 // Windows are kept in step with a BroadcastChannel, and the file is re-read
 // when a window gets focus in case another process wrote it.
 import { nodeApi } from '../../../../utils/shims/node'
 import { getStorageDirCached } from '../../../../utils/storageDir'
+import type { VariableScopeDriver } from './scopes/types'
 
 export const GLOBAL_VARS_FILE_NAME = 'global-vars.json'
 
@@ -16,7 +19,7 @@ export const GLOBAL_VARS_FILE_NAME = 'global-vars.json'
 // here so this module does not import the store that imports it.
 type StoredVariable = Record<string, unknown>
 type GlobalVars = Record<string, StoredVariable>
-export type GlobalVariableChange = { id: string; value: StoredVariable | null }
+type GlobalVariableChange = { id: string; value: StoredVariable | null }
 
 let _vars: GlobalVars = {}
 let _loading: Promise<GlobalVars> | null = null
@@ -191,4 +194,15 @@ export function onGlobalVariablesChange(fn: (changes: GlobalVariableChange[]) =>
   return () => {
     _handlers.delete(fn)
   }
+}
+
+/** The Desktop scope behind the interface every scope shares. */
+export const desktopScope: VariableScopeDriver = {
+  scope: 'desktop',
+  load: loadGlobalVariables,
+  list: getGlobalVariables,
+  set: setGlobalVariable,
+  remove: deleteGlobalVariable,
+  onChange: onGlobalVariablesChange,
+  status: () => ({ state: 'local', syncedAt: null, pending: _pending.size, conflicts: 0 })
 }

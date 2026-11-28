@@ -61,6 +61,7 @@ const {
   isSingleCellRef,
   selectVisibleGlobals,
   isGlobalVisibility,
+  isOrganizationVisibility,
   toPlainNumber,
   isCellVarName,
   CELL_VAR_TRIGGER,
@@ -315,6 +316,16 @@ check(
   'desktop and cloud are global',
   [isGlobalVisibility('desktop'), isGlobalVisibility('Cloud')],
   [true, true]
+)
+check(
+  'organization is global, and only it is organization',
+  [
+    isGlobalVisibility('organization'),
+    isOrganizationVisibility('Organization'),
+    isOrganizationVisibility('desktop'),
+    isOrganizationVisibility(undefined)
+  ],
+  [true, true, false, false]
 )
 check(
   'document and package are not',
