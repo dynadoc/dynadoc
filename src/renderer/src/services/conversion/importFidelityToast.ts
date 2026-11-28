@@ -1,12 +1,13 @@
 import {
   formatFidelityLines,
+  formatFidelityNotes,
   hasFidelityLoss,
-  KIND_LABELS,
   type ImportFidelityReport
 } from './importFidelity'
 
-// The short report shown after an Office import: one line per kind, and
-// why something was approximated or lost. It stays until it is closed.
+// The short report shown after an Office import that did not come through
+// as it was: one line per kind, why something was approximated or lost and
+// where, and whether the report is complete. It stays until it is closed.
 
 const STYLE_ID = 'dynadoc-import-fidelity-report'
 
@@ -61,8 +62,8 @@ export function showImportFidelityReport(report: ImportFidelityReport): () => vo
 
   const title = document.createElement('h2')
   title.textContent = hasFidelityLoss(report)
-    ? `Imported ${report.fileName}, with differences`
-    : `Imported ${report.fileName}`
+    ? `Imported ${report.source.name}, with differences`
+    : `Imported ${report.source.name}`
   panel.appendChild(title)
 
   const list = document.createElement('ul')
@@ -74,9 +75,10 @@ export function showImportFidelityReport(report: ImportFidelityReport): () => vo
   }
   panel.appendChild(list)
 
-  const notes = report.entries
-    .filter((entry) => entry.notes.length && (entry.approximated || entry.lost))
-    .map((entry) => `${KIND_LABELS[entry.kind]}: ${entry.notes.join('; ')}.`)
+  const notes = [
+    ...report.unavailable.map((reason) => `Report incomplete: ${reason}.`),
+    ...formatFidelityNotes(report)
+  ]
   if (notes.length) {
     const details = document.createElement('div')
     details.className = 'notes'

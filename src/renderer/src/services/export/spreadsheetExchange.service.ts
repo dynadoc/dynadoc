@@ -10,10 +10,10 @@ import { openSpreadsheetImportModal } from '../../stores/spreadsheetImportModal.
 import { nodeApi } from '../../utils/shims/node'
 import { getUploadedFile, getLastUploadedFile } from '../../utils/uploadCache'
 import Utils from '../../utils/Utils'
-import type { ImportFidelityReport } from '../conversion/importFidelity'
+import { hasFidelityLoss, type ImportFidelityReport } from '../conversion/importFidelity'
 import { showImportFidelityReport } from '../conversion/importFidelityToast'
 import { importXlsxFile, withDefinedNamesRestored } from '../conversion/xlsxImport'
-import { withSheetId } from '../conversion/xlsxImportFidelity'
+import { renameSheet, withSheetId } from '../conversion/xlsxImportFidelity'
 
 // const nodeApi =
 //   typeof window !== 'undefined' ? (window as any)?.api?.node || (window as any)?.node : null
@@ -203,19 +203,9 @@ function ensureUniqueSheetIds(sheets: any[], existingIds: Set<string>) {
 }
 
 async function createFileFromPath(filePath: string) {
+  // An .xls stays as it is: importXlsxFile() converts it and says so in its report.
   const cached = getUploadedFile(filePath)
   if (cached) {
-    const ext = cached.name ? `.${cached.name.split('.').pop() || ''}`.toLowerCase() : ''
-    if (ext === '.xls') {
-      const xlsx = await import('xlsx')
-      const arrayBuffer = await cached.arrayBuffer()
-      const workbook = xlsx.read(arrayBuffer, { type: 'array' })
-      const out = xlsx.write(workbook, { bookType: 'xlsx', type: 'array' })
-      const nextName = cached.name.replace(/\.xls$/i, Utils.OFFICE_EXTENSIONS.excel)
-      return new File([out], nextName, {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      })
-    }
     return cached
   }
   const fallback =
@@ -245,18 +235,11 @@ async function createFileFromPath(filePath: string) {
   }
   const name = nodeApi.path.basename(filePath)
   const ext = nodeApi.path.extname(name).toLowerCase()
-  if (ext === '.xls') {
-    const xlsx = await import('xlsx')
-    const workbook = xlsx.read(normalizedBuffer as any, { type: 'buffer' })
-    const out = xlsx.write(workbook, { bookType: 'xlsx', type: 'array' })
-    const nextName = name.replace(/\.xls$/i, Utils.OFFICE_EXTENSIONS.excel)
-    return new File([out], nextName, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-  }
   const type = ext === '.csv'
     ? 'text/csv'
-    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : ext === '.xls'
+      ? 'application/vnd.ms-excel'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   return new File([normalizedBuffer], name, { type })
 }
 
@@ -320,8 +303,18 @@ export async function exportActiveSheetToFile(
   } finally {
     dismissProgress()
   }
-  let bytes = new Uint8Array(await blob.arrayBuffer())
-  if (options.fileType === 'xlsx') bytes = await withDefinedNamesRestored(bytes, sheetsToExport)
+  let bytes: Uint8Array = new Uint8Array(await blob.arrayBuffer())
+  if (options.fileType === 'xlsx') {
+    const restored = await withDefinedNamesRestored(bytes, sheetsToExport)
+    bytes = restored.bytes
+    if (!restored.restored) {
+      await openAlertModal({
+        title: 'Export Spreadsheet',
+        message:
+          'The defined names, array formulas and comments of the imported workbook could not be written back. The file is exported without them.'
+      })
+    }
+  }
   const buffer = Buffer.from(bytes)
 
   const suggestedName = (currentSheet?.name || 'Spreadsheet')
@@ -420,15 +413,27 @@ export async function importSpreadsheetFileToActiveSheet(
     let nextSheets = JSON.parse(JSON.stringify(importedSheets || []))
 
     if (options.mode === 'append') {
+      // A sheet whose name is taken gets a new one, and its formulas follow.
+      const taken = new Set(existingSheets.map((sheet: any) => sheet.name))
+      for (const sheet of [...nextSheets]) {
+        if (!taken.has(sheet.name)) {
+          taken.add(sheet.name)
+          continue
+        }
+        let n = 2
+        while (taken.has(`${sheet.name} (${n})`)) n++
+        taken.add(`${sheet.name} (${n})`)
+        nextSheets = renameSheet(nextSheets, sheet.name, `${sheet.name} (${n})`)
+      }
       const adjusted = ensureUniqueSheetIds(nextSheets, existingIds)
       nextSheets = [...existingSheets, ...adjusted]
     } else if (options.mode === 'replaceCurrent' && currentSheet) {
+      // importXlsxFile() kept the first sheet only, already renamed.
       const adjusted = ensureUniqueSheetIds(nextSheets, new Set(existingIds))
       const replacement = withSheetId(
         JSON.parse(JSON.stringify(adjusted[0] || currentSheet)),
         currentSheet.id
       )
-      replacement.name = currentSheet.name || replacement.name
       nextSheets = existingSheets.map((sheet: any) =>
         sheet.id === currentSheet.id ? replacement : sheet
       )
@@ -444,17 +449,18 @@ export async function importSpreadsheetFileToActiveSheet(
   try {
     // fortune-excel first, exceljs if it fails; formulas, defined names and
     // comments come from exceljs either way (services/conversion/xlsxImport.ts).
-    const result = await importXlsxFile(
-      file,
-      () => `sheet-${uuidv4().slice(0, 8)}`,
-      sheetRef
-    )
+    const result = await importXlsxFile(file, () => `sheet-${uuidv4().slice(0, 8)}`, {
+      sheetRef,
+      ...(options.mode === 'replaceCurrent' && currentSheet?.name
+        ? { keepFirstSheetAs: currentSheet.name }
+        : {})
+    })
     if (result.sheets.length) setSheets(result.sheets)
     report = result.report
   } finally {
     dismissProgress()
   }
-  if (report) showImportFidelityReport(report)
+  if (report && hasFidelityLoss(report)) showImportFidelityReport(report)
   return report
 }
 

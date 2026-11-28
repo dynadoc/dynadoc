@@ -1,29 +1,33 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type --
    plain .mjs: there is no type annotation syntax to satisfy this rule here. */
 /**
- * Gate: formulas, defined names and the fidelity report of the .xlsx import
- * (services/conversion/xlsxImportFidelity.ts and importFidelity.ts).
+ * Gate: the .xlsx import (services/conversion/xlsxImport.ts,
+ * xlsxImportFidelity.ts and importFidelity.ts): formulas, defined names,
+ * comments, the import report, and the export that writes back what the
+ * import kept aside.
  *
  * A workbook is built with exceljs (no real file): shared formulas with an
  * absolute part, a one-cell and a three-cell array formula, a quoted
- * cross-sheet reference, defined names (a range, a constant, a sheet-scoped
- * one, one with an accented sheet, one unused), a formula reading another
- * workbook, a comment, a data validation rule, a conditional format, sheet
- * protection and an image. What exceljs cannot write (the constant and the
- * sheet-scoped names, a chart, a pivot cache, an external link, a VBA
- * project, a shape and a text box) is added to the zip afterwards.
+ * cross-sheet reference, defined names (a range, a constant, sheet-scoped
+ * ones, one on an accented sheet, one unused, a print area), a formula
+ * reading another workbook and one reading a table, a comment, a data
+ * validation rule, a conditional format, a filter, frozen panes, sheet
+ * protection, a merge and an image. What exceljs cannot write (constant and
+ * sheet-scoped names, a chart, a table, a pivot cache, an external link, a
+ * VBA project, a shape, a text box, a form control, a comment reply, a part
+ * nobody knows) is added to the zip afterwards.
  *
- * Both import paths are run: fortune-excel (the primary converter) and the
- * fallback, each followed by restoreWorkbookContent(). Then the round trip:
- * one input changes, fortune-sheet's own formula engine recalculates,
- * fortune-excel exports, restoreXlsxExport() puts the names back, and exceljs
- * and the importer reopen the result.
+ * Both converters are run: importXlsxFile() (fortune-excel first) and the
+ * exceljs fallback, then the round trip: one input changes, fortune-sheet's
+ * own formula engine recalculates, fortune-excel exports, restoreXlsxExport()
+ * writes back what was kept aside, and exceljs and the importer reopen the
+ * result. Then "replace current worksheet", which keeps one sheet under
+ * another name, and the report reader.
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -31,7 +35,9 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
 const conversion = path.join(repoRoot, 'src/renderer/src/services/conversion')
 
-const outDir = mkdtempSync(path.join(tmpdir(), 'xlsx-fidelity-smoke-'))
+// Inside node_modules, so the bundle can import the packages it leaves out.
+const outDir = path.join(repoRoot, 'node_modules', '.cache', `xlsx-fidelity-smoke-${process.pid}`)
+mkdirSync(outDir, { recursive: true })
 const entry = path.join(outDir, 'entry.ts')
 const compiled = path.join(outDir, 'xlsx-fidelity.mjs')
 writeFileSync(
@@ -39,7 +45,8 @@ writeFileSync(
   [
     `export { unzipSync, zipSync, strToU8, strFromU8 } from 'fflate'`,
     `export * from ${JSON.stringify(path.join(conversion, 'importFidelity.ts'))}`,
-    `export * from ${JSON.stringify(path.join(conversion, 'xlsxImportFidelity.ts'))}`
+    `export * from ${JSON.stringify(path.join(conversion, 'xlsxImportFidelity.ts'))}`,
+    `export * from ${JSON.stringify(path.join(conversion, 'xlsxImport.ts'))}`
   ].join('\n')
 )
 const build = spawnSync(
@@ -50,6 +57,9 @@ const build = spawnSync(
     '--format=esm',
     '--platform=node',
     `--outfile=${compiled}`,
+    '--external:@corbe30/fortune-excel',
+    '--external:exceljs',
+    '--external:xlsx',
     `--alias:fflate=${path.join(repoRoot, 'node_modules', 'fflate')}`
   ],
   { encoding: 'utf-8', cwd: repoRoot }
@@ -59,12 +69,6 @@ if (build.status !== 0) {
   rmSync(outDir, { recursive: true, force: true })
   process.exit(1)
 }
-
-const M = await import(pathToFileURL(compiled).href)
-const require = createRequire(path.join(repoRoot, 'package.json'))
-const ExcelJS = require('exceljs')
-const FortuneExcel = require('@corbe30/fortune-excel')
-const Core = require('@fortune-sheet/core')
 
 // jszip (inside fortune-excel) reads a File through FileReader, which Node
 // does not have. The browser's, reduced to what jszip calls.
@@ -76,9 +80,14 @@ globalThis.FileReader = class {
     )
   }
 }
-
 // fortune-excel names imported images after window.navigator.userAgent.
 globalThis.window = { navigator: { userAgent: 'node' } }
+
+const M = await import(pathToFileURL(compiled).href)
+const require = createRequire(path.join(repoRoot, 'package.json'))
+const ExcelJS = require('exceljs')
+const FortuneExcel = require('@corbe30/fortune-excel')
+const Core = require('@fortune-sheet/core')
 
 const results = []
 const json = JSON.stringify
@@ -87,10 +96,11 @@ const decode = (address) => {
   const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(address)
   return { r: Number(digits) - 1, c: letters.charCodeAt(0) - 65 }
 }
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 // --- the workbook ------------------------------------------------------------
 const wb = new ExcelJS.Workbook()
-const data = wb.addWorksheet('Data')
+const data = wb.addWorksheet('Data', { views: [{ state: 'frozen', ySplit: 1 }] })
 const summary = wb.addWorksheet('Summary Sheet')
 const vat = wb.addWorksheet('Données')
 data.getCell('A1').value = 1
@@ -109,6 +119,7 @@ data.getCell('D1').value = { formula: 'A1:A3*10', result: 10, shareType: 'array'
 data.getCell('D2').value = 20
 data.getCell('D3').value = 30
 data.getCell('E1').value = { formula: '"Total: "&A1', result: 'Total: 1' }
+data.getCell('E5').value = { formula: 'SUM(Table1[Amount])', result: 9 }
 data.getCell('F1').value = 'merged'
 data.mergeCells('F1:F2')
 data.getCell('A1').note = 'Check this value'
@@ -122,6 +133,7 @@ summary.getCell('A2').value = { formula: 'SUM(Total)', result: 6 }
 summary.getCell('A3').value = { formula: "'Summary Sheet'!A1+1", result: 7 }
 summary.getCell('A4').value = { formula: '[1]Prices!A1', result: 42 }
 summary.getCell('A5').value = { formula: 'Rate*Local*10', result: 10 }
+summary.autoFilter = 'A1:A5'
 await summary.protect('', {})
 vat.getCell('B1').value = 100
 vat.getCell('B2').value = 0.2
@@ -142,13 +154,28 @@ parts['xl/workbook.xml'] = M.strToU8(
     '<definedName name="Rate">0.5</definedName>' +
       '<definedName name="Local" localSheetId="1">Data!$A$2</definedName>' +
       '<definedName name="Local" localSheetId="0">Data!$A$3</definedName>' +
+      '<definedName name="_xlnm.Print_Area" localSheetId="0">Data!$A$1:$E$5</definedName>' +
       '</definedNames>'
   )
 )
 parts['xl/charts/chart1.xml'] = M.strToU8('<c:chartSpace xmlns:c="c"/>')
+parts['xl/tables/table1.xml'] = M.strToU8(
+  '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" ' +
+    'displayName="Table1" ref="J1:J2"><tableColumns count="1"><tableColumn id="1" name="Amount"/>' +
+    '</tableColumns></table>'
+)
 parts['xl/pivotCache/pivotCacheDefinition1.xml'] = M.strToU8('<pivotCacheDefinition/>')
 parts['xl/externalLinks/externalLink1.xml'] = M.strToU8('<externalLink/>')
 parts['xl/vbaProject.bin'] = new Uint8Array([0, 1, 2])
+parts['xl/timelines/timeline1.xml'] = M.strToU8('<timelines/>')
+parts['xl/threadedComments/threadedComment1.xml'] = M.strToU8(
+  '<ThreadedComments><threadedComment ref="A1" id="{1}"/>' +
+    '<threadedComment ref="A1" id="{2}" parentId="{1}"/></ThreadedComments>'
+)
+parts['xl/drawings/vmlDrawing9.vml'] = M.strToU8(
+  '<xml><v:shape><x:ClientData ObjectType="Button"/></v:shape>' +
+    '<v:shape><x:ClientData ObjectType="Note"/></v:shape></xml>'
+)
 parts['xl/drawings/drawing9.xml'] = M.strToU8(
   '<xdr:wsDr xmlns:xdr="x" xmlns:a="a"><xdr:twoCellAnchor>' +
     '<xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="Box"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr/></xdr:sp>' +
@@ -159,7 +186,6 @@ parts['xl/drawings/drawing9.xml'] = M.strToU8(
 const bytes = M.zipSync(parts)
 
 // --- the two import paths ---------------------------------------------------
-const content = await M.readXlsxWorkbook(ExcelJS, bytes)
 const scan = M.scanXlsxPackage(bytes)
 check(
   'the scan reads the defined names, constants and sheet scopes included',
@@ -170,42 +196,30 @@ check(
       ['TauxTVA', "'Données'!$B$2", null],
       ['Rate', '0.5', null],
       ['Local', 'Data!$A$2', 'Summary Sheet'],
-      ['Local', 'Data!$A$3', 'Data']
+      ['Local', 'Data!$A$3', 'Data'],
+      ['_xlnm.Print_Area', 'Data!$A$1:$E$5', 'Data']
     ]),
   json(scan.definedNames)
 )
 
-let primarySheets = []
-await FortuneExcel.transformExcelToFortune(
-  new File([bytes], 'fixture.xlsx'),
-  (sheets) => {
-    primarySheets = sheets
-  },
-  () => {},
-  { current: {} }
+const primary = await M.importXlsxFile(
+  new File([bytes], 'fixture.xlsx', { type: XLSX_TYPE }),
+  () => 'unused'
 )
-check(
-  'fortune-excel converts the fixture',
-  primarySheets.length === 3,
-  `${primarySheets.length} sheets`
-)
+check('importXlsxFile converts the fixture with fortune-excel', primary.sheets.length === 3)
 
 let idCount = 0
-const paths = {
-  primary: M.createImportFidelityCollector('xlsx', 'fixture.xlsx'),
-  fallback: M.createImportFidelityCollector('xlsx', 'fixture.xlsx')
-}
-const restored = {
-  primary: M.restoreWorkbookContent(primarySheets, content, scan.definedNames, paths.primary),
-  fallback: M.restoreWorkbookContent(
-    M.sheetsFromWorkbook(content, () => `sheet-${++idCount}`),
-    content,
-    scan.definedNames,
-    paths.fallback
-  )
-}
-M.reportXlsxPackage(scan, restored.primary, paths.primary)
-M.reportXlsxPackage(scan, restored.fallback, paths.fallback)
+const content = await M.readXlsxWorkbook(ExcelJS, bytes)
+const fallbackCollector = M.createImportFidelityCollector({ name: 'fixture.xlsx', kind: 'xlsx' })
+const fallbackSheets = M.restoreWorkbookContent(
+  M.sheetsFromWorkbook(content, () => `sheet-${++idCount}`),
+  content,
+  scan.definedNames,
+  fallbackCollector
+)
+M.reportXlsxPackage(scan, fallbackSheets, fallbackCollector)
+const restored = { primary: primary.sheets, fallback: fallbackSheets }
+const reports = { primary: primary.report, fallback: fallbackCollector.report() }
 
 const cellOf = (sheets, sheetName, address) => {
   const { r, c } = decode(address)
@@ -242,11 +256,22 @@ for (const [name, sheets] of Object.entries(restored)) {
     json(named?.xlsxNames) === json([{ name: 'TauxTVA', ref: "'Données'!$B$2" }]),
     json(named?.xlsxNames)
   )
+  const kept = cellOf(sheets, 'Data', 'A1')?.xlsxWorkbook?.names?.map((n) => n.name)
+  check(
+    `${name}: the first sheet's A1 keeps every defined name, print area included`,
+    json(kept) === json(scan.definedNames.map((n) => n.name)),
+    json(kept)
+  )
   const external = cellOf(sheets, 'Summary Sheet', 'A4')
   check(
     `${name}: a formula reading another workbook keeps its value, not the formula`,
     external && external.f === undefined && Number(external.v) === 42,
     json(external)
+  )
+  check(
+    `${name}: an array formula keeps its range for the export`,
+    json(cellOf(sheets, 'Data', 'D1')?.xlsxArray) === json({ ref: 'D1:D3', f: '=A1:A3*10' }),
+    json(cellOf(sheets, 'Data', 'D1')?.xlsxArray)
   )
   const spilled = cellOf(sheets, 'Data', 'D3')
   check(
@@ -269,97 +294,175 @@ for (const [name, sheets] of Object.entries(restored)) {
   const chained = sheets.find((s) => s.name === 'Data').calcChain
   check(
     `${name}: the calculation chain lists every formula of the sheet, with the sheet's id`,
-    chained.length === 6 && chained.every((item) => item.id === sheets[0].id),
+    chained.length === 7 && chained.every((item) => item.id === sheets[0].id),
     json(chained)
   )
 }
 
 // --- the report -------------------------------------------------------------
-const byKind = (report) => Object.fromEntries(report.entries.map((e) => [e.kind, e]))
+const totals = (report) => {
+  const byKind = {}
+  for (const item of report.items) {
+    byKind[item.kind] ||= { converted: 0, approximated: 0, lost: 0 }
+    byKind[item.kind][item.status] += item.count
+  }
+  return byKind
+}
 const expectedReport = {
-  formulas: { converted: 9, approximated: 3, lost: 0 },
-  definedNames: { converted: 0, approximated: 4, lost: 2 },
-  comments: { converted: 1, approximated: 0, lost: 0 },
+  formulas: { converted: 9, approximated: 2, lost: 2 },
+  definedNames: { converted: 0, approximated: 6, lost: 0 },
+  comments: { converted: 1, approximated: 0, lost: 1 },
   shapes: { converted: 0, approximated: 0, lost: 1 },
   textBoxes: { converted: 0, approximated: 0, lost: 1 },
+  formControls: { converted: 0, approximated: 0, lost: 1 },
   charts: { converted: 0, approximated: 0, lost: 1 },
+  tables: { converted: 0, approximated: 0, lost: 1 },
   conditionalFormatting: { converted: 0, approximated: 0, lost: 1 },
+  autoFilter: { converted: 0, approximated: 0, lost: 1 },
+  frozenPanes: { converted: 0, approximated: 0, lost: 1 },
   pivotCaches: { converted: 0, approximated: 0, lost: 1 },
   externalLinks: { converted: 0, approximated: 0, lost: 1 },
   protection: { converted: 0, approximated: 0, lost: 1 },
-  macros: { converted: 0, approximated: 0, lost: 1 }
+  macros: { converted: 0, approximated: 0, lost: 1 },
+  otherParts: { converted: 0, approximated: 0, lost: 1 }
 }
-const primaryReport = byKind(paths.primary.report())
-const fallbackReport = byKind(paths.fallback.report())
-for (const [kind, counts] of Object.entries(expectedReport)) {
-  for (const [name, report] of [
-    ['primary', primaryReport],
-    ['fallback', fallbackReport]
-  ]) {
-    const got = report[kind]
+for (const [name, report] of Object.entries(reports)) {
+  const got = totals(report)
+  for (const [kind, counts] of Object.entries(expectedReport)) {
     check(
       `${name} report: ${kind} ${json(counts)}`,
-      got &&
-        got.converted === counts.converted &&
-        got.approximated === counts.approximated &&
-        got.lost === counts.lost,
-      json(got)
+      json(got[kind]) === json(counts),
+      json(got[kind])
     )
   }
+  check(`${name} report: complete`, report.unavailable.length === 0, json(report.unavailable))
 }
+const primaryTotals = totals(reports.primary)
+const fallbackTotals = totals(reports.fallback)
 check(
   'primary report: the image and the validation rule fortune-excel converts are counted as kept',
-  primaryReport.images?.converted === 1 && primaryReport.dataValidation?.converted === 1,
-  json([primaryReport.images, primaryReport.dataValidation])
+  primaryTotals.images?.converted === 1 && primaryTotals.dataValidation?.converted === 1,
+  json([primaryTotals.images, primaryTotals.dataValidation])
 )
 check(
-  'fallback report: the fallback keeps no image and no validation, and says so',
-  fallbackReport.images?.lost === 1 && fallbackReport.dataValidation?.lost === 1,
-  json([fallbackReport.images, fallbackReport.dataValidation])
+  'fallback report: the fallback keeps no image and no validation, and says where',
+  fallbackTotals.images?.lost === 1 &&
+    fallbackTotals.dataValidation?.lost === 1 &&
+    json(reports.fallback.items.find((i) => i.kind === 'dataValidation').places) ===
+      json([{ sheet: 'Data', cell: 'A2' }]),
+  json(reports.fallback.items.filter((i) => i.kind === 'dataValidation'))
 )
-const lines = M.formatFidelityLines(paths.primary.report())
+const lostFormulas = reports.primary.items.filter(
+  (i) => i.kind === 'formulas' && i.status === 'lost'
+)
+check(
+  'the report says where the lost formulas were',
+  json(lostFormulas.flatMap((i) => i.places).sort((a, b) => a.sheet.localeCompare(b.sheet))) ===
+    json([
+      { sheet: 'Data', cell: 'E5' },
+      { sheet: 'Summary Sheet', cell: 'A4' }
+    ]),
+  json(lostFormulas)
+)
+check(
+  'the report has the agreed source and version',
+  reports.primary.version === 1 &&
+    reports.primary.source.name === 'fixture.xlsx' &&
+    reports.primary.source.kind === 'xlsx' &&
+    /^[0-9a-f]{64}$/.test(reports.primary.source.sha256 || ''),
+  json(reports.primary.source)
+)
+const lines = M.formatFidelityLines(reports.primary)
 check(
   'the report reads one line per kind',
-  lines[0] === 'Formulas: 9 kept, 3 approximated' && lines.includes('Charts: 1 lost'),
+  lines[0] === 'Formulas: 9 kept, 2 approximated, 2 lost' && lines.includes('Charts: 1 lost'),
   json(lines)
 )
-check('the report says something was lost', M.hasFidelityLoss(paths.primary.report()))
 check(
-  'a clean import has nothing to report as lost',
-  !M.hasFidelityLoss({
-    version: 1,
-    source: 'xlsx',
-    fileName: 'x',
-    entries: [{ kind: 'formulas', converted: 3, approximated: 0, lost: 0, notes: [] }]
+  'the notes say why and where',
+  M.formatFidelityNotes(reports.primary).some(
+    (note) =>
+      note.startsWith('Formulas: formulas that read another workbook') &&
+      note.includes('Summary Sheet!A4')
+  ),
+  json(M.formatFidelityNotes(reports.primary))
+)
+check(
+  'something was lost, so a save over the original must ask',
+  M.hasFidelityLoss(reports.primary) && M.needsSaveConfirmation(reports.primary)
+)
+const clean = {
+  version: 1,
+  source: { name: 'x.xlsx', kind: 'xlsx' },
+  unavailable: [],
+  items: [{ kind: 'formulas', status: 'converted', count: 3 }]
+}
+check(
+  'a clean import shows no panel and needs no confirmation',
+  !M.hasFidelityLoss(clean) && !M.needsSaveConfirmation(clean)
+)
+check(
+  'an incomplete report needs a confirmation',
+  M.needsSaveConfirmation({ ...clean, unavailable: ['the parts could not be listed'] })
+)
+const parsed = M.parseImportFidelityReport(
+  JSON.stringify({
+    ...clean,
+    items: [...clean.items, { kind: 'smartArt', status: 'lost', count: 2, reason: 'not converted' }]
   })
 )
+check(
+  'the reader keeps kinds it does not know and labels them by key',
+  parsed && M.formatFidelityLines(parsed).includes('smartArt: 2 lost'),
+  json(parsed)
+)
+check(
+  'the reader refuses another version',
+  M.parseImportFidelityReport({ ...clean, version: 2 }) === null
+)
 
-// --- defined names, on their own --------------------------------------------
+// --- defined names and sheet references, on their own -----------------------
 const names = [
   { name: 'Rate', ref: '0.2' },
   { name: 'Local', ref: 'Data!$C$1', sheetName: 'Two' },
   { name: 'Local', ref: 'Data!$C$9', sheetName: 'One' },
   { name: 'Prices', ref: "'Price list'!$A$1:$A$9" },
   { name: 'Gross', ref: 'Net*(1+Rate)' },
-  { name: 'Net', ref: 'Data!$D$1' }
+  { name: 'Net', ref: 'Data!$D$1' },
+  { name: 'Prev', ref: 'Data!A1' }
 ]
 const used = []
+const keptAside = []
 const inlined = M.inlineDefinedNames(
-  'IF(rate>0,"Rate",SUM(Prices)*Local)+Data!Rate+RATE(1,2,3)+Gross',
+  'IF(rate>0,"Rate",SUM(Prices)*Local)+Data!Rate+RATE(1,2,3)+Gross+Prev',
   names,
   'Two',
-  used
+  used,
+  keptAside
 )
 check(
-  'names are written out: constants in parentheses, sheet scope first, names in names, strings and functions untouched',
+  'names are written out: constants in parentheses, sheet scope first, names in names, strings and functions untouched, relative names kept',
   inlined ===
-    `IF((0.2)>0,"Rate",SUM('Price list'!$A$1:$A$9)*Data!$C$1)+Data!Rate+RATE(1,2,3)+(Data!$D$1*(1+(0.2)))`,
+    `IF((0.2)>0,"Rate",SUM('Price list'!$A$1:$A$9)*Data!$C$1)+Data!Rate+RATE(1,2,3)+(Data!$D$1*(1+(0.2)))+Prev`,
   inlined
 )
 check(
-  'the names used are collected',
-  json(used.map((n) => n.name).sort()) === json(['Gross', 'Local', 'Net', 'Prices', 'Rate']),
-  json(used)
+  'the names used and the names left are collected',
+  json(used.map((n) => n.name).sort()) === json(['Gross', 'Local', 'Net', 'Prices', 'Rate']) &&
+    json(keptAside.map((n) => n.name)) === json(['Prev']),
+  json([used, keptAside])
+)
+check(
+  'a sheet rename follows quoted and plain references, not strings or other sheets',
+  M.renameSheetReferences(`'Données'!B2+Données!C1+"Données!A1"+Other!A1`, 'Données', 'Sheet 1') ===
+    `'Sheet 1'!B2+'Sheet 1'!C1+"Données!A1"+Other!A1`,
+  M.renameSheetReferences(`'Données'!B2+Données!C1+"Données!A1"+Other!A1`, 'Données', 'Sheet 1')
+)
+check(
+  'referencedSheets lists the sheets a formula reads',
+  json(M.referencedSheets(`SUM('My sheet'!A1:A2)+Data!B1+[1]Prices!A1`)) ===
+    json(['My sheet', 'Data']),
+  json(M.referencedSheets(`SUM('My sheet'!A1:A2)+Data!B1+[1]Prices!A1`))
 )
 const renumbered = M.withSheetId({ id: 'a', name: 'S', calcChain: [{ r: 0, c: 0, id: 'a' }] }, 'b')
 check(
@@ -377,14 +480,12 @@ const toTables = (sheets) =>
     for (const cell of sheet.celldata) table[cell.r][cell.c] = cell.v
     return { ...sheet, data: table }
   })
-for (const [name, sheets] of Object.entries(restored)) {
-  const tables = toTables(sheets)
+const recalculate = (tables) => {
   const ctx = {
     luckysheetfile: tables,
     currentSheetId: tables[0].id,
     formulaCache: new Core.FormulaCache()
   }
-  tables[0].data[0][0] = { ...tables[0].data[0][0], v: 10, m: '10', ct: { fa: 'General', t: 'n' } }
   for (let pass = 0; pass < 3; pass++) {
     for (const table of tables) {
       for (const item of table.calcChain) {
@@ -403,6 +504,24 @@ for (const [name, sheets] of Object.entries(restored)) {
       }
     }
   }
+}
+const exportTables = async (tables) => {
+  const blob = await FortuneExcel.transformFortuneToExcel(
+    { current: { getAllSheets: () => tables, getSheet: () => tables[0] } },
+    'xlsx',
+    false
+  )
+  const restoredExport = await M.withDefinedNamesRestored(
+    new Uint8Array(await blob.arrayBuffer()),
+    tables
+  )
+  return restoredExport
+}
+
+for (const [name, sheets] of Object.entries(restored)) {
+  const tables = toTables(sheets)
+  tables[0].data[0][0] = { ...tables[0].data[0][0], v: 10, m: '10', ct: { fa: 'General', t: 'n' } }
+  recalculate(tables)
   const value = (sheet, address) => {
     const { r, c } = decode(address)
     return tables.find((t) => t.name === sheet).data[r][c]?.v
@@ -432,16 +551,8 @@ for (const [name, sheets] of Object.entries(restored)) {
     tables[1].data[r][c] = { ...tables[1].data[r][c], f: '=Data!A2*5' }
   }
 
-  const blob = await FortuneExcel.transformFortuneToExcel(
-    { current: { getAllSheets: () => tables, getSheet: () => tables[0] } },
-    'xlsx',
-    false
-  )
-  const exported = await M.restoreXlsxExport(
-    ExcelJS,
-    new Uint8Array(await blob.arrayBuffer()),
-    tables
-  )
+  const { bytes: exported, restored: wroteBack } = await exportTables(tables)
+  check(`${name}: the export writes back what the import kept aside`, wroteBack)
   const reopened = new ExcelJS.Workbook()
   await reopened.xlsx.load(exported)
   for (const [sheet, address, formula, source] of expectedFormulas) {
@@ -453,6 +564,15 @@ for (const [name, sheets] of Object.entries(restored)) {
       json(cell.value)
     )
   }
+  const arrays = ['C1', 'D1'].map((address) => reopened.getWorksheet('Data').getCell(address).value)
+  check(
+    `${name}: array formulas are exported as array formulas with their range`,
+    arrays[0]?.shareType === 'array' &&
+      arrays[0]?.ref === 'C1' &&
+      arrays[1]?.shareType === 'array' &&
+      arrays[1]?.ref === 'D1:D3',
+    json(arrays)
+  )
   const b1 = reopened.getWorksheet('Data').getCell('B1').value
   check(
     `${name}: the exported B1 carries the recalculated result`,
@@ -466,38 +586,22 @@ for (const [name, sheets] of Object.entries(restored)) {
       'Check this value',
     json(note)
   )
-  const vatCell = reopened.getWorksheet('Données').getCell('B3').value
+  const exportedNames = M.scanXlsxPackage(exported)
+    .definedNames.map((n) => [n.name, n.ref, n.sheetName ?? null])
+    .filter(([n]) => n !== '_xlnm._FilterDatabase')
+  const wantNames = scan.definedNames.map((n) => [n.name, n.ref, n.sheetName ?? null])
   check(
-    `${name}: the exported =B1*TauxTVA carries its result`,
-    Number(vatCell?.result) === 20,
-    json(vatCell)
-  )
-  const exportedNames = M.scanXlsxPackage(exported).definedNames.map((n) => [
-    n.name,
-    n.ref,
-    n.sheetName ?? null
-  ])
-  const wantNames = [
-    ['Total', 'Data!$A$1:$A$3', null],
-    ['TauxTVA', "'Données'!$B$2", null],
-    ...(edited
-      ? []
-      : [
-          ['Rate', '0.5', null],
-          ['Local', 'Data!$A$2', 'Summary Sheet']
-        ])
-  ]
-  check(
-    `${name}: the export writes back the names its formulas use${edited ? ', not those of the edited one' : ''}`,
+    `${name}: the export writes back every defined name, the unused one and the print area included`,
     json([...exportedNames].sort()) === json([...wantNames].sort()),
     json(exportedNames)
   )
 
+  const againContent = await M.readXlsxWorkbook(ExcelJS, exported)
   const again = M.restoreWorkbookContent(
-    M.sheetsFromWorkbook(await M.readXlsxWorkbook(ExcelJS, exported), () => 'again'),
-    await M.readXlsxWorkbook(ExcelJS, exported),
+    M.sheetsFromWorkbook(againContent, () => 'again'),
+    againContent,
     M.scanXlsxPackage(exported).definedNames,
-    M.createImportFidelityCollector('xlsx', 'again.xlsx')
+    M.createImportFidelityCollector({ name: 'again.xlsx', kind: 'xlsx' })
   )
   check(
     `${name}: importing the export again gives the same formulas`,
@@ -510,6 +614,90 @@ for (const [name, sheets] of Object.entries(restored)) {
     json(expectedFormulas.map(([sheet, address]) => cellOf(again, sheet, address)?.f))
   )
 }
+
+// --- "replace current worksheet": one sheet kept, under another name --------
+const single = new ExcelJS.Workbook()
+const first = single.addWorksheet('Données')
+single.addWorksheet('Other').getCell('A1').value = 5
+first.getCell('B1').value = 100
+first.getCell('B2').value = 0.2
+first.getCell('B3').value = { formula: 'B1*TauxTVA', result: 20 }
+first.getCell('B4').value = { formula: 'Other!A1*2', result: 10 }
+single.definedNames.add("'Données'!$B$2", 'TauxTVA')
+const singleBytes = new Uint8Array(await single.xlsx.writeBuffer())
+const replaced = await M.importXlsxFile(
+  new File([singleBytes], 'vat.xlsx', { type: XLSX_TYPE }),
+  () => 'unused',
+  { keepFirstSheetAs: 'Sheet1' }
+)
+const replacedCell = cellOf(replaced.sheets, 'Sheet1', 'B3')
+check(
+  'replace current: one sheet, renamed, and the name follows it',
+  replaced.sheets.length === 1 &&
+    replacedCell?.f === '=B1*Sheet1!$B$2' &&
+    replacedCell?.xlsxFormula === '=B1*TauxTVA' &&
+    replacedCell?.xlsxNames?.[0]?.ref === 'Sheet1!$B$2',
+  json([replaced.sheets.map((s) => s.name), replacedCell])
+)
+const otherCell = cellOf(replaced.sheets, 'Sheet1', 'B4')
+check(
+  'replace current: a formula reading a sheet that was not imported keeps its value and is reported',
+  otherCell &&
+    otherCell.f === undefined &&
+    Number(otherCell.v) === 10 &&
+    replaced.report.items.some(
+      (i) => i.kind === 'formulas' && i.status === 'lost' && i.places?.[0]?.cell === 'B4'
+    ),
+  json([otherCell, replaced.report.items])
+)
+const replacedTables = toTables(replaced.sheets)
+recalculate(replacedTables)
+check(
+  'replace current: =B1*TauxTVA computes 20 in the renamed sheet',
+  Number(replacedTables[0].data[2][1].v) === 20,
+  json(replacedTables[0].data[2][1])
+)
+const replacedExport = await exportTables(replacedTables)
+check(
+  'replace current: the export points TauxTVA at the renamed sheet',
+  json(M.scanXlsxPackage(replacedExport.bytes).definedNames) ===
+    json([{ name: 'TauxTVA', ref: 'Sheet1!$B$2' }]),
+  json(M.scanXlsxPackage(replacedExport.bytes).definedNames)
+)
+
+// --- exceljs cannot read the file: the report says it is incomplete ---------
+const broken = M.unzipSync(singleBytes)
+broken['xl/tables/table1.xml'] = M.strToU8('<table name="Broken"/>')
+const unreadable = await M.importXlsxFile(
+  new File([M.zipSync(broken)], 'broken.xlsx', { type: XLSX_TYPE }),
+  () => 'unused'
+)
+check(
+  'when exceljs fails, fortune-excel still converts and the report is marked incomplete',
+  unreadable.sheets.length === 2 &&
+    unreadable.report.unavailable.some((reason) => reason.startsWith('formulas, defined names')) &&
+    M.needsSaveConfirmation(unreadable.report),
+  json(unreadable.report.unavailable)
+)
+
+// --- .xls: converted first, so the report says it is incomplete --------------
+const xlsx = require('xlsx')
+const xlsBook = xlsx.utils.book_new()
+xlsx.utils.book_append_sheet(xlsBook, xlsx.utils.aoa_to_sheet([[1, 2]]), 'Old')
+const xlsBytes = xlsx.write(xlsBook, { bookType: 'biff8', type: 'array' })
+const fromXls = await M.importXlsxFile(
+  new File([xlsBytes], 'old.xls', { type: 'application/vnd.ms-excel' }),
+  () => 'unused'
+)
+check(
+  'an .xls is imported, and its report says what it cannot see',
+  fromXls.sheets.length === 1 &&
+    fromXls.report.source.kind === 'xls' &&
+    fromXls.report.source.name === 'old.xls' &&
+    fromXls.report.unavailable.length === 1 &&
+    M.needsSaveConfirmation(fromXls.report),
+  json(fromXls.report)
+)
 
 rmSync(outDir, { recursive: true, force: true })
 let failed = 0

@@ -8,6 +8,8 @@ import { nodeApi } from '../../../../../utils/shims/node'
 import { openConfirmModal } from '../../../../../stores/confirmModal.store'
 import {
   describeLostItems,
+  hasFidelityLoss,
+  needsSaveConfirmation,
   type ImportFidelityReport
 } from '../../../../../services/conversion/importFidelity'
 import { showImportFidelityReport } from '../../../../../services/conversion/importFidelityToast'
@@ -28,11 +30,12 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
   const filePathRef = useRef<string>(filePath)
   const fileTypeRef = useRef<'xlsx' | 'csv'>('xlsx')
   // What the import could not keep: saving over the original file would
-  // remove it from there too, so the first save asks.
-  const lossRef = useRef<{ report: ImportFidelityReport | null; decision: Promise<boolean> | null }>({
-    report: null,
-    decision: null
-  })
+  // remove it from there too, so the first save asks. "Keep the original"
+  // pauses saving, and a bar offers to save over it or to a copy.
+  const reportRef = useRef<ImportFidelityReport | null>(null)
+  const decisionRef = useRef<'unknown' | 'overwrite' | 'paused'>('unknown')
+  const promptRef = useRef<Promise<boolean> | null>(null)
+  const [paused, setPaused] = useState<string | null>(null)
 
   const toBuffer = (input: any) => {
     if (!input) return Buffer.from([])
@@ -67,36 +70,82 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
 
   const ensureWorkbookKey = () => setKey((k) => k + 1)
 
-  const mayOverwrite = (): Promise<boolean> => {
-    const loss = lossRef.current
-    const lost = loss.report ? describeLostItems(loss.report) : ''
-    if (!lost) return Promise.resolve(true)
-    if (!loss.decision) {
-      loss.decision = openConfirmModal({
+  const mayOverwrite = async (closing: boolean): Promise<boolean> => {
+    const report = reportRef.current
+    if (!report || !needsSaveConfirmation(report)) return true
+    if (decisionRef.current !== 'unknown') return decisionRef.current === 'overwrite'
+    // Nobody can answer once the viewer is closed: the original stays as it is.
+    if (closing) return false
+    if (!promptRef.current) {
+      const lost = describeLostItems(report)
+      const fromXls = report.source.kind === 'xls'
+      promptRef.current = openConfirmModal({
         title: 'Save over the original file?',
-        message: `Saving writes your changes into ${loss.report?.fileName}, and removes from it what the import could not keep (${lost}). Keep the original to leave the file as it is; your changes then stay in this view only.`,
+        message: [
+          `Saving writes your changes into ${report.source.name}`,
+          fromXls ? ', as an .xlsx workbook,' : '',
+          lost ? ` and removes from it what the import could not keep (${lost}).` : '.',
+          report.unavailable.length
+            ? ` The import report is incomplete, so more may be removed: ${report.unavailable.join('; ')}.`
+            : '',
+          ' Keep the original to leave the file as it is; you can then save to a copy.'
+        ].join(''),
         confirmText: 'Save',
         cancelText: 'Keep the original',
         destructive: true
       }).then((answer: unknown) => answer === true)
     }
-    return loss.decision
+    const answer = await promptRef.current
+    promptRef.current = null
+    decisionRef.current = answer ? 'overwrite' : 'paused'
+    if (!answer) setPaused(`Changes are not saved to ${report.source.name}.`)
+    return answer
   }
 
-  const saveNow = async () => {
+  const saveNow = async (closing = false) => {
     try {
-      if (!(await mayOverwrite())) return
+      if (!(await mayOverwrite(closing))) return
+      if (!sheetRef.current) return
       const { transformFortuneToExcel } = await import('@corbe30/fortune-excel')
       const blob = await transformFortuneToExcel(sheetRef, fileTypeRef.current, false)
-      let bytes = new Uint8Array(await blob.arrayBuffer())
+      let bytes: Uint8Array = new Uint8Array(await blob.arrayBuffer())
       if (fileTypeRef.current === 'xlsx') {
-        bytes = await withDefinedNamesRestored(bytes, sheetRef.current?.getAllSheets?.() || [])
+        const restored = await withDefinedNamesRestored(
+          bytes,
+          sheetRef.current?.getAllSheets?.() || []
+        )
+        if (!restored.restored && reportRef.current) {
+          // Saving now would write the names out for good in the user's file.
+          decisionRef.current = 'paused'
+          setPaused(
+            `Changes are not saved to ${reportRef.current.source.name}: its defined names and array formulas could not be written back.`
+          )
+          return
+        }
+        bytes = restored.bytes
       }
       const buffer = Buffer.from(bytes)
       await nodeApi.fsPromises.writeFile(filePathRef.current, buffer)
     } catch (err) {
       console.warn('Failed to save spreadsheet file', err)
     }
+  }
+
+  const saveOverOriginal = () => {
+    decisionRef.current = 'overwrite'
+    setPaused(null)
+    void saveNow()
+  }
+
+  const saveCopy = () => {
+    const current = filePathRef.current
+    const dir = nodeApi.path.dirname(current)
+    const base = nodeApi.path.basename(current).replace(/\.(xlsx|xls)$/i, '')
+    filePathRef.current = nodeApi.path.join(dir, `${base} (copy).xlsx`)
+    fileTypeRef.current = 'xlsx'
+    decisionRef.current = 'overwrite'
+    setPaused(null)
+    void saveNow()
   }
 
   const scheduleSave = () => {
@@ -116,21 +165,11 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current)
         saveTimerRef.current = null
-        if (!readOnly && sheetRef.current && filePathRef.current) void saveNow()
+        if (!readOnly && sheetRef.current && filePathRef.current) void saveNow(true)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const convertXlsToXlsxFile = async (buffer: Buffer, name: string) => {
-    const xlsx = await import('xlsx')
-    const workbook = xlsx.read(buffer, { type: 'buffer' })
-    const out = xlsx.write(workbook, { bookType: 'xlsx', type: 'array' })
-    const nextName = name.replace(/\.xls$/i, '.xlsx')
-    return new File([out], nextName, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    })
-  }
 
     useEffect(() => {
     if (!filePath) return
@@ -171,24 +210,26 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
         fileTypeRef.current = ext === 'csv' ? 'csv' : 'xlsx'
 
         // fortune-excel first, exceljs if it fails; formulas, defined names and
-        // comments come from exceljs either way (services/conversion/xlsxImport.ts).
-        const file =
-          ext === 'xls'
-            ? await convertXlsToXlsxFile(buffer, fileName)
-            : new File([buffer], fileName, {
-                type:
-                  ext === 'csv'
-                    ? 'text/csv'
-                    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-              })
-        const result = await importXlsxFile(
-          file,
-          () => `sheet-${Math.random().toString(36).slice(2, 10)}`,
-          sheetRef
-        )
+        // comments come from exceljs either way, and an .xls is converted there
+        // (services/conversion/xlsxImport.ts). No workbook ref: the widths and
+        // heights are in each sheet's config, which the Workbook reads on mount.
+        const file = new File([buffer], fileName, {
+          type:
+            ext === 'csv'
+              ? 'text/csv'
+              : ext === 'xls'
+                ? 'application/vnd.ms-excel'
+                : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        })
+        const result = await importXlsxFile(file, () => `sheet-${Math.random().toString(36).slice(2, 10)}`)
         const imported = JSON.parse(JSON.stringify(result.sheets))
-        lossRef.current = { report: result.report, decision: null }
-        if (!cancelled && result.report) showImportFidelityReport(result.report)
+        if (cancelled) return
+        reportRef.current = result.report
+        decisionRef.current = 'unknown'
+        setPaused(null)
+        if (!readOnly && result.report && hasFidelityLoss(result.report)) {
+          showImportFidelityReport(result.report)
+        }
 
         if (!cancelled) applySheets(imported || [])
       } catch (err) {
@@ -231,6 +272,21 @@ function ReactSpreadsheetFileViewer({ filePath, readOnly = false }) {
         }
       }}
     >
+      {paused && !readOnly ? (
+        <div
+          className="react-spreadsheet-file-paused"
+          role="alert"
+          style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 10px', fontSize: 12 }}
+        >
+          <span>{paused}</span>
+          <button type="button" onClick={saveOverOriginal}>
+            Save over the original
+          </button>
+          <button type="button" onClick={saveCopy}>
+            Save a copy
+          </button>
+        </div>
+      ) : null}
       {loading ? (
         <div className="react-spreadsheet-file-loading">Loading spreadsheet…</div>
       ) : error ? (
