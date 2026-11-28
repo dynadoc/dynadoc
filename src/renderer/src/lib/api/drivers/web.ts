@@ -1436,14 +1436,18 @@ function createPresentationApi() {
       return
     }
     const url = `${window.location.origin}${window.location.pathname}#/presentation`
+    // No `noopener`/`noreferrer` here: with either, window.open returns null
+    // even when the window opened, so the "blocked" branch below opened a
+    // second one (#150). The show is this app on the same origin, talking
+    // over a BroadcastChannel, and the handle is what lets us focus it again.
     presentationWindow = window.open(
       url,
       'dynadoc-presentation',
-      'popup,width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,noopener,noreferrer'
+      'popup,width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
     )
     if (!presentationWindow) {
       // Popup blocked: try a new tab, but keep current view
-      presentationWindow = window.open(url, '_blank', 'noopener,noreferrer')
+      presentationWindow = window.open(url, '_blank')
       if (!presentationWindow) {
         try {
           sessionStorage.setItem(popupBlockedKey, '1')

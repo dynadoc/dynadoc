@@ -7,11 +7,13 @@
  *     typing goes into the title;
  *   - variables in slides: "@" in a text box opens the @ menu, and a created
  *     variable shows its value in the slide;
- *   - the slideshow opens its window on the web (#/presentation).
+ *   - the slideshow opens one window on the web (#/presentation), which shows
+ *     the slides, moves with the arrow keys and ends on Escape (#150: it
+ *     threw on window.presentationAPI before the driver was installed, and
+ *     the click opened two windows).
  *
- * Skipped, with reasons below: what the slideshow window shows (it crashes on
- * the web today), and the .pptx export/re-import (no download path on the web
- * build against the stub).
+ * Skipped, with the reason below: the .pptx export/re-import (no download
+ * path on the web build against the stub).
  */
 import { test, expect } from './support/fixtures'
 import {
@@ -85,29 +87,35 @@ test('add a slide with a layout, type a title and insert @client', async ({ page
   await expect(chip).toHaveText('ACME SARL')
 })
 
-test('the slideshow opens its window', async ({ page, context }) => {
-  await newDeckWithContentSlide(page)
+test('the slideshow opens one window, shows the slides and ends on Escape (#150)', async ({
+  page,
+  context
+}) => {
+  const stage = await newDeckWithContentSlide(page)
+  // Title placeholder of "Title and content": x 64..1216, y 40..150.
+  await dblclickSlide(page, stage, 640, 95)
+  await expect(focusedSlideEditor(page)).toBeVisible()
+  await typeKeys(page, 'Mon titre')
+  await expect(slideEditors(page).locator('h1', { hasText: 'Mon titre' })).toHaveCount(1)
+
+  const opened: Page[] = []
+  context.on('page', (opener) => opened.push(opener))
   const popup = context.waitForEvent('page')
   await page.getByTitle('Present from the first slide').click()
   const show = await popup
   await expect.poll(() => show.url()).toContain('#/presentation')
-  await show.close()
-})
-
-test('the slideshow window shows the slides', async ({ page, context }) => {
-  test.fixme(
-    true,
-    'Known bug, web: the #/presentation window throws "Cannot read properties of undefined ' +
-      "(reading 'getInitialData')\" in PresentationWindow.svelte (window.presentationAPI is " +
-      'not installed on that route) and stays blank.'
-  )
-  const stage = await newDeckWithContentSlide(page)
-  await dblclickSlide(page, stage, 640, 95)
-  await typeKeys(page, 'Mon titre')
-  const popup = context.waitForEvent('page')
-  await page.getByTitle('Present from the first slide').click()
-  const show = await popup
+  // The show draws the deck (page errors there fail the test in the guard),
+  // from the first slide; the arrow key moves to the second, with the title.
+  await expect(show.locator('.slide-show-deck').first()).toBeAttached({ timeout: 30_000 })
+  await show.keyboard.press('ArrowRight')
   await expect(show.getByText('Mon titre')).toBeVisible()
+  // One window: the popup handle is kept, no "blocked" fallback opens a tab.
+  expect(opened).toHaveLength(1)
+
+  const closed = show.waitForEvent('close')
+  // keydown alone: the window is gone before a keyup could reach it.
+  await show.keyboard.down('Escape')
+  await closed
 })
 
 test('export to .pptx and import it back', async () => {

@@ -2,6 +2,7 @@
   import { _ } from 'svelte-i18n'
   import { onDestroy, onMount } from 'svelte'
   import SlideViewport from './SlideViewport.svelte'
+  import Platform from '../../../../libs/platform'
   import {
     bufferedSlides,
     nextSlide,
@@ -60,6 +61,15 @@
   onMount(() => {
     console.log('resentationAPI.onMount', {})
     // snapshotKonva(editorRoot);
+
+    // main.ts waits for the driver before mounting this window (#150); an
+    // exception here would also break Svelte's effect flush, so say it instead.
+    if (!window.presentationAPI) {
+      console.error(
+        'Slideshow: window.presentationAPI is missing, the platform driver did not load'
+      )
+      return
+    }
 
     if (typeof window.presentationAPI.getInitialData === 'function') {
       window.presentationAPI
@@ -169,7 +179,10 @@
   })
 
   function exit() {
-    window.presentationAPI.stop('all')
+    window.presentationAPI?.stop('all')
+    // The desktop closes its window from the main process. On the web this
+    // is a window the app opened, which a script may close.
+    if (!Platform.isDesktopPlatform) window.close()
   }
 
   // The page keeps its own size and is scaled to fill the window.

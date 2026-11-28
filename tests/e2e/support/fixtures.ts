@@ -257,10 +257,13 @@ export const test = base.extend<{ guard: Guard }>({
     await use(context)
   },
   guard: [
-    async ({ page }, use, testInfo) => {
+    async ({ page, context }, use, testInfo) => {
       copyFileSync(path.join(__dirname, 'settings.seed.json'), SETTINGS_FILE)
       const guard = new Guard()
       guard.attach(page)
+      // Windows the app opens (the slideshow, #150) are watched too: an error
+      // there is as real as one in the main page.
+      context.on('page', (popup) => guard.attach(popup))
       await use(guard)
       await guard.settle()
       if (guard.issues.length) {

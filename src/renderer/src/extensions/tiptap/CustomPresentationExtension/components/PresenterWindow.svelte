@@ -20,6 +20,13 @@
     console.log('resentationAPI.onMount', {})
     // snapshotKonva(editorRoot);
 
+    // main.ts waits for the driver before mounting this window (#150); an
+    // exception here would also break Svelte's effect flush, so say it instead.
+    if (!window.presentationAPI) {
+      console.error('Presenter view: window.presentationAPI is missing, the platform driver did not load')
+      return
+    }
+
     if (typeof window.presentationAPI.getInitialData === 'function') {
       window.presentationAPI.getInitialData().then((data) => {
         if (data) {
