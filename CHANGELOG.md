@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0](https://github.com/dynadoc/dynadoc/compare/v1.4.1...v1.5.0) (2026-11-27)
+
+
+### Features
+
+* **desktop:** make the desktop app usable day to day ([#122](https://github.com/dynadoc/dynadoc/issues/122)) ([a2f2f85](https://github.com/dynadoc/dynadoc/commit/a2f2f85ca88ae33e2b250a064d8c907cf85c04da))
+
+
+### Fixes
+
+* **deps:** close the dompurify, fabric and glob advisories ([#128](https://github.com/dynadoc/dynadoc/issues/128)) ([89e0556](https://github.com/dynadoc/dynadoc/commit/89e0556d3b9e67bf93f3589ed3990cf617a27e0c))
+* **deps:** Electron 42 and KaTeX 0.18 for the open advisories ([#121](https://github.com/dynadoc/dynadoc/issues/121)) ([c5af280](https://github.com/dynadoc/dynadoc/commit/c5af28047a1fb4cb3cf4ce78c8603f5d3b80e9e2))
+* endless pagination from tall blocks, clone-safe slide and sheet menus ([#123](https://github.com/dynadoc/dynadoc/issues/123)) ([be3b133](https://github.com/dynadoc/dynadoc/commit/be3b133b1f0bd99c00e18e3d2fa30e64090340d6))
+
 ## [1.4.1](https://github.com/dynadoc/dynadoc/compare/v1.4.0...v1.4.1) (2026-11-26)
 
 
