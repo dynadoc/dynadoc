@@ -1757,5 +1757,19 @@
   "Fewer options": "Moins d’options",
   "New variable…": "Nouvelle variable…",
   "Please enter a variable name.": "Saisissez un nom de variable.",
-  "Update and insert": "Mettre à jour et insérer"
+  "Update and insert": "Mettre à jour et insérer",
+  "Replace is not available here.": "Le remplacement n'est pas disponible ici.",
+  "Replaced {count} occurrence(s) in {files} file(s).": "{count} occurrence(s) remplacée(s) dans {files} fichier(s).",
+  "Skipped: {list}.": "Ignorés : {list}.",
+  "Undo failed": "Échec de l'annulation",
+  "Restored {files} file(s).": "{files} fichier(s) restauré(s).",
+  "Not restored: {list}.": "Non restaurés : {list}.",
+  "Undo replace": "Annuler le remplacement",
+  "Replace preview": "Aperçu du remplacement",
+  "Replace {count} occurrence(s) in {files} file(s)?": "Remplacer {count} occurrence(s) dans {files} fichier(s) ?",
+  "Open in an editor: close it to replace in this file.": "Ouvert dans un éditeur : fermez-le pour remplacer dans ce fichier.",
+  "variable, not replaced": "variable, non remplacée",
+  "spans an object, not replaced": "contient un objet, non remplacé",
+  "Replace failed": "Échec du remplacement",
+  "Close {list} to undo the replace.": "Fermez {list} pour annuler le remplacement."
 }

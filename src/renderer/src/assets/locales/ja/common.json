@@ -1757,5 +1757,19 @@
   "Fewer options": "オプションを減らす",
   "New variable…": "新しい変数…",
   "Please enter a variable name.": "変数名を入力してください。",
-  "Update and insert": "更新して挿入"
+  "Update and insert": "更新して挿入",
+  "Replace is not available here.": "ここでは置換を使用できません。",
+  "Replaced {count} occurrence(s) in {files} file(s).": "{files} 個のファイルで {count} 件を置換しました。",
+  "Skipped: {list}.": "スキップ: {list}。",
+  "Undo failed": "元に戻せませんでした",
+  "Restored {files} file(s).": "{files} 個のファイルを復元しました。",
+  "Not restored: {list}.": "復元されなかったファイル: {list}。",
+  "Undo replace": "置換を元に戻す",
+  "Replace preview": "置換のプレビュー",
+  "Replace {count} occurrence(s) in {files} file(s)?": "{files} 個のファイルで {count} 件を置換しますか？",
+  "Open in an editor: close it to replace in this file.": "エディターで開いています。このファイルで置換するには閉じてください。",
+  "variable, not replaced": "変数のため置換しません",
+  "spans an object, not replaced": "オブジェクトを含むため置換しません",
+  "Replace failed": "置換に失敗しました",
+  "Close {list} to undo the replace.": "置換を元に戻すには {list} を閉じてください。"
 }
