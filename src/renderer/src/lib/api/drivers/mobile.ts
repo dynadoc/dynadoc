@@ -1051,18 +1051,20 @@ function createPresentationApi() {
 
   const openPresentationWindow = () => {
     const url = `${window.location.origin}${window.location.pathname}#/presentation`
+    // No `noopener`: it makes window.open return null, which opened a second
+    // window below (same as the web driver, #150).
     try {
       presentationWindow = window.open(
         url,
         'dynadoc-presentation',
-        'popup,width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,noopener,noreferrer'
+        'popup,width=1280,height=720,menubar=no,toolbar=no,location=no,status=no'
       )
     } catch {
       presentationWindow = null
     }
     if (!presentationWindow) {
       try {
-        presentationWindow = window.open(url, '_blank', 'noopener,noreferrer')
+        presentationWindow = window.open(url, '_blank')
       } catch {
         presentationWindow = null
       }

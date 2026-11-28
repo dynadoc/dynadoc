@@ -278,6 +278,15 @@ async function mountApp() {
   // format a message without first setting the initial locale" and the app
   // stays on the splash screen. The e2e suite hit it about once in 20 loads.
   await i18nReady
+  // The slideshow and presenter windows talk to the app through
+  // window.presentationAPI, which the platform driver installs once it has
+  // loaded (lib/api). On the web their small chunk mounts first, and the
+  // window threw on `getInitialData` and stayed blank (#150). The main app
+  // does not wait here: its own boot is longer and its callers await the
+  // driver where they need it.
+  if (isPresentation || isPresenterView) {
+    await (window as any).__ddocDriverReady
+  }
   logBoot(
     'mount:start ' + (ComponentModule?.default?.name || 'UnknownComponent') + ' to #' + targetId
   )
